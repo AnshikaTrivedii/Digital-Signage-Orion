@@ -1,0 +1,299 @@
+"use client";
+import { useState, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { toast } from "react-hot-toast";
+import {
+    Play, Plus, Search, Trash2, Pause, Clock, Eye, X,
+    List, GripVertical, ChevronRight, Monitor, Music,
+    LayoutGrid, SkipForward, Repeat, Shuffle, ArrowUp, ArrowDown
+} from "lucide-react";
+
+interface PlaylistItem {
+    id: string;
+    name: string;
+    type: "video" | "image" | "html";
+    duration: number;
+}
+
+interface Playlist {
+    id: string;
+    name: string;
+    status: "Active" | "Paused" | "Draft";
+    items: PlaylistItem[];
+    screens: number;
+    totalDuration: string;
+    lastPlayed: string;
+    color: string;
+}
+
+const mockPlaylists: Playlist[] = [
+    { id: "p1", name: "Morning Welcome Loop", status: "Active", items: [
+        { id: "i1", name: "Welcome_Animation.mp4", type: "video", duration: 15 },
+        { id: "i2", name: "Brand_Logo.png", type: "image", duration: 8 },
+        { id: "i3", name: "Today_Events.html", type: "html", duration: 10 },
+    ], screens: 45, totalDuration: "0:33", lastPlayed: "2 min ago", color: "#4ade80" },
+    { id: "p2", name: "Retail Product Showcase", status: "Active", items: [
+        { id: "i4", name: "Product_Highlight_1.mp4", type: "video", duration: 30 },
+        { id: "i5", name: "Flash_Sale_Banner.png", type: "image", duration: 10 },
+        { id: "i6", name: "Product_Highlight_2.mp4", type: "video", duration: 25 },
+        { id: "i7", name: "Customer_Reviews.html", type: "html", duration: 12 },
+    ], screens: 80, totalDuration: "1:17", lastPlayed: "Just now", color: "#00e5ff" },
+    { id: "p3", name: "Corporate Updates Q1", status: "Paused", items: [
+        { id: "i8", name: "CEO_Address.mp4", type: "video", duration: 120 },
+        { id: "i9", name: "Q1_Metrics.html", type: "html", duration: 15 },
+    ], screens: 200, totalDuration: "2:15", lastPlayed: "3 hours ago", color: "#a78bfa" },
+    { id: "p4", name: "Wayfinding & Navigation", status: "Active", items: [
+        { id: "i10", name: "Floor_Map.html", type: "html", duration: 20 },
+        { id: "i11", name: "Directory.png", type: "image", duration: 15 },
+    ], screens: 12, totalDuration: "0:35", lastPlayed: "Just now", color: "#f472b6" },
+    { id: "p5", name: "Event Day Schedule", status: "Draft", items: [], screens: 0, totalDuration: "0:00", lastPlayed: "Never", color: "#fb923c" },
+];
+
+const statusColor = (s: string) => {
+    if (s === "Active") return "var(--status-success)";
+    if (s === "Paused") return "var(--status-warning)";
+    return "var(--text-muted)";
+};
+
+export default function PlaylistsPage() {
+    const [playlists, setPlaylists] = useState(mockPlaylists);
+    const [search, setSearch] = useState("");
+    const [view, setView] = useState<"grid" | "list">("grid");
+    const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
+    const [showCreator, setShowCreator] = useState(false);
+    const [newName, setNewName] = useState("");
+    const [previewingIndex, setPreviewingIndex] = useState<number | null>(null);
+
+    const filtered = useMemo(() => {
+        if (!search) return playlists;
+        return playlists.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+    }, [playlists, search]);
+
+    const handleCreate = () => {
+        if (!newName.trim()) return toast.error("Provide a playlist name");
+        const colors = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c"];
+        const np: Playlist = {
+            id: Date.now().toString(), name: newName, status: "Draft", items: [],
+            screens: 0, totalDuration: "0:00", lastPlayed: "Never",
+            color: colors[Math.floor(Math.random() * colors.length)]
+        };
+        setPlaylists([np, ...playlists]);
+        setShowCreator(false);
+        setNewName("");
+        toast.success("Playlist created!");
+    };
+
+    const handleDelete = (id: string) => {
+        setPlaylists(playlists.filter(p => p.id !== id));
+        if (selectedPlaylist?.id === id) setSelectedPlaylist(null);
+        toast.success("Playlist deleted");
+    };
+
+    const moveItem = (playlistId: string, idx: number, dir: "up" | "down") => {
+        setPlaylists(playlists.map(p => {
+            if (p.id !== playlistId) return p;
+            const items = [...p.items];
+            const swap = dir === "up" ? idx - 1 : idx + 1;
+            if (swap < 0 || swap >= items.length) return p;
+            [items[idx], items[swap]] = [items[swap], items[idx]];
+            return { ...p, items };
+        }));
+        if (selectedPlaylist) {
+            setSelectedPlaylist(prev => {
+                if (!prev) return prev;
+                const items = [...prev.items];
+                const swap = dir === "up" ? idx - 1 : idx + 1;
+                if (swap < 0 || swap >= items.length) return prev;
+                [items[idx], items[swap]] = [items[swap], items[idx]];
+                return { ...prev, items };
+            });
+        }
+    };
+
+    const typeEmoji = (t: string) => t === "video" ? "🎬" : t === "image" ? "🖼️" : "🌐";
+
+    return (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
+                <div>
+                    <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Playlists</h1>
+                    <p style={{ color: "hsl(var(--text-secondary))" }}>Sequence and schedule content for your signage network.</p>
+                </div>
+                <button className="btn-primary" onClick={() => setShowCreator(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Plus size={18} /> New Playlist
+                </button>
+            </div>
+
+            {/* Stats */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
+                {[
+                    { label: "Active", count: playlists.filter(p => p.status === "Active").length, icon: Play, color: "var(--status-success)" },
+                    { label: "Total Items", count: playlists.reduce((s, p) => s + p.items.length, 0), icon: List, color: "var(--accent-primary)" },
+                    { label: "Total Screens", count: playlists.reduce((s, p) => s + p.screens, 0), icon: Monitor, color: "var(--accent-secondary)" },
+                ].map((s, i) => (
+                    <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                        className="glass-card" style={{ padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
+                        <div style={{ width: 44, height: 44, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `hsla(${s.color}, 0.1)`, border: `1px solid hsla(${s.color}, 0.2)` }}>
+                            <s.icon size={20} style={{ color: `hsl(${s.color})` }} />
+                        </div>
+                        <div>
+                            <p style={{ fontSize: "1.5rem", fontWeight: 800 }}>{s.count}</p>
+                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{s.label}</p>
+                        </div>
+                    </motion.div>
+                ))}
+            </div>
+
+            {/* Toolbar */}
+            <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: 4, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
+                    <button onClick={() => setView("grid")} style={{ padding: 8, border: "none", borderRadius: 8, cursor: "pointer", background: view === "grid" ? "hsla(var(--accent-primary), 0.15)" : "transparent", color: view === "grid" ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))" }}><LayoutGrid size={18} /></button>
+                    <button onClick={() => setView("list")} style={{ padding: 8, border: "none", borderRadius: 8, cursor: "pointer", background: view === "list" ? "hsla(var(--accent-primary), 0.15)" : "transparent", color: view === "list" ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))" }}><List size={18} /></button>
+                </div>
+                <div style={{ position: "relative", minWidth: 260 }}>
+                    <Search size={16} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "hsl(var(--text-muted))" }} />
+                    <input type="text" placeholder="Search playlists..." value={search} onChange={e => setSearch(e.target.value)}
+                        style={{ width: "100%", padding: "10px 14px 10px 38px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem", outline: "none" }} />
+                </div>
+            </div>
+
+            {/* Playlist Grid/List */}
+            <div style={view === "grid" ? { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 24 } : { display: "flex", flexDirection: "column", gap: 16 }}>
+                <AnimatePresence mode="popLayout">
+                    {filtered.map((p, idx) => (
+                        <motion.div key={p.id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: idx * 0.04 }}
+                            className="glass-card" style={{ padding: 0, overflow: "hidden", cursor: "pointer" }} onClick={() => setSelectedPlaylist(p)}>
+                            <div style={{ height: 6, background: p.color }} />
+                            <div style={{ padding: 24 }}>
+                                <div className="flex-between" style={{ marginBottom: 12 }}>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                        <div style={{ width: 40, height: 40, borderRadius: 10, background: `${p.color}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                            <Music size={20} style={{ color: p.color }} />
+                                        </div>
+                                        <div>
+                                            <h3 style={{ fontSize: "1.05rem", fontWeight: 700 }}>{p.name}</h3>
+                                            <span style={{
+                                                fontSize: "0.65rem", fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                                                background: `hsla(${statusColor(p.status)}, 0.1)`, color: `hsl(${statusColor(p.status)})`
+                                            }}>{p.status}</span>
+                                        </div>
+                                    </div>
+                                    <button className="btn-icon-soft" onClick={e => { e.stopPropagation(); handleDelete(p.id); }}><Trash2 size={16} /></button>
+                                </div>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                                    <div style={{ textAlign: "center", padding: 8, borderRadius: 8, background: "hsla(var(--bg-base), 0.4)" }}>
+                                        <p style={{ fontSize: "1rem", fontWeight: 700 }}>{p.items.length}</p>
+                                        <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))", textTransform: "uppercase" }}>Items</p>
+                                    </div>
+                                    <div style={{ textAlign: "center", padding: 8, borderRadius: 8, background: "hsla(var(--bg-base), 0.4)" }}>
+                                        <p style={{ fontSize: "1rem", fontWeight: 700 }}>{p.totalDuration}</p>
+                                        <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))", textTransform: "uppercase" }}>Duration</p>
+                                    </div>
+                                    <div style={{ textAlign: "center", padding: 8, borderRadius: 8, background: "hsla(var(--bg-base), 0.4)" }}>
+                                        <p style={{ fontSize: "1rem", fontWeight: 700 }}>{p.screens}</p>
+                                        <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))", textTransform: "uppercase" }}>Screens</p>
+                                    </div>
+                                </div>
+                                <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> Last played: {p.lastPlayed}</p>
+                            </div>
+                        </motion.div>
+                    ))}
+                </AnimatePresence>
+            </div>
+
+            {/* Detail / Builder Modal */}
+            <AnimatePresence>
+                {selectedPlaylist && (
+                    <motion.div key="builder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(16px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        onClick={() => { setSelectedPlaylist(null); setPreviewingIndex(null); }}>
+                        <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                            className="glass-panel" style={{ width: "100%", maxWidth: 700, maxHeight: "85vh", overflow: "auto" }} onClick={e => e.stopPropagation()}>
+                            <div style={{ padding: "24px 32px", borderBottom: "1px solid hsla(var(--border-subtle), 0.3)", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "hsla(var(--bg-surface), 0.95)", backdropFilter: "blur(12px)", zIndex: 10 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                    <div style={{ width: 10, height: 10, borderRadius: "50%", background: selectedPlaylist.color }} />
+                                    <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedPlaylist.name}</h2>
+                                </div>
+                                <button className="btn-icon-soft" onClick={() => { setSelectedPlaylist(null); setPreviewingIndex(null); }}><X size={24} /></button>
+                            </div>
+                            <div style={{ padding: 32 }}>
+                                {selectedPlaylist.items.length === 0 ? (
+                                    <div style={{ textAlign: "center", padding: "60px 20px", color: "hsl(var(--text-muted))" }}>
+                                        <List size={48} style={{ marginBottom: 16, opacity: 0.2 }} />
+                                        <p style={{ fontSize: "1.1rem", fontWeight: 500 }}>Empty Playlist</p>
+                                        <p style={{ fontSize: "0.85rem" }}>Add media items via the Campaign or Asset pages.</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <h3 style={{ fontSize: "0.8rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", marginBottom: 16 }}>Sequence ({selectedPlaylist.items.length} items)</h3>
+                                        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+                                            {selectedPlaylist.items.map((item, i) => (
+                                                <motion.div key={item.id} layout style={{
+                                                    display: "flex", alignItems: "center", gap: 14, padding: "14px 16px", borderRadius: 12,
+                                                    background: previewingIndex === i ? "hsla(var(--accent-primary), 0.12)" : "hsla(var(--bg-base), 0.3)",
+                                                    border: previewingIndex === i ? "1px solid hsla(var(--accent-primary), 0.3)" : "1px solid transparent"
+                                                }}>
+                                                    <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "hsl(var(--text-muted))", width: 20, textAlign: "center" }}>{i + 1}</span>
+                                                    <span style={{ fontSize: "1.2rem" }}>{typeEmoji(item.type)}</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{item.name}</p>
+                                                        <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{item.duration}s • {item.type}</p>
+                                                    </div>
+                                                    <div style={{ display: "flex", gap: 4 }}>
+                                                        <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => moveItem(selectedPlaylist.id, i, "up")} disabled={i === 0}><ArrowUp size={14} /></button>
+                                                        <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => moveItem(selectedPlaylist.id, i, "down")} disabled={i === selectedPlaylist.items.length - 1}><ArrowDown size={14} /></button>
+                                                        <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => setPreviewingIndex(previewingIndex === i ? null : i)}><Eye size={14} /></button>
+                                                    </div>
+                                                </motion.div>
+                                            ))}
+                                        </div>
+
+                                        {/* Preview Strip */}
+                                        {previewingIndex !== null && (
+                                            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                                                style={{ background: "#000", borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 24 }}>
+                                                <span style={{ fontSize: "2rem" }}>{typeEmoji(selectedPlaylist.items[previewingIndex].type)}</span>
+                                                <h3 style={{ fontSize: "1.1rem", fontWeight: 700, marginTop: 8 }}>{selectedPlaylist.items[previewingIndex].name}</h3>
+                                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>Duration: {selectedPlaylist.items[previewingIndex].duration}s</p>
+                                            </motion.div>
+                                        )}
+                                    </>
+                                )}
+                                <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                                    <button className="btn-outline" onClick={() => { setSelectedPlaylist(null); setPreviewingIndex(null); }}>Close</button>
+                                    <button className="btn-primary" onClick={() => { toast.success("Playlist deployed to screens"); setSelectedPlaylist(null); }}>Deploy to Screens</button>
+                                </div>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Create Modal */}
+            <AnimatePresence>
+                {showCreator && (
+                    <motion.div key="creator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        onClick={() => setShowCreator(false)}>
+                        <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95 }}
+                            className="glass-panel" style={{ width: "100%", maxWidth: 440, padding: 32 }} onClick={e => e.stopPropagation()}>
+                            <div className="flex-between" style={{ marginBottom: 24 }}>
+                                <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>New Playlist</h2>
+                                <button className="btn-icon-soft" onClick={() => setShowCreator(false)}><X size={24} /></button>
+                            </div>
+                            <div style={{ marginBottom: 24 }}>
+                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Name</label>
+                                <input placeholder="e.g. Evening Lobby Loop" value={newName} onChange={e => setNewName(e.target.value)}
+                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none", fontSize: "0.95rem" }} />
+                            </div>
+                            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                                <button className="btn-outline" onClick={() => setShowCreator(false)}>Cancel</button>
+                                <button className="btn-primary" onClick={handleCreate}>Create</button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
+    );
+}
