@@ -1,0 +1,9 @@
+{
+  "name": "@orion/worker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node -e \"console.log('Worker scaffold ready')\"",
+    "build": "node -e \"console.log('No worker build configured yet')\""
+  }
+}
