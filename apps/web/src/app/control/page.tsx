@@ -480,7 +480,7 @@ export default function ControlPage() {
                                     style={{
                                         width: ctrl.primary ? 56 : 44, height: ctrl.primary ? 56 : 44, borderRadius: "50%", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                                         background: ctrl.primary ? "linear-gradient(135deg, #fb923c, #f97316)" : "hsla(var(--bg-surface-elevated), 0.8)",
-                                        color: "#fff", boxShadow: ctrl.primary ? "0 0 20px #fb923c40" : "none"
+                                        color: "hsl(var(--surface-contrast))", boxShadow: ctrl.primary ? "0 0 20px #fb923c40" : "none"
                                     }}>
                                     <ctrl.icon size={ctrl.primary ? 24 : 18} />
                                 </button>
@@ -507,7 +507,7 @@ export default function ControlPage() {
                                     width: 120, height: 120, borderRadius: "50%", border: "none", cursor: "pointer", margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center",
                                     background: selectedDevices.every(id => screenPower[id]) ? "linear-gradient(135deg, #4ade80, #22c55e)" : "linear-gradient(135deg, #f87171, #ef4444)",
                                     boxShadow: selectedDevices.every(id => screenPower[id]) ? "0 0 40px #4ade8040, 0 0 80px #4ade8020" : "0 0 40px #f8717140, 0 0 80px #f8717120",
-                                    color: "#fff"
+                                    color: "hsl(var(--surface-contrast))"
                                 }}
                             >
                                 <Power size={48} />

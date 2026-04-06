@@ -205,7 +205,7 @@ export default function PlaylistsPage() {
             <AnimatePresence>
                 {selectedPlaylist && (
                     <motion.div key="builder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(16px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.78)", backdropFilter: "blur(16px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => { setSelectedPlaylist(null); setPreviewingIndex(null); }}>
                         <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 700, maxHeight: "85vh", overflow: "auto" }} onClick={e => e.stopPropagation()}>
@@ -251,7 +251,7 @@ export default function PlaylistsPage() {
                                         {/* Preview Strip */}
                                         {previewingIndex !== null && (
                                             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                                                style={{ background: "#000", borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 24 }}>
+                                                style={{ background: "hsla(var(--bg-base), 0.85)", borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 24 }}>
                                                 <span style={{ fontSize: "2rem" }}>{typeEmoji(selectedPlaylist.items[previewingIndex].type)}</span>
                                                 <h3 style={{ fontSize: "1.1rem", fontWeight: 700, marginTop: 8 }}>{selectedPlaylist.items[previewingIndex].name}</h3>
                                                 <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>Duration: {selectedPlaylist.items[previewingIndex].duration}s</p>
@@ -273,7 +273,7 @@ export default function PlaylistsPage() {
             <AnimatePresence>
                 {showCreator && (
                     <motion.div key="creator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setShowCreator(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 440, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -284,7 +284,7 @@ export default function PlaylistsPage() {
                             <div style={{ marginBottom: 24 }}>
                                 <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Name</label>
                                 <input placeholder="e.g. Evening Lobby Loop" value={newName} onChange={e => setNewName(e.target.value)}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none", fontSize: "0.95rem" }} />
+                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.95rem" }} />
                             </div>
                             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
                                 <button className="btn-outline" onClick={() => setShowCreator(false)}>Cancel</button>

@@ -174,7 +174,7 @@ export default function CampaignsPage() {
             <AnimatePresence>
                 {isEditorOpen && (
                     <motion.div key="editor" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setIsEditorOpen(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 480, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -185,12 +185,12 @@ export default function CampaignsPage() {
                             <div style={{ marginBottom: 20 }}>
                                 <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Campaign Name</label>
                                 <input placeholder="e.g. Black Friday Promo" value={newName} onChange={e => setNewName(e.target.value)}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none", fontSize: "0.95rem" }} />
+                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.95rem" }} />
                             </div>
                             <div style={{ marginBottom: 28 }}>
                                 <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Description</label>
                                 <textarea placeholder="Brief description..." value={newDesc} onChange={e => setNewDesc(e.target.value)} rows={3}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none", fontSize: "0.9rem", resize: "none" }} />
+                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem", resize: "none" }} />
                             </div>
                             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
                                 <button className="btn-outline" onClick={() => setIsEditorOpen(false)}>Cancel</button>

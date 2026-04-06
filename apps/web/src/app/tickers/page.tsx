@@ -154,9 +154,9 @@ export default function TickersPage() {
             <AnimatePresence>
                 {previewTicker && (
                     <motion.div key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 100, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.9)", zIndex: 100, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}
                         onClick={() => setPreviewTicker(null)}>
-                        <button className="btn-icon-soft" style={{ position: "absolute", top: 20, right: 20, color: "white" }} onClick={() => setPreviewTicker(null)}><X size={28} /></button>
+                        <button className="btn-icon-soft" style={{ position: "absolute", top: 20, right: 20, color: "hsl(var(--surface-contrast))" }} onClick={() => setPreviewTicker(null)}><X size={28} /></button>
                         <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 20, textTransform: "uppercase", letterSpacing: "0.1em" }}>Live Preview</p>
                         <div style={{ width: "100%", maxWidth: 900, background: "#0a0e1a", border: `2px solid ${previewTicker.color}30`, borderRadius: 12, overflow: "hidden" }}>
                             <div style={{ display: "flex", height: 56 }}>
@@ -181,7 +181,7 @@ export default function TickersPage() {
             <AnimatePresence>
                 {showEditor && (
                     <motion.div key="editor" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setShowEditor(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -194,13 +194,13 @@ export default function TickersPage() {
                             <div style={{ marginBottom: 20 }}>
                                 <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Message Text</label>
                                 <textarea value={editorText} onChange={e => setEditorText(e.target.value)} placeholder="Enter your broadcast message..."
-                                    rows={4} style={{ width: "100%", padding: 14, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none", fontSize: "0.95rem", resize: "none" }} />
+                                    rows={4} style={{ width: "100%", padding: 14, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.95rem", resize: "none" }} />
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
                                 <div>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Speed</label>
                                     <select value={editorSpeed} onChange={e => setEditorSpeed(e.target.value as any)}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white" }}>
+                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))" }}>
                                         <option value="Slow">Slow</option>
                                         <option value="Normal">Normal</option>
                                         <option value="Fast">Fast</option>
@@ -209,7 +209,7 @@ export default function TickersPage() {
                                 <div>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Priority</label>
                                     <select value={editorPriority} onChange={e => setEditorPriority(e.target.value as any)}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white" }}>
+                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))" }}>
                                         <option value="Normal">Normal</option>
                                         <option value="Urgent">Urgent</option>
                                         <option value="Low">Low</option>

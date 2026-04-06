@@ -34,7 +34,7 @@ const Toggle = ({ on, setOn }: { on: boolean, setOn?: (val: boolean) => void }) 
         <motion.div 
             animate={{ x: on ? 18 : 0 }}
             transition={{ type: "spring", stiffness: 500, damping: 30 }}
-            style={{ width: 18, height: 18, borderRadius: "50%", background: "white", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }} 
+            style={{ width: 18, height: 18, borderRadius: "50%", background: "hsl(var(--surface-contrast))", boxShadow: "0 2px 4px rgba(0,0,0,0.2)" }} 
         />
     </div>
 );
@@ -68,10 +68,10 @@ export default function SettingsPage() {
                                     width: 100, height: 100, borderRadius: 24, 
                                     background: "linear-gradient(135deg, hsl(var(--accent-primary)), hsl(var(--accent-secondary)))",
                                     display: "flex", alignItems: "center", justifyContent: "center", 
-                                    fontSize: "2rem", fontWeight: 900, color: "white",
+                                    fontSize: "2rem", fontWeight: 900, color: "hsl(var(--surface-contrast))",
                                     boxShadow: "0 8px 32px hsla(var(--accent-primary), 0.3)"
                                 }}>AT</div>
-                                <button style={{ position: "absolute", bottom: -8, right: -8, width: 32, height: 32, borderRadius: "50%", background: "white", border: "none", display: "flex", alignItems: "center", justifyContent: "center", color: "black", cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+                                <button style={{ position: "absolute", bottom: -8, right: -8, width: 32, height: 32, borderRadius: "50%", background: "hsl(var(--surface-contrast))", border: "none", display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--surface-contrast-text))", cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
                                     <Edit3 size={16} />
                                 </button>
                             </div>
@@ -88,15 +88,15 @@ export default function SettingsPage() {
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Preferred Name</label>
-                                <input type="text" defaultValue="Anshika Trivedi" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none" }} />
+                                <input type="text" defaultValue="Anshika Trivedi" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
                             </div>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Email Address</label>
-                                <input type="email" defaultValue="anshika@signage.io" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none" }} />
+                                <input type="email" defaultValue="anshika@signage.io" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
                             </div>
                             <div style={{ gridColumn: "span 2" }}>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Biography / Title</label>
-                                <textarea rows={3} defaultValue="Managing the Global Digital Signage Infrastructure at HQ." style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none", resize: "none" }} />
+                                <textarea rows={3} defaultValue="Managing the Global Digital Signage Infrastructure at HQ." style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", resize: "none" }} />
                             </div>
                         </div>
                     </div>
@@ -235,7 +235,7 @@ export default function SettingsPage() {
                                         }}
                                     >
                                         <t.icon size={24} style={{ color: theme === t.id ? "var(--accent-primary)" : "hsl(var(--text-muted))", marginBottom: 12 }} />
-                                        <p style={{ fontWeight: 700, fontSize: "0.9rem", color: theme === t.id ? "white" : "hsl(var(--text-secondary))" }}>{t.label}</p>
+                                        <p style={{ fontWeight: 700, fontSize: "0.9rem", color: theme === t.id ? "hsl(var(--text-primary))" : "hsl(var(--text-secondary))" }}>{t.label}</p>
                                         <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>{t.desc}</p>
                                     </button>
                                 ))}
@@ -250,7 +250,7 @@ export default function SettingsPage() {
                                         key={c} 
                                         onClick={() => setAccentColor(c)}
                                         style={{ 
-                                            width: 44, height: 44, borderRadius: 12, background: c, border: accentColor === c ? "4px solid rgba(255,255,255,0.4)" : "none",
+                                            width: 44, height: 44, borderRadius: 12, background: c, border: accentColor === c ? "4px solid hsla(var(--surface-contrast), 0.55)" : "none",
                                             cursor: "pointer", transform: accentColor === c ? "scale(1.15)" : "scale(1)", transition: "all 0.2s"
                                         }} 
                                     />
@@ -304,7 +304,7 @@ export default function SettingsPage() {
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 32 }}>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Timezone</label>
-                                <select defaultValue="America/New_York" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none" }}>
+                                <select defaultValue="America/New_York" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }}>
                                     <option value="America/New_York">Eastern (UTC-5)</option>
                                     <option value="Europe/London">London (UTC+0)</option>
                                     <option value="Europe/Berlin">Berlin (UTC+1)</option>
@@ -316,7 +316,7 @@ export default function SettingsPage() {
                             </div>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Language</label>
-                                <select defaultValue="en" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none" }}>
+                                <select defaultValue="en" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }}>
                                     <option value="en">English (US)</option>
                                     <option value="en-gb">English (UK)</option>
                                     <option value="de">Deutsch</option>
@@ -326,7 +326,7 @@ export default function SettingsPage() {
                             </div>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Date Format</label>
-                                <select defaultValue="mdy" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none" }}>
+                                <select defaultValue="mdy" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }}>
                                     <option value="mdy">MM/DD/YYYY</option>
                                     <option value="dmy">DD/MM/YYYY</option>
                                     <option value="ymd">YYYY-MM-DD</option>
@@ -334,7 +334,7 @@ export default function SettingsPage() {
                             </div>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Currency</label>
-                                <select defaultValue="usd" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "white", outline: "none" }}>
+                                <select defaultValue="usd" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }}>
                                     <option value="usd">USD ($)</option>
                                     <option value="eur">EUR (€)</option>
                                     <option value="gbp">GBP (£)</option>

@@ -194,7 +194,7 @@ export default function DashboardOverview() {
                                 style={{ flex: 1, background: "linear-gradient(to top, hsla(var(--accent-primary), 0.25), hsla(var(--accent-secondary), 0.7))", borderRadius: "4px 4px 0 0", minWidth: 2, position: "relative" }}>
                                 {h > 85 && (
                                     <motion.div animate={{ opacity: [0, 1, 0] }} transition={{ duration: 2, repeat: Infinity, delay: i * 0.1 }} style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)" }}>
-                                        <Sparkles size={8} style={{ color: "#fff" }} />
+                                        <Sparkles size={8} style={{ color: "hsl(var(--surface-contrast))" }} />
                                     </motion.div>
                                 )}
                             </motion.div>

@@ -55,7 +55,7 @@ export default function CommandPalette() {
                         animate={{ opacity: 1 }} 
                         exit={{ opacity: 0 }}
                         onClick={() => setIsOpen(false)}
-                        style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(12px)" }} 
+                        style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)" }} 
                     />
                     <motion.div 
                         initial={{ opacity: 0, scale: 0.95, y: -20 }}
@@ -66,7 +66,7 @@ export default function CommandPalette() {
                             position: "relative", width: "100%", maxWidth: 640, margin: "10vh auto", 
                             background: "hsla(var(--bg-surface-elevated), 0.95)", borderRadius: 16,
                             border: "1px solid hsla(var(--border-subtle), 0.5)", overflow: "hidden", 
-                            boxShadow: "0 24px 80px rgba(0,0,0,0.5), 0 0 0 1px hsla(var(--accent-primary), 0.1)"
+                            boxShadow: "var(--shadow-md), 0 0 0 1px hsla(var(--accent-primary), 0.1)"
                         }}
                     >
                         <div style={{ display: "flex", alignItems: "center", padding: "16px 20px", borderBottom: "1px solid hsla(var(--border-subtle), 0.2)" }}>
@@ -77,7 +77,7 @@ export default function CommandPalette() {
                                 onChange={e => setQuery(e.target.value)}
                                 placeholder="Search everything... (Cmd+K)"
                                 style={{ 
-                                    flex: 1, background: "none", border: "none", color: "white", 
+                                    flex: 1, background: "none", border: "none", color: "hsl(var(--text-primary))", 
                                     fontSize: "1.1rem", outline: "none", fontFamily: "inherit" 
                                 }}
                             />
@@ -93,7 +93,7 @@ export default function CommandPalette() {
                                             style={{ 
                                                 display: "flex", alignItems: "center", gap: 16, padding: "12px 16px", borderRadius: 10, border: "none", width: "100%", textAlign: "left", cursor: "pointer",
                                                 background: selectedIndex === i ? "hsla(var(--accent-primary), 0.12)" : "transparent",
-                                                color: selectedIndex === i ? "white" : "hsl(var(--text-secondary))",
+                                                color: selectedIndex === i ? "hsl(var(--text-primary))" : "hsl(var(--text-secondary))",
                                                 transition: "all 0.15s ease", outline: "none"
                                             }}
                                         >

@@ -197,7 +197,7 @@ export default function LayoutDesigner() {
                                                 const val = e.target.value;
                                                 setZones(zones.map(z => z.id === selectedZone ? { ...z, name: val } : z));
                                             }}
-                                            style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "white", outline: "none" }} 
+                                            style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "hsl(var(--text-primary))", outline: "none" }} 
                                         />
                                     </div>
 
@@ -212,7 +212,7 @@ export default function LayoutDesigner() {
                                                         padding: 8, borderRadius: 8, border: "1px solid", fontSize: "0.75rem", textTransform: "capitalize", cursor: "pointer",
                                                         background: zones.find(z => z.id === selectedZone)?.type === t ? "hsla(var(--accent-primary), 0.2)" : "transparent",
                                                         borderColor: zones.find(z => z.id === selectedZone)?.type === t ? "hsl(var(--accent-primary))" : "hsla(var(--border-subtle), 0.3)",
-                                                        color: zones.find(z => z.id === selectedZone)?.type === t ? "white" : "hsl(var(--text-muted))"
+                                                        color: zones.find(z => z.id === selectedZone)?.type === t ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))"
                                                     }}
                                                 >
                                                     {t}
@@ -224,11 +224,11 @@ export default function LayoutDesigner() {
                                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                                         <div>
                                             <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Width (%)</label>
-                                            <input type="number" value={Math.round(zones.find(z => z.id === selectedZone)?.w || 0)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "white" }} />
+                                            <input type="number" value={Math.round(zones.find(z => z.id === selectedZone)?.w || 0)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "hsl(var(--text-primary))" }} />
                                         </div>
                                         <div>
                                             <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Height (%)</label>
-                                            <input type="number" value={Math.round(zones.find(z => z.id === selectedZone)?.h || 0)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "white" }} />
+                                            <input type="number" value={Math.round(zones.find(z => z.id === selectedZone)?.h || 0)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "hsl(var(--text-primary))" }} />
                                         </div>
                                     </div>
                                 </div>

@@ -39,9 +39,9 @@ export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () 
                         display: "flex", alignItems: "center", justifyContent: "center",
                         boxShadow: "0 0 16px rgba(0,229,255,0.4)"
                     }}>
-                        <MonitorPlay size={18} color="white" />
+                        <MonitorPlay size={18} color="hsl(var(--surface-contrast))" />
                     </div>
-                    <h1 className="text-gradient" style={{ fontSize: "1.25rem", fontWeight: 700 }}>Orion-<span style={{ color: "#00e5ff" }}>Led</span></h1>
+                    <h1 className="text-gradient" style={{ fontSize: "1.25rem", fontWeight: 700 }}>Orion-<span style={{ color: "hsl(var(--accent-secondary))" }}>Led</span></h1>
                 </div>
                 <button className="mobile-only btn-icon-soft" onClick={close}>
                     <X size={20} />

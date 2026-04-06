@@ -1,7 +1,8 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { Bell, Search, User, Menu, Command, X, Monitor, AlertTriangle, CheckCircle, Upload, Clock } from "lucide-react";
+import { Bell, Search, User, Menu, Command, AlertTriangle, CheckCircle, Upload, Clock, Sun, Moon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useTheme } from "./ThemeProvider";
 
 const notifications = [
     { id: 1, title: "Device CAFE-SCR-003 went offline", desc: "London Cafe node is unreachable since 11:02 AM", time: "8 min ago", type: "danger", read: false },
@@ -30,6 +31,7 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
     const [showNotifs, setShowNotifs] = useState(false);
     const [readAll, setReadAll] = useState(false);
     const panelRef = useRef<HTMLDivElement>(null);
+    const { theme, toggleTheme } = useTheme();
 
     const unreadCount = readAll ? 0 : notifications.filter(n => !n.read).length;
 
@@ -76,6 +78,26 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
                     <Search size={20} />
                 </button>
 
+                <button
+                    className="btn-icon-soft"
+                    onClick={toggleTheme}
+                    aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+                    title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+                    style={{
+                        gap: 8,
+                        padding: "8px 12px",
+                        borderRadius: 999,
+                        border: "1px solid hsla(var(--border-subtle), 0.8)",
+                        background: "hsla(var(--bg-surface-elevated), 0.55)",
+                        color: "hsl(var(--text-secondary))",
+                    }}
+                >
+                    {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                    <span className="desktop-only" style={{ fontSize: "0.75rem", fontWeight: 700 }}>
+                        {theme === "dark" ? "Light" : "Dark"}
+                    </span>
+                </button>
+
                 {/* Notifications Button */}
                 <div ref={panelRef} style={{ position: "relative" }}>
                     <button onClick={() => setShowNotifs(!showNotifs)} style={{
@@ -88,7 +110,7 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
                                 position: "absolute", top: 2, right: 2, minWidth: 16, height: 16,
                                 borderRadius: "50%", background: "hsl(var(--status-danger))", fontSize: "0.55rem",
                                 display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800,
-                                color: "white", border: "2px solid hsl(var(--bg-base))"
+                                color: "hsl(var(--surface-contrast))", border: "2px solid hsl(var(--bg-base))"
                             }}>
                                 {unreadCount}
                             </motion.span>
@@ -107,7 +129,7 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
                                     position: "absolute", top: "calc(100% + 12px)", right: 0, width: 400,
                                     background: "hsla(var(--bg-surface-elevated), 0.97)", backdropFilter: "blur(20px)",
                                     border: "1px solid hsla(var(--border-subtle), 0.6)", borderRadius: 16,
-                                    boxShadow: "0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px hsla(var(--accent-primary), 0.05)",
+                                    boxShadow: "var(--shadow-md), 0 0 0 1px hsla(var(--accent-primary), 0.05)",
                                     overflow: "hidden", zIndex: 200
                                 }}
                             >

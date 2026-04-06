@@ -153,13 +153,13 @@ export default function AssetsPage() {
                                 <div style={{ height: 160, position: "relative", background: "hsla(var(--bg-base), 0.4)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
                                     <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at center, ${getGlowColor(asset.type)}15, transparent 70%)` }} />
                                     <motion.div whileHover={{ scale: 1.15, rotate: 2 }} transition={{ type: "spring", stiffness: 300 }}>{getIcon(asset.type, 48)}</motion.div>
-                                    <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s" }}>
-                                        <button className="btn-icon-soft" style={{ background: "#fff", color: "#000" }} onClick={() => setSelectedAsset(asset)}><Eye size={18} /></button>
-                                        <button className="btn-icon-soft" style={{ background: "#fff", color: "#000" }} onClick={() => handleCopyLink(asset.name)}><LinkIcon size={18} /></button>
-                                        <button className="btn-icon-soft" style={{ background: "hsla(var(--status-danger), 0.8)", color: "#fff" }} onClick={() => handleDelete(asset.id)}><Trash2 size={18} /></button>
+                                    <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.58)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s" }}>
+                                        <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => setSelectedAsset(asset)}><Eye size={18} /></button>
+                                        <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleCopyLink(asset.name)}><LinkIcon size={18} /></button>
+                                        <button className="btn-icon-soft" style={{ background: "hsla(var(--status-danger), 0.85)", color: "hsl(var(--surface-contrast))" }} onClick={() => handleDelete(asset.id)}><Trash2 size={18} /></button>
                                     </div>
                                     {asset.duration && (
-                                        <div style={{ position: "absolute", bottom: 8, right: 8, background: "rgba(0,0,0,0.7)", padding: "2px 8px", borderRadius: 6, fontSize: "0.7rem", fontWeight: 600 }}>{asset.duration}</div>
+                                        <div style={{ position: "absolute", bottom: 8, right: 8, background: "hsla(var(--overlay-base), 0.7)", color: "hsl(var(--surface-contrast))", padding: "2px 8px", borderRadius: 6, fontSize: "0.7rem", fontWeight: 600 }}>{asset.duration}</div>
                                     )}
                                 </div>
                                 <div style={{ padding: 20, flex: 1, display: "flex", flexDirection: "column" }}>
@@ -187,7 +187,7 @@ export default function AssetsPage() {
             <AnimatePresence>
                 {isUploadOpen && (
                     <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setIsUploadOpen(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 500, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -228,7 +228,7 @@ export default function AssetsPage() {
             <AnimatePresence>
                 {selectedAsset && (
                     <motion.div key="asset-info" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", backdropFilter: "blur(20px)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.82)", backdropFilter: "blur(20px)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setSelectedAsset(null)}>
                         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 600, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -236,7 +236,7 @@ export default function AssetsPage() {
                                 <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>Asset Inspector</h2>
                                 <button className="btn-icon-soft" onClick={() => setSelectedAsset(null)}><X size={24} /></button>
                             </div>
-                            <div style={{ height: 200, background: "#000", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
+                            <div style={{ height: 200, background: "hsla(var(--bg-base), 0.85)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24 }}>
                                 {getIcon(selectedAsset.type, 64)}
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
