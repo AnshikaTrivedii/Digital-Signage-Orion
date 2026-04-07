@@ -101,6 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             : undefined;
         const fallbackMembership = session.memberships[0];
         const resolvedOrganizationId =
+            requestedOrganizationId ??
             session.activeOrganization?.id ??
             matchingMembership?.organization.id ??
             fallbackMembership?.organization.id ??

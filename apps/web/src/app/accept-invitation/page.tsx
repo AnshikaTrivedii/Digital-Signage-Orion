@@ -9,6 +9,19 @@ import { toast } from "react-hot-toast";
 import { useAuth } from "@/components/AuthProvider";
 import { ApiError } from "@/lib/api";
 
+function resolveDefaultRoute(session: {
+    platformRole: "SUPER_ADMIN" | "PLATFORM_ADMIN" | "SALES" | "SUPPORT" | null;
+    memberships: Array<unknown>;
+}) {
+    if (session.memberships.length > 0 || ["SUPER_ADMIN", "PLATFORM_ADMIN"].includes(session.platformRole ?? "")) {
+        return "/app";
+    }
+    if (["SUPER_ADMIN", "PLATFORM_ADMIN", "SALES", "SUPPORT"].includes(session.platformRole ?? "")) {
+        return "/platform";
+    }
+    return "/login";
+}
+
 export default function AcceptInvitationPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -27,7 +40,7 @@ export default function AcceptInvitationPage() {
 
     useEffect(() => {
         if (!isAuthLoading && user) {
-            router.replace("/settings");
+            router.replace(resolveDefaultRoute(user));
         }
     }, [isAuthLoading, router, user]);
 
@@ -47,7 +60,7 @@ export default function AcceptInvitationPage() {
         try {
             const session = await acceptInvitation(token.trim(), fullName.trim(), password);
             toast.success(session.activeOrganization ? "Invitation accepted. Workspace ready." : "Invitation accepted.");
-            router.push("/settings");
+            router.push(resolveDefaultRoute(session));
         } catch (error) {
             const message = error instanceof ApiError ? error.message : "Unable to accept this invitation right now";
             toast.error(message);
@@ -59,6 +72,7 @@ export default function AcceptInvitationPage() {
     return (
         <div style={{
             minHeight: "100vh",
+            width: "100vw",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",

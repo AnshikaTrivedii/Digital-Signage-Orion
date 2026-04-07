@@ -1,4 +1,3 @@
-import AppShell from "@/components/AppShell";
 import { AuthProvider } from "@/components/AuthProvider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
@@ -16,9 +15,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ThemeProvider>
                     <AuthProvider>
                         <div className="bg-mesh"></div>
-                        <div className="app-layout">
-                            <AppShell>{children}</AppShell>
-                        </div>
+                        <div className="app-layout">{children}</div>
                     </AuthProvider>
                 </ThemeProvider>
             </body>

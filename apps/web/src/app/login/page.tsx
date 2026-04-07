@@ -8,6 +8,44 @@ import { toast } from "react-hot-toast";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 
+type PortalChoice = "dashboard" | "platform";
+
+function resolveDefaultRoute(session: {
+    platformRole: "SUPER_ADMIN" | "PLATFORM_ADMIN" | "SALES" | "SUPPORT" | null;
+    memberships: Array<unknown>;
+}) {
+    if (session.memberships.length > 0 || ["SUPER_ADMIN", "PLATFORM_ADMIN"].includes(session.platformRole ?? "")) {
+        return "/app";
+    }
+    if (["SUPER_ADMIN", "PLATFORM_ADMIN", "SALES", "SUPPORT"].includes(session.platformRole ?? "")) {
+        return "/platform";
+    }
+    return "/login";
+}
+
+function resolveRouteForChoice(
+    session: {
+        platformRole: "SUPER_ADMIN" | "PLATFORM_ADMIN" | "SALES" | "SUPPORT" | null;
+        memberships: Array<unknown>;
+    },
+    portalChoice: PortalChoice,
+) {
+    const hasPlatformAccess = ["SUPER_ADMIN", "PLATFORM_ADMIN", "SALES", "SUPPORT"].includes(session.platformRole ?? "");
+    const hasDashboardAccess = session.memberships.length > 0 || ["SUPER_ADMIN", "PLATFORM_ADMIN"].includes(session.platformRole ?? "");
+
+    if (portalChoice === "platform") {
+        if (!hasPlatformAccess) {
+            throw new Error("This account does not have access to the Platform Portal.");
+        }
+        return "/platform";
+    }
+
+    if (!hasDashboardAccess) {
+        throw new Error("This account does not have access to a client dashboard yet.");
+    }
+    return "/app";
+}
+
 const floatingOrbs = [
     { id: 0, size: 260, x: 12, y: 14, color: "#00e5ff", duration: 18 },
     { id: 1, size: 320, x: 74, y: 18, color: "#a78bfa", duration: 22 },
@@ -18,6 +56,7 @@ const floatingOrbs = [
 
 export default function LoginPage() {
     const [step, setStep] = useState(1);
+    const [portalChoice, setPortalChoice] = useState<PortalChoice>("dashboard");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -26,7 +65,7 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (!isAuthLoading && user) {
-            router.replace("/settings");
+            router.replace(resolveDefaultRoute(user));
         }
     }, [isAuthLoading, router, user]);
 
@@ -50,10 +89,22 @@ export default function LoginPage() {
 
         try {
             const session = await login(email, password);
-            toast.success(session.activeOrganization ? "Workspace synced successfully." : "Signed in successfully.");
-            router.push("/settings");
+            const destination = resolveRouteForChoice(session, portalChoice);
+            toast.success(
+                destination === "/platform"
+                    ? "Platform access ready."
+                    : session.activeOrganization
+                        ? "Workspace synced successfully."
+                        : "Signed in successfully.",
+            );
+            router.push(destination);
         } catch (error) {
-            const message = error instanceof ApiError ? error.message : "Unable to verify your identity right now";
+            const message =
+                error instanceof ApiError
+                    ? error.message
+                    : error instanceof Error
+                        ? error.message
+                        : "Unable to verify your identity right now";
             toast.error(message);
         } finally {
             setIsLoading(false);
@@ -62,7 +113,7 @@ export default function LoginPage() {
 
     return (
         <div style={{ 
-            minHeight: "100vh", background: "hsl(var(--bg-base))", color: "hsl(var(--text-primary))", 
+            minHeight: "100vh", width: "100vw", background: "hsl(var(--bg-base))", color: "hsl(var(--text-primary))", 
             display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", 
             position: "relative", fontFamily: "'Inter', sans-serif"
         }}>
@@ -163,6 +214,55 @@ export default function LoginPage() {
                         boxShadow: "var(--shadow-md), inset 0 1px 0 hsla(var(--surface-contrast), 0.08)"
                     }}
                 >
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+                        {[
+                            { id: "dashboard", title: "Client Dashboard", desc: "Operate screens, content, and schedules" },
+                            { id: "platform", title: "Platform Portal", desc: "Manage clients, onboarding, and memberships" },
+                        ].map((option) => {
+                            const isActive = portalChoice === option.id;
+                            return (
+                                <button
+                                    key={option.id}
+                                    type="button"
+                                    onClick={() => setPortalChoice(option.id as PortalChoice)}
+                                    style={{
+                                        textAlign: "left",
+                                        padding: "14px 16px",
+                                        borderRadius: 16,
+                                        border: isActive ? "2px solid hsl(var(--accent-primary))" : "1px solid hsla(var(--border-subtle), 0.55)",
+                                        background: isActive
+                                            ? "linear-gradient(180deg, hsla(var(--accent-primary), 0.2), hsla(var(--accent-primary), 0.1))"
+                                            : "hsla(var(--bg-base), 0.35)",
+                                        color: "hsl(var(--text-primary))",
+                                        transition: "all 0.2s ease",
+                                        boxShadow: isActive ? "0 0 0 3px hsla(var(--accent-primary), 0.14), 0 12px 28px hsla(var(--accent-primary), 0.12)" : "none",
+                                        transform: isActive ? "translateY(-1px)" : "translateY(0)",
+                                        position: "relative",
+                                    }}
+                                >
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+                                        <div style={{ fontSize: "0.88rem", fontWeight: 800, color: isActive ? "hsl(var(--text-primary))" : "hsl(var(--text-secondary))" }}>
+                                            {option.title}
+                                        </div>
+                                        <div
+                                            style={{
+                                                width: 18,
+                                                height: 18,
+                                                borderRadius: "50%",
+                                                border: isActive ? "5px solid hsl(var(--accent-primary))" : "2px solid hsla(var(--border-strong), 0.9)",
+                                                background: isActive ? "hsla(var(--accent-primary), 0.2)" : "transparent",
+                                                flexShrink: 0,
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={{ fontSize: "0.72rem", color: isActive ? "hsl(var(--text-secondary))" : "hsl(var(--text-muted))", lineHeight: 1.45 }}>
+                                        {option.desc}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
+
                     <AnimatePresence mode="wait">
                         {step === 1 ? (
                             <motion.form 
@@ -173,7 +273,11 @@ export default function LoginPage() {
                                 onSubmit={handleNext}
                             >
                                 <h2 style={{ fontSize: "1.35rem", fontWeight: 700, marginBottom: 8 }}>Initialize Identity</h2>
-                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginBottom: 36 }}>Enter your account email to access the Orion signage workspace.</p>
+                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginBottom: 36 }}>
+                                    {portalChoice === "platform"
+                                        ? "Sign in to the internal Orion platform for onboarding, clients, billing, and operations."
+                                        : "Sign in to the client dashboard for screens, content, schedules, and analytics."}
+                                </p>
 
                                 <div style={{ marginBottom: 28 }}>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.08em" }}>Email Address</label>
@@ -226,7 +330,9 @@ export default function LoginPage() {
                             >
                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 36 }}>
                                     <div>
-                                        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, marginBottom: 6 }}>Verify Access</h2>
+                                        <h2 style={{ fontSize: "1.35rem", fontWeight: 700, marginBottom: 6 }}>
+                                            {portalChoice === "platform" ? "Verify Platform Access" : "Verify Dashboard Access"}
+                                        </h2>
                                         <button type="button" onClick={() => setStep(1)} style={{ background: "none", border: "none", color: "#00e5ff", padding: 0, fontSize: "0.85rem", cursor: "pointer" }}>← Change email</button>
                                     </div>
                                     <motion.div 
@@ -240,7 +346,9 @@ export default function LoginPage() {
 
                                 <div style={{ background: "rgba(0,229,255,0.05)", border: "1px solid rgba(0,229,255,0.1)", borderRadius: 12, padding: "12px 16px", marginBottom: 24, display: "flex", gap: 10, alignItems: "center" }}>
                                     <Mail size={14} style={{ color: "#00e5ff", flexShrink: 0 }} />
-                                    <span style={{ fontSize: "0.8rem", color: "hsl(var(--text-secondary))" }}>{email}</span>
+                                    <span style={{ fontSize: "0.8rem", color: "hsl(var(--text-secondary))" }}>
+                                        {email} · {portalChoice === "platform" ? "Platform Portal" : "Client Dashboard"}
+                                    </span>
                                 </div>
 
                                 <div style={{ marginBottom: 32 }}>
