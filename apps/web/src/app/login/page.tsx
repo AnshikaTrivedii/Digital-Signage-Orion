@@ -2,17 +2,19 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Lock, Mail, ChevronRight, Zap, Globe, Cpu, Fingerprint, MonitorPlay, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
+import { ApiError } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
-const floatingOrbs = Array.from({ length: 5 }, (_, i) => ({
-    id: i,
-    size: 200 + Math.random() * 400,
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    color: i % 3 === 0 ? "#00e5ff" : i % 3 === 1 ? "#a78bfa" : "#f472b6",
-    duration: 15 + Math.random() * 10,
-}));
+const floatingOrbs = [
+    { id: 0, size: 260, x: 12, y: 14, color: "#00e5ff", duration: 18 },
+    { id: 1, size: 320, x: 74, y: 18, color: "#a78bfa", duration: 22 },
+    { id: 2, size: 420, x: 18, y: 72, color: "#f472b6", duration: 20 },
+    { id: 3, size: 280, x: 84, y: 68, color: "#00e5ff", duration: 24 },
+    { id: 4, size: 360, x: 52, y: 48, color: "#a78bfa", duration: 19 },
+] as const;
 
 export default function LoginPage() {
     const [step, setStep] = useState(1);
@@ -20,11 +22,18 @@ export default function LoginPage() {
     const [password, setPassword] = useState("");
     const [isLoading, setIsLoading] = useState(false);
     const router = useRouter();
+    const { login, user, isLoading: isAuthLoading } = useAuth();
+
+    useEffect(() => {
+        if (!isAuthLoading && user) {
+            router.replace("/settings");
+        }
+    }, [isAuthLoading, router, user]);
 
     const handleNext = (e: React.FormEvent) => {
         e.preventDefault();
         if (!email.includes("@")) {
-            toast.error("Please enter a valid work email");
+            toast.error("Please enter a valid email address");
             return;
         }
         setStep(2);
@@ -32,13 +41,23 @@ export default function LoginPage() {
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!password.trim()) {
+            toast.error("Please enter your password");
+            return;
+        }
+
         setIsLoading(true);
-        
-        setTimeout(() => {
+
+        try {
+            const session = await login(email, password);
+            toast.success(session.activeOrganization ? "Workspace synced successfully." : "Signed in successfully.");
+            router.push("/settings");
+        } catch (error) {
+            const message = error instanceof ApiError ? error.message : "Unable to verify your identity right now";
+            toast.error(message);
+        } finally {
             setIsLoading(false);
-            toast.success("Identity Verified. Syncing workspace...");
-            setTimeout(() => router.push("/"), 1200);
-        }, 1800);
+        }
     };
 
     return (
@@ -154,16 +173,16 @@ export default function LoginPage() {
                                 onSubmit={handleNext}
                             >
                                 <h2 style={{ fontSize: "1.35rem", fontWeight: 700, marginBottom: 8 }}>Initialize Identity</h2>
-                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginBottom: 36 }}>Enter your corporate credentials to access the signage network.</p>
+                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginBottom: 36 }}>Enter your account email to access the Orion signage workspace.</p>
 
                                 <div style={{ marginBottom: 28 }}>
-                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.08em" }}>Corporate Email</label>
+                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.08em" }}>Email Address</label>
                                     <div style={{ position: "relative" }}>
                                         <Mail size={18} style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: "hsl(var(--text-muted))" }} />
                                         <input 
                                             autoFocus
                                             type="email" 
-                                            placeholder="name@company.io"
+                                            placeholder="name@workspace.com"
                                             value={email}
                                             onChange={e => setEmail(e.target.value)}
                                             style={{ 
@@ -191,6 +210,9 @@ export default function LoginPage() {
                                 <div style={{ marginTop: 24, textAlign: "center" }}>
                                     <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
                                         By continuing, you agree to the Orion-Led <span style={{ color: "#00e5ff", cursor: "pointer" }}>Terms of Service</span>
+                                    </p>
+                                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 12 }}>
+                                        Have an invite link? <Link href="/accept-invitation" style={{ color: "#00e5ff", textDecoration: "none" }}>Finish account setup</Link>
                                     </p>
                                 </div>
                             </motion.form>

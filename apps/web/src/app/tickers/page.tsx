@@ -21,10 +21,10 @@ interface Ticker {
 
 const mockTickers: Ticker[] = [
     { id: "t1", text: "🔥 FLASH SALE: 50% off all summer collection items — Limited time only!", speed: "Normal", style: "Neon", color: "#f87171", status: "Active", priority: "Urgent", screens: 45, createdAt: "2 hours ago" },
-    { id: "t2", text: "Welcome to Orion-Led HQ – Your visitor pass is valid for all floors. WiFi: Guest_HQ", speed: "Slow", style: "Classic", color: "#00e5ff", status: "Active", priority: "Normal", screens: 12, createdAt: "1 day ago" },
+    { id: "t2", text: "Welcome to the visitor lobby. Please keep your access pass visible while on site.", speed: "Slow", style: "Classic", color: "#00e5ff", status: "Active", priority: "Normal", screens: 12, createdAt: "1 day ago" },
     { id: "t3", text: "Q1 2026 revenue up 23% YoY. Full earnings report available on the intranet.", speed: "Normal", style: "Gradient", color: "#4ade80", status: "Active", priority: "Normal", screens: 200, createdAt: "3 days ago" },
     { id: "t4", text: "Scheduled maintenance: Building A elevators offline Saturday 8AM-12PM.", speed: "Fast", style: "Minimal", color: "#fbbf24", status: "Paused", priority: "Low", screens: 30, createdAt: "5 days ago" },
-    { id: "t5", text: "🎉 Employee of the Month: Sarah Chen — Congratulations from the team!", speed: "Normal", style: "Neon", color: "#a78bfa", status: "Draft", priority: "Normal", screens: 0, createdAt: "1 week ago" },
+    { id: "t5", text: "🎉 Team spotlight: congratulations on this month’s service milestone.", speed: "Normal", style: "Neon", color: "#a78bfa", status: "Draft", priority: "Normal", screens: 0, createdAt: "1 week ago" },
 ];
 
 const priorityColor = (p: string) => {

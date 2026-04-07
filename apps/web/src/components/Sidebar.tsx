@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { 
     LayoutDashboard, MonitorPlay, ListVideo, 
     Image as ImageIcon, Settings, Activity, 
@@ -8,6 +8,7 @@ import {
     HelpCircle, ShieldCheck, CalendarClock, SlidersHorizontal
 } from "lucide-react";
 import { motion } from "framer-motion";
+import { useAuth } from "./AuthProvider";
 
 const navItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -25,6 +26,8 @@ const navItems = [
 
 export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () => void }) {
     const pathname = usePathname();
+    const router = useRouter();
+    const { logout, user } = useAuth();
 
     if (pathname === "/login") return null;
 
@@ -87,21 +90,33 @@ export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () 
             <div style={{ marginTop: "auto", borderTop: "1px solid hsla(var(--border-subtle), 1)", paddingTop: 24 }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <Link href="/login" style={{ textDecoration: "none" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", color: "hsl(var(--status-danger))", fontSize: "0.85rem", cursor: "pointer" }}>
+                        <div
+                            style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", color: "hsl(var(--status-danger))", fontSize: "0.85rem", cursor: "pointer" }}
+                            onClick={(event) => {
+                                event.preventDefault();
+                                logout();
+                                close();
+                                router.push("/login");
+                            }}
+                        >
                             <LogOut size={18} />
-                            <span>Sign Out Instance</span>
+                            <span>Sign Out</span>
                         </div>
                     </Link>
                     
                     <div className="glass-panel" style={{ marginTop: 12, padding: 16, background: "hsla(var(--bg-base), 0.4)" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                             <ShieldCheck size={14} style={{ color: "var(--status-success)" }} />
-                            <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--status-success)" }}>SECURE_NODE_01</span>
+                            <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--status-success)" }}>
+                                {user?.platformRole ? user.platformRole.replaceAll("_", " ") : user?.activeOrganization?.role?.replaceAll("_", " ") ?? "WORKSPACE SESSION"}
+                            </span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--status-success)" }} />
-                                <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>Uptime: 99.98%</span>
+                                <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>
+                                    {user?.memberships.length ? `${user.memberships.length} accessible workspace${user.memberships.length > 1 ? "s" : ""}` : "Platform session active"}
+                                </span>
                             </div>
                             <HelpCircle size={14} style={{ color: "hsl(var(--text-muted))", cursor: "pointer" }} />
                         </div>
@@ -111,11 +126,3 @@ export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () 
         </aside>
     );
 }
-
-const LogOutIcon = ({ size, style }: { size?: number, style?: any }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-        <polyline points="16 17 21 12 16 7"></polyline>
-        <line x1="21" y1="12" x2="9" y2="12"></line>
-    </svg>
-);

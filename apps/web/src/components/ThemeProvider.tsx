@@ -18,10 +18,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         const storedTheme = window.localStorage.getItem(STORAGE_KEY);
-        const initialTheme: Theme = storedTheme === "light" ? "light" : "dark";
-        setTheme(initialTheme);
-        document.documentElement.dataset.theme = initialTheme;
+        if (storedTheme === "light") {
+            setTheme("light");
+            return;
+        }
+        document.documentElement.dataset.theme = theme;
     }, []);
+
+    useEffect(() => {
+        document.documentElement.dataset.theme = theme;
+    }, [theme]);
 
     const value = useMemo(
         () => ({

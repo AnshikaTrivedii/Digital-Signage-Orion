@@ -13,6 +13,7 @@
     "build:web": "npm run build --workspace @orion/web",
     "build:api": "npm run build --workspace @orion/api",
     "build:worker": "npm run build --workspace @orion/worker",
-    "lint:web": "npm run lint --workspace @orion/web"
+    "lint:web": "npm run lint --workspace @orion/web",
+    "prisma:generate": "npx prisma generate"
   }
 }

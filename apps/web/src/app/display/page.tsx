@@ -21,7 +21,7 @@ const demoPlaylist: PlaylistItem[] = [
 
 const tickerItems = [
     "FLASH SALE: 50% off all summer collection",
-    "Welcome to Orion-Led HQ — Node NYC-01 Active",
+    "Welcome to Orion-Led — Main lobby display online",
     "Q1 revenue up 23% YoY — record breaking quarter",
     "Next team event: Friday 6PM — Rooftop Mixer",
     "New firmware update available for all edge nodes",
@@ -173,7 +173,7 @@ export default function LiveDisplayPlayer() {
                                 style={{ width: 8, height: 8, borderRadius: "50%", background: "#4ade80", boxShadow: "0 0 10px #4ade80" }}
                             />
                             <span style={{ fontSize: "0.8rem", fontWeight: 700, letterSpacing: "0.08em", color: "rgba(255,255,255,0.7)" }}>
-                                NODE-NYC-HQ-01
+                                NODE-LOBBY-01
                             </span>
                             <span style={{
                                 fontSize: "0.6rem", fontWeight: 700, padding: "2px 8px", borderRadius: 4,

@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { Bell, Search, User, Menu, Command, AlertTriangle, CheckCircle, Upload, Clock, Sun, Moon } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTheme } from "./ThemeProvider";
+import { useAuth } from "./AuthProvider";
 
 const notifications = [
     { id: 1, title: "Device CAFE-SCR-003 went offline", desc: "London Cafe node is unreachable since 11:02 AM", time: "8 min ago", type: "danger", read: false },
@@ -32,6 +33,7 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
     const [readAll, setReadAll] = useState(false);
     const panelRef = useRef<HTMLDivElement>(null);
     const { theme, toggleTheme } = useTheme();
+    const { user, activeOrganizationId, setActiveOrganization } = useAuth();
 
     const unreadCount = readAll ? 0 : notifications.filter(n => !n.read).length;
 
@@ -44,6 +46,10 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
+
+    const roleLabel = user?.activeOrganization?.role?.replaceAll("_", " ") ?? user?.platformRole?.replaceAll("_", " ") ?? "Workspace User";
+    const memberships = user?.memberships ?? [];
+    const activeOrganization = memberships.find((membership) => membership.organization.id === activeOrganizationId) ?? memberships[0] ?? null;
 
     return (
         <header className="app-header">
@@ -71,6 +77,34 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
                         <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "hsl(var(--text-muted))" }}>K</span>
                     </div>
                 </button>
+
+                {memberships.length > 0 && (
+                    <label className="desktop-only" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                            Workspace
+                        </span>
+                        <select
+                            value={activeOrganization?.organization.id ?? ""}
+                            onChange={(event) => void setActiveOrganization(event.target.value || null)}
+                            style={{
+                                borderRadius: 999,
+                                border: "1px solid hsla(var(--border-subtle), 0.8)",
+                                background: "hsla(var(--bg-surface-elevated), 0.55)",
+                                color: "hsl(var(--text-primary))",
+                                padding: "9px 14px",
+                                fontSize: "0.8rem",
+                                outline: "none",
+                                minWidth: 220,
+                            }}
+                        >
+                            {memberships.map((membership) => (
+                                <option key={membership.organization.id} value={membership.organization.id}>
+                                    {membership.organization.name}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                )}
             </div>
 
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -178,8 +212,11 @@ export default function Header({ toggleSidebar }: { toggleSidebar: () => void })
                     paddingLeft: 12, borderLeft: "1px solid hsla(var(--border-subtle), 1)"
                 }}>
                     <div className="desktop-only" style={{ textAlign: "right" }}>
-                        <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>Anshika Trivedi</p>
-                        <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>Super Admin</p>
+                        <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>{user?.fullName ?? "Workspace User"}</p>
+                        <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>
+                            {roleLabel}
+                            {activeOrganization ? ` • ${activeOrganization.organization.name}` : ""}
+                        </p>
                     </div>
                     <div style={{
                         width: 36, height: 36, borderRadius: 10,

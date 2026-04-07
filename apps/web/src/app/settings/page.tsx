@@ -1,29 +1,17 @@
 "use client";
+import type { CSSProperties } from "react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
+import { useAuth } from "@/components/AuthProvider";
+import { AccessManagementPanel } from "@/components/settings/AccessManagementPanel";
 import {
     User, Shield, Globe, Bell, Palette, Key, Users,
-    ChevronRight, Save, Plus, Trash2, Mail, Lock, Menu,
+    ChevronRight, Save, Plus, Mail, Lock,
     Smartphone, Monitor, Moon, Sun, Laptop, Hash,
     Database, Activity, CheckCircle, AlertCircle,
-    Copy, ExternalLink, Sliders, Zap, MoreVertical
+    Copy, ExternalLink, Sliders, Zap
 } from "lucide-react";
-
-interface UserAccount {
-    id: number;
-    name: string;
-    email: string;
-    role: "Super Admin" | "Admin" | "Editor" | "Viewer";
-    status: "Active" | "Invited" | "Suspended";
-}
-
-const mockUsers: UserAccount[] = [
-    { id: 1, name: "Anshika Trivedi", email: "anshika@signage.io", role: "Super Admin", status: "Active" },
-    { id: 2, name: "Sarah Editor", email: "sarah@signage.io", role: "Editor", status: "Active" },
-    { id: 3, name: "Mike Viewer", email: "mike@signage.io", role: "Viewer", status: "Active" },
-    { id: 4, name: "Lisa Manager", email: "lisa@signage.io", role: "Admin", status: "Invited" },
-];
 
 const Toggle = ({ on, setOn }: { on: boolean, setOn?: (val: boolean) => void }) => (
     <div onClick={() => setOn && setOn(!on)} style={{
@@ -43,9 +31,22 @@ export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState("profile");
     const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
     const [accentColor, setAccentColor] = useState("#00e5ff");
+    const { user } = useAuth();
     const [notifications, setNotifications] = useState({
         offline: true, sync: true, storage: true, approval: false
     });
+    const initials = (user?.fullName ?? "OU")
+        .split(" ")
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? "")
+        .join("");
+    const profileTitle = user?.activeOrganization
+        ? `${user.activeOrganization.role.replaceAll("_", " ")} • ${user.memberships.find((membership) => membership.organization.id === user.activeOrganization?.id)?.organization.name ?? user.activeOrganization.slug}`
+        : user?.platformRole?.replaceAll("_", " ") ?? "Workspace User";
+    const profileBio = user?.activeOrganization
+        ? `Managing access and content operations for ${user.memberships.find((membership) => membership.organization.id === user.activeOrganization?.id)?.organization.name ?? "the active organization"}.`
+        : "Managing Orion platform access, onboarding, and operational controls.";
 
     const renderContent = () => {
         switch (activeTab) {
@@ -70,17 +71,21 @@ export default function SettingsPage() {
                                     display: "flex", alignItems: "center", justifyContent: "center", 
                                     fontSize: "2rem", fontWeight: 900, color: "hsl(var(--surface-contrast))",
                                     boxShadow: "0 8px 32px hsla(var(--accent-primary), 0.3)"
-                                }}>AT</div>
+                                }}>{initials}</div>
                                 <button style={{ position: "absolute", bottom: -8, right: -8, width: 32, height: 32, borderRadius: "50%", background: "hsl(var(--surface-contrast))", border: "none", display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--surface-contrast-text))", cursor: "pointer", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
                                     <Edit3 size={16} />
                                 </button>
                             </div>
                             <div>
-                                <h3 style={{ fontSize: "1.2rem", fontWeight: 600 }}>Anshika Trivedi</h3>
-                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.9rem" }}>Enterprise Administrator</p>
+                                <h3 style={{ fontSize: "1.2rem", fontWeight: 600 }}>{user?.fullName ?? "Workspace User"}</h3>
+                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.9rem" }}>{profileTitle}</p>
                                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                                    <span style={{ fontSize: "0.7rem", fontWeight: 700, background: "hsla(var(--accent-primary), 0.1)", color: "hsl(var(--accent-primary))", padding: "4px 10px", borderRadius: 20 }}>SUPER_ADMIN_V2</span>
-                                    <span style={{ fontSize: "0.7rem", fontWeight: 700, background: "hsla(var(--status-success), 0.1)", color: "hsl(var(--status-success))", padding: "4px 10px", borderRadius: 20 }}>VERIFIED_KYC</span>
+                                    <span style={{ fontSize: "0.7rem", fontWeight: 700, background: "hsla(var(--accent-primary), 0.1)", color: "hsl(var(--accent-primary))", padding: "4px 10px", borderRadius: 20 }}>
+                                        {user?.platformRole ? user.platformRole.replaceAll("_", " ") : user?.activeOrganization?.role.replaceAll("_", " ") ?? "USER"}
+                                    </span>
+                                    <span style={{ fontSize: "0.7rem", fontWeight: 700, background: "hsla(var(--status-success), 0.1)", color: "hsl(var(--status-success))", padding: "4px 10px", borderRadius: 20 }}>
+                                        {user?.memberships.length ? `${user.memberships.length} WORKSPACE${user.memberships.length > 1 ? "S" : ""}` : "PLATFORM ACCESS"}
+                                    </span>
                                 </div>
                             </div>
                         </div>
@@ -88,80 +93,22 @@ export default function SettingsPage() {
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Preferred Name</label>
-                                <input type="text" defaultValue="Anshika Trivedi" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
+                                <input type="text" defaultValue={user?.fullName ?? ""} style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
                             </div>
                             <div>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Email Address</label>
-                                <input type="email" defaultValue="anshika@signage.io" style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
+                                <input type="email" defaultValue={user?.email ?? ""} style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
                             </div>
                             <div style={{ gridColumn: "span 2" }}>
                                 <label style={{ display: "block", fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Biography / Title</label>
-                                <textarea rows={3} defaultValue="Managing the Global Digital Signage Infrastructure at HQ." style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", resize: "none" }} />
+                                <textarea rows={3} defaultValue={profileBio} style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", resize: "none" }} />
                             </div>
                         </div>
                     </div>
                 );
 
             case "users":
-                return (
-                    <div>
-                        <div className="flex-between" style={{ marginBottom: 32 }}>
-                            <div>
-                                <h2 style={{ fontSize: "1.5rem", fontWeight: 700 }}>Users & Access Control</h2>
-                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>Manage team members and their granular permission levels.</p>
-                            </div>
-                            <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => toast.success("Invitation Modal Open")}>
-                                <Plus size={18} /> Invite Colleague
-                            </button>
-                        </div>
-
-                        <div className="glass-panel" style={{ overflow: "hidden" }}>
-                            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                                <thead>
-                                    <tr style={{ background: "hsla(var(--bg-surface-elevated), 0.3)", borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                        {["User Info", "Assigned Role", "Status", "Last Seen", ""].map(h => (
-                                            <th key={h} style={{ padding: "16px 24px", textAlign: "left", fontSize: "0.7rem", textTransform: "uppercase", fontWeight: 800, color: "hsl(var(--text-muted))" }}>{h}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {mockUsers.map((u, i) => (
-                                        <tr key={u.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                            <td style={{ padding: "16px 24px" }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                                    <div style={{ width: 36, height: 36, borderRadius: 10, background: `hsla(${i % 2 === 0 ? "var(--accent-primary)" : "var(--accent-secondary)"}, 0.2)`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: "0.8rem", color: i % 2 === 0 ? "var(--accent-primary)" : "var(--accent-secondary)" }}>
-                                                        {u.name.charAt(0)}
-                                                    </div>
-                                                    <div>
-                                                        <p style={{ fontWeight: 600, fontSize: "0.9rem" }}>{u.name}</p>
-                                                        <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{u.email}</p>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td style={{ padding: "16px 24px" }}>
-                                                <span style={{ fontSize: "0.75rem", fontWeight: 600, padding: "4px 10px", borderRadius: 6, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)" }}>
-                                                    {u.role}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: "16px 24px" }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", fontWeight: 600, color: u.status === "Active" ? "hsl(var(--status-success))" : "hsl(var(--status-warning))" }}>
-                                                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: u.status === "Active" ? "var(--status-success)" : "var(--status-warning)" }} />
-                                                    {u.status}
-                                                </div>
-                                            </td>
-                                            <td style={{ padding: "16px 24px", color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>
-                                                2 hours ago
-                                            </td>
-                                            <td style={{ padding: "16px 24px", textAlign: "right" }}>
-                                                <button className="btn-icon-soft"><MoreVertical size={16} /></button>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                );
+                return <AccessManagementPanel />;
 
             case "security":
                 return (
@@ -226,7 +173,7 @@ export default function SettingsPage() {
                                 ].map(t => (
                                     <button 
                                         key={t.id} 
-                                        onClick={() => setTheme(t.id as any)}
+                                        onClick={() => setTheme(t.id as "dark" | "light" | "system")}
                                         className="glass-panel" 
                                         style={{ 
                                             padding: 20, textAlign: "center", border: theme === t.id ? "2px solid hsl(var(--accent-primary))" : "1px solid hsla(var(--border-subtle), 0.1)",
@@ -430,7 +377,7 @@ export default function SettingsPage() {
                                 </button>
                             </div>
                             {[
-                                { url: "https://api.company.io/hooks/signage", events: "device.offline, content.deployed", status: "active" },
+                                { url: "https://hooks.orion.local/signage", events: "device.offline, content.deployed", status: "active" },
                                 { url: "https://slack.com/inbound/orion-alerts", events: "device.offline, alert.critical", status: "active" },
                             ].map((hook, i) => (
                                 <div key={i} style={{ padding: "14px 16px", borderRadius: 10, background: "hsla(var(--bg-base), 0.3)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -553,7 +500,7 @@ export default function SettingsPage() {
 }
 
 // Missing icon used in profile
-const Edit3 = ({ size, style }: { size?: number, style?: any }) => (
+const Edit3 = ({ size, style }: { size?: number, style?: CSSProperties }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
         <path d="M12 20h9"></path>
         <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>

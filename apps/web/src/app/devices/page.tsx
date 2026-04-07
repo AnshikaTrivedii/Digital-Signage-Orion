@@ -26,7 +26,7 @@ interface Device {
 }
 
 const mockDevices: Device[] = [
-    { id: "d1", name: "LOBBY-SCR-001", status: "online", location: "NYC HQ Lobby", ip: "192.168.1.101", resolution: "3840x2160", uptime: "45d 12h", cpu: 23, ram: 41, temp: 42, lastSync: "2 min ago", os: "Android 13", currentContent: "Welcome Loop" },
+    { id: "d1", name: "LOBBY-SCR-001", status: "online", location: "Main Lobby", ip: "192.168.1.101", resolution: "3840x2160", uptime: "45d 12h", cpu: 23, ram: 41, temp: 42, lastSync: "2 min ago", os: "Android 13", currentContent: "Welcome Loop" },
     { id: "d2", name: "CAFE-SCR-003", status: "offline", location: "London Café", ip: "192.168.2.45", resolution: "1920x1080", uptime: "0d 0h", cpu: 0, ram: 0, temp: 0, lastSync: "3 hours ago", os: "Android 12", currentContent: "N/A" },
     { id: "d3", name: "CONF-SCR-012", status: "online", location: "Berlin Conference", ip: "10.0.3.88", resolution: "3840x2160", uptime: "120d 8h", cpu: 18, ram: 35, temp: 38, lastSync: "Just now", os: "Android 14", currentContent: "Corporate Updates" },
     { id: "d4", name: "RETAIL-SCR-007", status: "online", location: "Tokyo Retail Store", ip: "172.16.5.22", resolution: "1920x1080", uptime: "60d 4h", cpu: 45, ram: 62, temp: 51, lastSync: "1 min ago", os: "Android 13", currentContent: "Product Showcase" },

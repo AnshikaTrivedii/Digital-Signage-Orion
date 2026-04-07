@@ -14,7 +14,7 @@ import {
 
 /* ─── Mock data for target devices ─── */
 const targetDevices = [
-    { id: "d1", name: "LOBBY-SCR-001", location: "NYC HQ Lobby", status: "online" as const },
+    { id: "d1", name: "LOBBY-SCR-001", location: "Main Lobby", status: "online" as const },
     { id: "d2", name: "CAFE-SCR-003", location: "London Café", status: "offline" as const },
     { id: "d3", name: "CONF-SCR-012", location: "Berlin Conference", status: "online" as const },
     { id: "d4", name: "RETAIL-SCR-007", location: "Tokyo Retail Store", status: "online" as const },

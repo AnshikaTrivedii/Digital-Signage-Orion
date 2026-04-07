@@ -22,7 +22,7 @@ interface Campaign {
 
 const mockCampaigns: Campaign[] = [
     { id: "c1", name: "Summer Flash Sale 2026", description: "High-impact retail promotion across all storefronts.", assetCount: 14, status: "active", lastModified: "2 hours ago", color: "#4ade80", screens: 45, impressions: "124K" },
-    { id: "c2", name: "Corporate Welcome Loop", description: "Professional lobby welcome content for HQ visitors.", assetCount: 6, status: "active", lastModified: "1 day ago", color: "#00e5ff", screens: 12, impressions: "89K" },
+    { id: "c2", name: "Corporate Welcome Loop", description: "Professional lobby welcome content for visitors and guests.", assetCount: 6, status: "active", lastModified: "1 day ago", color: "#00e5ff", screens: 12, impressions: "89K" },
     { id: "c3", name: "Q1 Earnings Broadcast", description: "Internal broadcast of quarterly financial results.", assetCount: 3, status: "draft", lastModified: "3 days ago", color: "#a78bfa", screens: 0, impressions: "0" },
     { id: "c4", name: "New Product Reveal", description: "Teaser campaign for upcoming product launch event.", assetCount: 22, status: "scheduled", lastModified: "5 days ago", color: "#f472b6", screens: 80, impressions: "0" },
     { id: "c5", name: "Safety Procedures Update", description: "Compliance-required safety content for all facilities.", assetCount: 8, status: "active", lastModified: "1 week ago", color: "#fb923c", screens: 200, impressions: "310K" },
