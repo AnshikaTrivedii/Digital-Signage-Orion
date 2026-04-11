@@ -132,6 +132,19 @@ enum ProofOfPlayStatus {
   FAILED
 }
 
+enum AssetType {
+  IMAGE
+  VIDEO
+  HTML
+  DOCUMENT
+}
+
+enum AssetStatus {
+  UPLOADING
+  READY
+  ERROR
+}
+
 model User {
   id               String                   @id @default(cuid())
   email            String                   @unique
@@ -169,27 +182,6 @@ model Organization {
   updatedAt          DateTime                 @updatedAt
 }
 
-model Asset {
-  id             String        @id @default(cuid())
-  organizationId String
-  uploadedById   String?
-  name           String
-  originalName   String
-  mimeType       String
-  fileExtension  String?
-  fileSizeBytes  Int
-  storagePath    String
-  publicUrl      String?
-  metadata       Json?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  uploadedBy     User?         @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-
-  @@index([organizationId, createdAt])
-  @@index([uploadedById])
-}
 
 model Campaign {
   id             String         @id @default(cuid())
@@ -410,4 +402,28 @@ model AuditLog {
 
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
+}
+
+model Asset {
+  id               String        @id @default(cuid())
+  organizationId   String
+  name             String
+  type             AssetType
+  status           AssetStatus   @default(UPLOADING)
+  mimeType         String
+  fileSize         Int
+  s3Key            String        @unique
+  width            Int?
+  height           Int?
+  durationMs       Int?
+  uploadedById     String
+  tags             String[]      @default([])
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy       User          @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, type])
 }

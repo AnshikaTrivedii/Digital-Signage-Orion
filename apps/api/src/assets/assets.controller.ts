@@ -1,49 +1,76 @@
-import {
-  BadRequestException,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  UploadedFile,
-  UseGuards,
-  UseInterceptors,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentActor } from '../common/decorators/current-actor.decorator';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { AssetsService } from './assets.service';
+import { RequestUploadDto } from './dto/request-upload.dto';
+import { UpdateAssetTagsDto } from './dto/update-asset-tags.dto';
 
-@Controller('assets')
+@Controller('organizations/:organizationId/assets')
 @UseGuards(JwtAuthGuard)
 export class AssetsController {
   constructor(private readonly assetsService: AssetsService) {}
 
-  @Get()
-  listAssets(@CurrentActor() actor: RequestActor) {
-    return this.assetsService.listAssets(actor);
+  @Post('upload-url')
+  requestUpload(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Body() dto: RequestUploadDto,
+  ) {
+    return this.assetsService.requestUpload(actor, organizationId, dto);
   }
 
-  @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
-  uploadAsset(
+  @Patch(':assetId/confirm')
+  confirmUpload(
     @CurrentActor() actor: RequestActor,
-    @UploadedFile() file: { originalname: string; mimetype: string; buffer: Buffer } | undefined,
+    @Param('organizationId') organizationId: string,
+    @Param('assetId') assetId: string,
   ) {
-    if (!file) {
-      throw new BadRequestException('Missing file payload');
-    }
+    return this.assetsService.confirmUpload(actor, organizationId, assetId);
+  }
 
-    return this.assetsService.uploadAsset(actor, {
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      fileBuffer: file.buffer,
+  @Get()
+  listAssets(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.assetsService.listAssets(actor, organizationId, {
+      type,
+      search,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
     });
   }
 
+  @Get(':assetId')
+  getAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.assetsService.getAsset(actor, organizationId, assetId);
+  }
+
   @Delete(':assetId')
-  deleteAsset(@CurrentActor() actor: RequestActor, @Param('assetId') assetId: string) {
-    return this.assetsService.deleteAsset(actor, assetId);
+  deleteAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.assetsService.deleteAsset(actor, organizationId, assetId);
+  }
+
+  @Patch(':assetId/tags')
+  updateTags(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('assetId') assetId: string,
+    @Body() dto: UpdateAssetTagsDto,
+  ) {
+    return this.assetsService.updateTags(actor, organizationId, assetId, dto);
   }
 }

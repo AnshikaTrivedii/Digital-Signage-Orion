@@ -16,10 +16,12 @@
     "lint:web": "npm run lint --workspace @orion/web",
     "prisma:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
-    "db:seed": "npx prisma db seed"
+    "db:seed": "npx prisma db seed",
+    "db:migrate": "npx prisma migrate dev",
+    "db:reset": "npx prisma migrate reset"
   },
   "prisma": {
-    "seed": "tsx prisma/seed.ts"
+    "seed": "npx tsx prisma/seed.ts"
   },
   "devDependencies": {
     "@prisma/client": "^6.19.3",
@@ -27,6 +29,6 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^16.4.7",
     "prisma": "^6.19.3",
-    "tsx": "^4.19.3"
+    "tsx": "^4.21.0"
   }
 }
