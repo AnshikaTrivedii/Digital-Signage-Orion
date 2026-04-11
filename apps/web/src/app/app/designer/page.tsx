@@ -8,6 +8,8 @@ import {
     ChevronDown, Info, AlertCircle
 } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface Zone {
     id: string;
@@ -27,12 +29,14 @@ const initialZones: Zone[] = [
 ];
 
 export default function LayoutDesigner() {
+    const { canEdit } = useClientFeature("PLAYLISTS");
     const [zones, setZones] = useState<Zone[]>(initialZones);
     const [selectedZone, setSelectedZone] = useState<string | null>(null);
     const [resolution, setResolution] = useState<"1080p" | "4k" | "portrait">("1080p");
     const [isSaving, setIsSaving] = useState(false);
 
     const handleSave = () => {
+        if (!canEdit) return toast.error("You only have view access to layouts.");
         setIsSaving(true);
         setTimeout(() => {
             setIsSaving(false);
@@ -41,6 +45,7 @@ export default function LayoutDesigner() {
     };
 
     const addZone = () => {
+        if (!canEdit) return toast.error("You only have view access to layouts.");
         const id = Math.random().toString(36).substr(2, 9);
         const newZone: Zone = {
             id, name: "New_Zone_" + id.substr(0,4), type: "image",
@@ -51,12 +56,14 @@ export default function LayoutDesigner() {
     };
 
     const removeZone = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to layouts.");
         setZones(zones.filter(z => z.id !== id));
         if (selectedZone === id) setSelectedZone(null);
     };
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canEdit && <ReadOnlyNotice message="Layouts are read-only for this account. You can inspect zones, but saving and structural edits are disabled." />}
             <div className="flex-between" style={{ marginBottom: 32 }}>
                 <div>
                     <h1 style={{ fontSize: "2rem", fontWeight: 800, letterSpacing: "-0.02em" }}>Layout Designer</h1>
@@ -66,7 +73,7 @@ export default function LayoutDesigner() {
                     <button className="btn-outline" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <Play size={18} /> Preview Live
                     </button>
-                    <button className="btn-primary" onClick={handleSave} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-primary" disabled={!canEdit} onClick={handleSave} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                         {isSaving ? <div className="spinner" /> : <Save size={18} />} Save Changes
                     </button>
                 </div>
@@ -167,12 +174,12 @@ export default function LayoutDesigner() {
                                         <div style={{ width: 10, height: 10, borderRadius: "50%", background: z.color }} />
                                         <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{z.name}</span>
                                     </div>
-                                    <button onClick={(e) => { e.stopPropagation(); removeZone(z.id); }} className="btn-icon-soft" style={{ padding: 4, color: "hsl(var(--status-danger))" }}>
+                                    <button disabled={!canEdit} onClick={(e) => { e.stopPropagation(); removeZone(z.id); }} className="btn-icon-soft" style={{ padding: 4, color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}>
                                         <Trash2 size={12} />
                                     </button>
                                 </div>
                             ))}
-                            <button className="btn-outline" onClick={addZone} style={{ marginTop: 8, padding: "10px", width: "100%", fontSize: "0.8rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                            <button className="btn-outline" disabled={!canEdit} onClick={addZone} style={{ marginTop: 8, padding: "10px", width: "100%", fontSize: "0.8rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                                 <Plus size={16} /> New Layer
                             </button>
                         </div>

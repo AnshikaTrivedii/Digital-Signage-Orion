@@ -6,6 +6,8 @@ import {
     Plus, Type, Trash2, Play, Pause, Eye,
     Clock, Monitor, Zap, X, AlertTriangle, Edit3
 } from "lucide-react";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface Ticker {
     id: string;
@@ -40,6 +42,7 @@ const statusColor = (s: string) => {
 };
 
 export default function TickersPage() {
+    const { canEdit } = useClientFeature("TICKERS");
     const [tickers, setTickers] = useState<Ticker[]>(mockTickers);
     const [showEditor, setShowEditor] = useState(false);
     const [editorText, setEditorText] = useState("");
@@ -49,6 +52,7 @@ export default function TickersPage() {
     const [previewTicker, setPreviewTicker] = useState<Ticker | null>(null);
 
     const handleSave = () => {
+        if (!canEdit) return toast.error("You only have view access to tickers.");
         if (!editorText.trim()) return toast.error("Ticker text is required");
         const newTicker: Ticker = {
             id: Date.now().toString(),
@@ -68,23 +72,26 @@ export default function TickersPage() {
     };
 
     const toggleStatus = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to tickers.");
         setTickers(tickers.map(t => t.id === id ? { ...t, status: t.status === "Active" ? "Paused" : "Active" } as Ticker : t));
         toast.success("Ticker status updated");
     };
 
     const handleDelete = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to tickers.");
         setTickers(tickers.filter(t => t.id !== id));
         toast.success("Ticker removed");
     };
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canEdit && <ReadOnlyNotice message="Tickers are read-only for this account. You can preview broadcasts, but live updates and deletions are disabled." />}
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Ticker Management</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Create and manage scrolling text broadcasts across your network.</p>
                 </div>
-                <button className="btn-primary" onClick={() => setShowEditor(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button className="btn-primary" disabled={!canEdit} onClick={() => canEdit && setShowEditor(true)} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                     <Plus size={18} /> New Broadcast
                 </button>
             </div>
@@ -131,10 +138,10 @@ export default function TickersPage() {
                                         </div>
                                         <div style={{ display: "flex", gap: 4 }}>
                                             <button className="btn-icon-soft" title="Preview" onClick={() => setPreviewTicker(t)}><Eye size={16} /></button>
-                                            <button className="btn-icon-soft" title={t.status === "Active" ? "Pause" : "Play"} onClick={() => toggleStatus(t.id)}>
+                                            <button className="btn-icon-soft" disabled={!canEdit} title={t.status === "Active" ? "Pause" : "Play"} onClick={() => toggleStatus(t.id)} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}>
                                                 {t.status === "Active" ? <Pause size={16} /> : <Play size={16} />}
                                             </button>
-                                            <button className="btn-icon-soft" style={{ color: "hsl(var(--status-danger))" }} onClick={() => handleDelete(t.id)}><Trash2 size={16} /></button>
+                                            <button className="btn-icon-soft" disabled={!canEdit} style={{ color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(t.id)}><Trash2 size={16} /></button>
                                         </div>
                                     </div>
                                     <p style={{ fontSize: "1.05rem", fontWeight: 600, color: t.color, marginBottom: 12, lineHeight: 1.5 }}>{t.text}</p>
@@ -179,7 +186,7 @@ export default function TickersPage() {
 
             {/* Editor Modal */}
             <AnimatePresence>
-                {showEditor && (
+                {showEditor && canEdit && (
                     <motion.div key="editor" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setShowEditor(false)}>

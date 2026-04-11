@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Building2, CheckCircle2, Copy, Link2, Plus, RefreshCw, Shield, Trash2, UserPlus } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "@/components/AuthProvider";
@@ -25,6 +25,11 @@ type OrganizationMembersResponse = {
         id: string;
         role: "ORG_ADMIN" | "MANAGER" | "CONTENT_EDITOR" | "ANALYST_VIEWER";
         status: "ACTIVE" | "INVITED" | "SUSPENDED";
+        permissions: Array<{
+            id?: string;
+            featureKey: FeatureKey;
+            accessLevel: FeatureAccessLevel;
+        }>;
         user: {
             id: string;
             email: string;
@@ -54,18 +59,52 @@ type OrganizationSummary = {
         role: "ORG_ADMIN" | "MANAGER" | "CONTENT_EDITOR" | "ANALYST_VIEWER";
         status: "ACTIVE" | "INVITED" | "SUSPENDED";
         userId: string;
+        permissions?: Array<{
+            featureKey: FeatureKey;
+            accessLevel: FeatureAccessLevel;
+        }>;
     }>;
 };
 
-type InvitationCreateResponse = {
-    id: string;
-    email: string;
-    role: "ORG_ADMIN" | "MANAGER" | "CONTENT_EDITOR" | "ANALYST_VIEWER";
-    token: string;
-    expiresAt: string;
+type FeatureKey =
+    | "DASHBOARD"
+    | "ASSETS"
+    | "PLAYLISTS"
+    | "CAMPAIGNS"
+    | "SCHEDULE"
+    | "TICKERS"
+    | "DEVICES"
+    | "REPORTS"
+    | "TEAM"
+    | "SETTINGS";
+
+type FeatureAccessLevel = "NONE" | "VIEW" | "EDIT" | "MANAGE" | "CONTROL";
+
+type FeaturePermission = {
+    featureKey: FeatureKey;
+    accessLevel: FeatureAccessLevel;
 };
 
-const organizationRoleOptions = ["ORG_ADMIN", "MANAGER", "CONTENT_EDITOR", "ANALYST_VIEWER"] as const;
+type OrganizationMemberCreateResponse = OrganizationMembersResponse["memberships"][number];
+
+const featureDefinitions: Array<{ key: FeatureKey; label: string; levels: FeatureAccessLevel[] }> = [
+    { key: "DASHBOARD", label: "Dashboard", levels: ["NONE", "VIEW"] },
+    { key: "ASSETS", label: "Assets", levels: ["NONE", "VIEW", "EDIT"] },
+    { key: "PLAYLISTS", label: "Playlists", levels: ["NONE", "VIEW", "EDIT"] },
+    { key: "CAMPAIGNS", label: "Campaigns", levels: ["NONE", "VIEW", "EDIT"] },
+    { key: "SCHEDULE", label: "Schedule", levels: ["NONE", "VIEW", "EDIT"] },
+    { key: "TICKERS", label: "Tickers", levels: ["NONE", "VIEW", "EDIT"] },
+    { key: "DEVICES", label: "Devices", levels: ["NONE", "VIEW", "CONTROL"] },
+    { key: "REPORTS", label: "Reports", levels: ["NONE", "VIEW"] },
+    { key: "TEAM", label: "Team", levels: ["NONE", "VIEW", "MANAGE"] },
+    { key: "SETTINGS", label: "Settings", levels: ["NONE", "VIEW", "MANAGE"] },
+];
+
+const defaultFeaturePermissions: FeaturePermission[] = featureDefinitions.map((feature) => ({
+    featureKey: feature.key,
+    accessLevel: feature.key === "DASHBOARD" ? "VIEW" : "NONE",
+}));
+
 const platformRoleOptions = ["PLATFORM_ADMIN", "SALES", "SUPPORT"] as const;
 
 function formatRoleLabel(role: string | null | undefined) {
@@ -80,6 +119,7 @@ function formatStatusTone(status: string) {
 
 export function AccessManagementPanel() {
     const { user, activeOrganizationId, refreshSession, canManageOrganizations, canManagePlatformUsers } = useAuth();
+    const accessSectionRef = useRef<HTMLDivElement | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
     const [organizationData, setOrganizationData] = useState<OrganizationMembersResponse | null>(null);
@@ -92,20 +132,14 @@ export function AccessManagementPanel() {
         primaryContactEmail: "",
         salesNotes: "",
     });
-    const [firstAdminDraft, setFirstAdminDraft] = useState({
-        fullName: "",
-        email: "",
-        message: "",
-    });
     const [memberDraft, setMemberDraft] = useState({
         fullName: "",
         email: "",
-        role: "MANAGER" as OrganizationMembersResponse["memberships"][number]["role"],
-        message: "",
+        password: "",
+        permissions: defaultFeaturePermissions,
     });
     const [platformDraft, setPlatformDraft] = useState({ fullName: "", email: "", password: "", platformRole: "PLATFORM_ADMIN" as NonNullable<PlatformUser["platformRole"]> });
     const [savingOrganization, setSavingOrganization] = useState(false);
-    const [savingFirstAdmin, setSavingFirstAdmin] = useState(false);
     const [savingMember, setSavingMember] = useState(false);
     const [savingPlatformUser, setSavingPlatformUser] = useState(false);
     const [latestInvitation, setLatestInvitation] = useState<{
@@ -116,10 +150,7 @@ export function AccessManagementPanel() {
         expiresAt: string;
     } | null>(null);
 
-    const canManageTenantMembers =
-        user?.platformRole === "SUPER_ADMIN" ||
-        user?.platformRole === "PLATFORM_ADMIN" ||
-        user?.activeOrganization?.role === "ORG_ADMIN";
+    const canManageTenantMembers = user?.platformRole === "SUPER_ADMIN" || user?.platformRole === "PLATFORM_ADMIN";
     const effectiveOrganizationId = canManageOrganizations ? selectedOrganizationId : activeOrganizationId;
     const selectedOrganization = organizations.find((organization) => organization.id === effectiveOrganizationId) ?? null;
 
@@ -224,52 +255,25 @@ export function AccessManagementPanel() {
         }
     };
 
-    const inviteFirstAdmin = async () => {
-        if (!effectiveOrganizationId) return;
-        setSavingFirstAdmin(true);
-        try {
-            const invitation = await apiRequest<InvitationCreateResponse>(`/api/organizations/${effectiveOrganizationId}/first-admin-invitations`, {
-                method: "POST",
-                body: JSON.stringify(firstAdminDraft),
-            });
-            toast.success("First organization admin invited");
-            setFirstAdminDraft({ fullName: "", email: "", message: "" });
-            setLatestInvitation({
-                label: "First org admin invite",
-                email: invitation.email,
-                role: invitation.role,
-                url: `${window.location.origin}/accept-invitation?token=${invitation.token}`,
-                expiresAt: invitation.expiresAt,
-            });
-            await loadData();
-        } catch (error) {
-            toast.error(error instanceof ApiError ? error.message : "Unable to invite first org admin");
-        } finally {
-            setSavingFirstAdmin(false);
-        }
-    };
-
-    const inviteMember = async () => {
+    const createMember = async () => {
         if (!effectiveOrganizationId) return;
         setSavingMember(true);
         try {
-            const invitation = await apiRequest<InvitationCreateResponse>(`/api/organizations/${effectiveOrganizationId}/members/invitations`, {
+            await apiRequest<OrganizationMemberCreateResponse>(`/api/organizations/${effectiveOrganizationId}/members`, {
                 method: "POST",
                 body: JSON.stringify(memberDraft),
             });
-            toast.success("Member invitation sent");
-            setMemberDraft({ fullName: "", email: "", role: "MANAGER", message: "" });
-            setLatestInvitation({
-                label: "Organization invitation",
-                email: invitation.email,
-                role: invitation.role,
-                url: `${window.location.origin}/accept-invitation?token=${invitation.token}`,
-                expiresAt: invitation.expiresAt,
+            toast.success("Organization user created");
+            setMemberDraft({
+                fullName: "",
+                email: "",
+                password: "",
+                permissions: defaultFeaturePermissions,
             });
             await loadData();
             await refreshSession(effectiveOrganizationId);
         } catch (error) {
-            toast.error(error instanceof ApiError ? error.message : "Unable to send member invitation");
+            toast.error(error instanceof ApiError ? error.message : "Unable to create organization user");
         } finally {
             setSavingMember(false);
         }
@@ -292,18 +296,18 @@ export function AccessManagementPanel() {
         }
     };
 
-    const updateMemberRole = async (membershipId: string, role: OrganizationMembersResponse["memberships"][number]["role"]) => {
+    const updateMemberPermissions = async (membershipId: string, permissions: FeaturePermission[]) => {
         if (!effectiveOrganizationId) return;
         try {
-            await apiRequest(`/api/organizations/${effectiveOrganizationId}/members/${membershipId}/role`, {
+            await apiRequest(`/api/organizations/${effectiveOrganizationId}/members/${membershipId}/permissions`, {
                 method: "PATCH",
-                body: JSON.stringify({ role }),
+                body: JSON.stringify({ permissions }),
             });
-            toast.success("Member role updated");
+            toast.success("Permissions updated");
             await loadData();
             await refreshSession(effectiveOrganizationId);
         } catch (error) {
-            toast.error(error instanceof ApiError ? error.message : "Unable to update role");
+            toast.error(error instanceof ApiError ? error.message : "Unable to update permissions");
         }
     };
 
@@ -349,7 +353,7 @@ export function AccessManagementPanel() {
                         <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 0.9fr 1fr auto", gap: 12, marginBottom: 20 }}>
                             <input value={platformDraft.fullName} onChange={(event) => setPlatformDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" style={inputStyle} />
                             <input value={platformDraft.email} onChange={(event) => setPlatformDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email" style={inputStyle} />
-                            <select value={platformDraft.platformRole} onChange={(event) => setPlatformDraft((current) => ({ ...current, platformRole: event.target.value as typeof current.platformRole }))} style={inputStyle}>
+                            <select value={platformDraft.platformRole} onChange={(event) => setPlatformDraft((current) => ({ ...current, platformRole: event.target.value as typeof current.platformRole }))} style={selectStyle}>
                                 {platformRoleOptions.map((role) => <option key={role} value={role}>{formatRoleLabel(role)}</option>)}
                             </select>
                             <input value={platformDraft.password} onChange={(event) => setPlatformDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Temporary password" type="password" style={inputStyle} />
@@ -380,7 +384,7 @@ export function AccessManagementPanel() {
                         <div>
                             <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>Organizations</h3>
                             <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
-                                Create client organizations, activate them, and hand off the first administrator.
+                                Create client organizations, activate them, and then add organization users with exact feature access.
                             </p>
                         </div>
                         <div style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{organizations.length} organizations</div>
@@ -406,7 +410,6 @@ export function AccessManagementPanel() {
 
                     <div style={{ display: "grid", gap: 12 }}>
                         {organizations.map((organization) => {
-                            const hasOrgAdmin = organization.memberships.some((membership) => membership.role === "ORG_ADMIN" && membership.status === "ACTIVE");
                             const isSelected = effectiveOrganizationId === organization.id;
                             return (
                                 <div key={organization.id} style={{ ...rowStyle, borderColor: isSelected ? "hsla(var(--accent-primary), 0.35)" : rowStyle.border as string }}>
@@ -421,18 +424,22 @@ export function AccessManagementPanel() {
                                         <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
                                             {organization.memberships.length} membership{organization.memberships.length === 1 ? "" : "s"}
                                         </span>
-                                        <button className="btn-outline" onClick={() => setSelectedOrganizationId(organization.id)} style={{ fontSize: "0.75rem" }}>
+                                        <button
+                                            className="btn-outline"
+                                            onClick={() => {
+                                                setSelectedOrganizationId(organization.id);
+                                                requestAnimationFrame(() => {
+                                                    accessSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                                });
+                                            }}
+                                            style={{ fontSize: "0.75rem" }}
+                                        >
                                             {isSelected ? "Selected" : "Manage"}
                                         </button>
                                         {organization.status === "DRAFT" && ["SUPER_ADMIN", "PLATFORM_ADMIN"].includes(user?.platformRole ?? "") && (
                                             <button className="btn-primary" onClick={() => void activateOrganization(organization.id)} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.75rem" }}>
                                                 <CheckCircle2 size={14} /> Activate
                                             </button>
-                                        )}
-                                        {!hasOrgAdmin && (
-                                            <span style={{ fontSize: "0.72rem", color: "hsl(var(--status-warning))", fontWeight: 700 }}>
-                                                Needs first admin
-                                            </span>
                                         )}
                                     </div>
                                 </div>
@@ -442,7 +449,7 @@ export function AccessManagementPanel() {
                 </section>
             )}
 
-            <section className="glass-panel" style={{ padding: 24 }}>
+            <section ref={accessSectionRef} className="glass-panel" style={{ padding: 24 }}>
                 <div className="flex-between" style={{ marginBottom: 20, gap: 16 }}>
                     <div>
                         <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>
@@ -450,7 +457,7 @@ export function AccessManagementPanel() {
                         </h3>
                         <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
                             {effectiveOrganizationId
-                                ? "Invite tenant users, review pending invitations, and adjust organization roles."
+                                ? "Create organization users directly, assign exact feature access, and manage their permissions."
                                 : "Select an active organization from the header to manage tenant access."}
                         </p>
                     </div>
@@ -458,7 +465,7 @@ export function AccessManagementPanel() {
                         <select
                             value={effectiveOrganizationId ?? ""}
                             onChange={(event) => setSelectedOrganizationId(event.target.value || null)}
-                            style={{ ...inputStyle, minWidth: 240 }}
+                            style={{ ...selectStyle, minWidth: 240 }}
                         >
                             <option value="" disabled>Select organization</option>
                             {organizations.map((organization) => (
@@ -499,28 +506,41 @@ export function AccessManagementPanel() {
                     </div>
                 )}
 
-                {canManageOrganizations && effectiveOrganizationId && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 1.4fr auto", gap: 12, marginBottom: 20 }}>
-                        <input value={firstAdminDraft.fullName} onChange={(event) => setFirstAdminDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="First org admin name" style={inputStyle} />
-                        <input value={firstAdminDraft.email} onChange={(event) => setFirstAdminDraft((current) => ({ ...current, email: event.target.value }))} placeholder="First org admin email" style={inputStyle} />
-                        <input value={firstAdminDraft.message} onChange={(event) => setFirstAdminDraft((current) => ({ ...current, message: event.target.value }))} placeholder="Invitation message (optional)" style={inputStyle} />
-                        <button className="btn-primary" onClick={() => void inviteFirstAdmin()} disabled={savingFirstAdmin} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
-                            <UserPlus size={16} /> Invite First Admin
-                        </button>
-                    </div>
-                )}
-
                 {canManageTenantMembers && effectiveOrganizationId && organizationData?.status === "ACTIVE" && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1.1fr 0.9fr 1.2fr auto", gap: 12, marginBottom: 20 }}>
-                        <input value={memberDraft.fullName} onChange={(event) => setMemberDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" style={inputStyle} />
-                        <input value={memberDraft.email} onChange={(event) => setMemberDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email" style={inputStyle} />
-                        <select value={memberDraft.role} onChange={(event) => setMemberDraft((current) => ({ ...current, role: event.target.value as typeof current.role }))} style={inputStyle}>
-                            {organizationRoleOptions.map((role) => <option key={role} value={role}>{formatRoleLabel(role)}</option>)}
-                        </select>
-                        <input value={memberDraft.message} onChange={(event) => setMemberDraft((current) => ({ ...current, message: event.target.value }))} placeholder="Invite note (optional)" style={inputStyle} />
-                        <button className="btn-primary" onClick={() => void inviteMember()} disabled={savingMember} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
-                            <Plus size={16} /> Invite
-                        </button>
+                    <div style={{ display: "grid", gap: 16, marginBottom: 24, padding: 18, borderRadius: 16, border: "1px solid hsla(var(--border-subtle), 0.18)", background: "hsla(var(--bg-base), 0.28)" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12 }}>
+                            <input value={memberDraft.fullName} onChange={(event) => setMemberDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" style={inputStyle} />
+                            <input value={memberDraft.email} onChange={(event) => setMemberDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email" style={inputStyle} />
+                            <input value={memberDraft.password} onChange={(event) => setMemberDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Temporary password" type="password" style={inputStyle} />
+                            <button className="btn-primary" onClick={() => void createMember()} disabled={savingMember} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                                <Plus size={16} /> Add User
+                            </button>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
+                            {featureDefinitions.map((feature) => (
+                                <div key={feature.key} style={{ display: "grid", gap: 6 }}>
+                                    <label style={{ fontSize: "0.78rem", color: "hsl(var(--text-muted))", fontWeight: 700 }}>{feature.label}</label>
+                                    <select
+                                        value={memberDraft.permissions.find((permission) => permission.featureKey === feature.key)?.accessLevel ?? "NONE"}
+                                        onChange={(event) =>
+                                            setMemberDraft((current) => ({
+                                                ...current,
+                                                permissions: current.permissions.map((permission) =>
+                                                    permission.featureKey === feature.key
+                                                        ? { ...permission, accessLevel: event.target.value as FeatureAccessLevel }
+                                                        : permission,
+                                                ),
+                                            }))
+                                        }
+                                        style={selectStyle}
+                                    >
+                                        {feature.levels.map((level) => (
+                                            <option key={level} value={level}>{formatRoleLabel(level)}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 )}
 
@@ -532,20 +552,41 @@ export function AccessManagementPanel() {
                     <div style={{ display: "grid", gap: 20 }}>
                         <div style={{ display: "grid", gap: 12 }}>
                             {organizationData.memberships.map((membership) => (
-                                <div key={membership.id} style={rowStyle}>
-                                    <div>
+                                <div key={membership.id} style={{ ...rowStyle, alignItems: "flex-start" }}>
+                                    <div style={{ display: "grid", gap: 10, flex: 1 }}>
                                         <div style={{ fontWeight: 600, fontSize: "0.92rem" }}>{membership.user.fullName}</div>
                                         <div style={{ color: "hsl(var(--text-muted))", fontSize: "0.75rem" }}>{membership.user.email}</div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                                            {featureDefinitions.map((feature) => {
+                                                const value = membership.permissions.find((permission) => permission.featureKey === feature.key)?.accessLevel ?? "NONE";
+                                                return (
+                                                    <div key={`${membership.id}-${feature.key}`} style={{ display: "grid", gap: 4 }}>
+                                                        <label style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))" }}>{feature.label}</label>
+                                                        <select
+                                                            disabled={!canManageTenantMembers}
+                                                            value={value}
+                                                            onChange={(event) => {
+                                                                const nextPermissions = featureDefinitions.map((definition) => ({
+                                                                    featureKey: definition.key,
+                                                                    accessLevel:
+                                                                        definition.key === feature.key
+                                                                            ? (event.target.value as FeatureAccessLevel)
+                                                                            : (membership.permissions.find((permission) => permission.featureKey === definition.key)?.accessLevel ?? "NONE"),
+                                                                }));
+                                                                void updateMemberPermissions(membership.id, nextPermissions);
+                                                            }}
+                                                            style={selectStyle}
+                                                        >
+                                                            {feature.levels.map((level) => (
+                                                                <option key={level} value={level}>{formatRoleLabel(level)}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                        <select
-                                            value={membership.role}
-                                            disabled={!canManageTenantMembers}
-                                            onChange={(event) => void updateMemberRole(membership.id, event.target.value as typeof membership.role)}
-                                            style={{ ...inputStyle, minWidth: 180 }}
-                                        >
-                                            {organizationRoleOptions.map((role) => <option key={role} value={role}>{formatRoleLabel(role)}</option>)}
-                                        </select>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 6 }}>
                                         <span style={{ color: formatStatusTone(membership.status), fontSize: "0.78rem", fontWeight: 700 }}>{membership.status}</span>
                                         {canManageTenantMembers && (
                                             <button className="btn-icon-soft" onClick={() => void removeMember(membership.id)} title="Remove member">
@@ -606,6 +647,24 @@ const inputStyle: CSSProperties = {
     border: "1px solid hsla(var(--border-subtle), 0.5)",
     color: "hsl(var(--text-primary))",
     outline: "none",
+};
+
+const selectStyle: CSSProperties = {
+    ...inputStyle,
+    appearance: "none",
+    WebkitAppearance: "none",
+    MozAppearance: "none",
+    paddingRight: 44,
+    border: "1px solid hsla(var(--accent-primary), 0.22)",
+    backgroundColor: "hsla(var(--bg-base), 0.86)",
+    backgroundImage:
+        "linear-gradient(180deg, hsla(var(--bg-surface-elevated), 0.35), hsla(var(--bg-base), 0.2)), url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='rgba(99,102,241,0.95)' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")",
+    backgroundRepeat: "no-repeat, no-repeat",
+    backgroundPosition: "0 0, right 12px center",
+    backgroundSize: "100% 100%, 18px 18px",
+    boxShadow: "inset 0 1px 0 hsla(var(--surface-contrast), 0.03)",
+    minHeight: 44,
+    fontWeight: 600,
 };
 
 const rowStyle: CSSProperties = {

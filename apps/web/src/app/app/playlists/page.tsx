@@ -7,6 +7,8 @@ import {
     List, GripVertical, ChevronRight, Monitor, Music,
     LayoutGrid, SkipForward, Repeat, Shuffle, ArrowUp, ArrowDown
 } from "lucide-react";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface PlaylistItem {
     id: string;
@@ -56,6 +58,7 @@ const statusColor = (s: string) => {
 };
 
 export default function PlaylistsPage() {
+    const { canEdit } = useClientFeature("PLAYLISTS");
     const [playlists, setPlaylists] = useState(mockPlaylists);
     const [search, setSearch] = useState("");
     const [view, setView] = useState<"grid" | "list">("grid");
@@ -70,6 +73,7 @@ export default function PlaylistsPage() {
     }, [playlists, search]);
 
     const handleCreate = () => {
+        if (!canEdit) return toast.error("You only have view access to playlists.");
         if (!newName.trim()) return toast.error("Provide a playlist name");
         const colors = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c"];
         const np: Playlist = {
@@ -84,12 +88,14 @@ export default function PlaylistsPage() {
     };
 
     const handleDelete = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to playlists.");
         setPlaylists(playlists.filter(p => p.id !== id));
         if (selectedPlaylist?.id === id) setSelectedPlaylist(null);
         toast.success("Playlist deleted");
     };
 
     const moveItem = (playlistId: string, idx: number, dir: "up" | "down") => {
+        if (!canEdit) return;
         setPlaylists(playlists.map(p => {
             if (p.id !== playlistId) return p;
             const items = [...p.items];
@@ -114,12 +120,13 @@ export default function PlaylistsPage() {
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canEdit && <ReadOnlyNotice message="Playlists are read-only for this account. You can inspect playlist content, but editing and ordering controls are disabled." />}
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Playlists</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Sequence and schedule content for your signage network.</p>
                 </div>
-                <button className="btn-primary" onClick={() => setShowCreator(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button className="btn-primary" disabled={!canEdit} onClick={() => canEdit && setShowCreator(true)} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                     <Plus size={18} /> New Playlist
                 </button>
             </div>
@@ -178,7 +185,7 @@ export default function PlaylistsPage() {
                                             }}>{p.status}</span>
                                         </div>
                                     </div>
-                                    <button className="btn-icon-soft" onClick={e => { e.stopPropagation(); handleDelete(p.id); }}><Trash2 size={16} /></button>
+                                    <button className="btn-icon-soft" disabled={!canEdit} onClick={e => { e.stopPropagation(); handleDelete(p.id); }} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}><Trash2 size={16} /></button>
                                 </div>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
                                     <div style={{ textAlign: "center", padding: 8, borderRadius: 8, background: "hsla(var(--bg-base), 0.4)" }}>
@@ -240,8 +247,8 @@ export default function PlaylistsPage() {
                                                         <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{item.duration}s • {item.type}</p>
                                                     </div>
                                                     <div style={{ display: "flex", gap: 4 }}>
-                                                        <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => moveItem(selectedPlaylist.id, i, "up")} disabled={i === 0}><ArrowUp size={14} /></button>
-                                                        <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => moveItem(selectedPlaylist.id, i, "down")} disabled={i === selectedPlaylist.items.length - 1}><ArrowDown size={14} /></button>
+                                                        <button className="btn-icon-soft" style={{ padding: 4, opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => moveItem(selectedPlaylist.id, i, "up")} disabled={!canEdit || i === 0}><ArrowUp size={14} /></button>
+                                                        <button className="btn-icon-soft" style={{ padding: 4, opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => moveItem(selectedPlaylist.id, i, "down")} disabled={!canEdit || i === selectedPlaylist.items.length - 1}><ArrowDown size={14} /></button>
                                                         <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => setPreviewingIndex(previewingIndex === i ? null : i)}><Eye size={14} /></button>
                                                     </div>
                                                 </motion.div>

@@ -7,6 +7,8 @@ import {
     Archive, Play, X, MoreVertical, Monitor, Image as ImageIcon
 } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface Campaign {
     id: string;
@@ -36,6 +38,7 @@ const statusColor = (s: string) => {
 };
 
 export default function CampaignsPage() {
+    const { canEdit } = useClientFeature("CAMPAIGNS");
     const [campaigns, setCampaigns] = useState(mockCampaigns);
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [newName, setNewName] = useState("");
@@ -44,6 +47,7 @@ export default function CampaignsPage() {
     const [search, setSearch] = useState("");
 
     const handleCreate = () => {
+        if (!canEdit) return toast.error("You only have view access to campaigns.");
         if (!newName.trim()) return toast.error("Provide a campaign name");
         const colors = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa"];
         const newCampaign: Campaign = {
@@ -65,6 +69,7 @@ export default function CampaignsPage() {
     };
 
     const handleDelete = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to campaigns.");
         setCampaigns(prev => prev.filter(c => c.id !== id));
         toast.success("Campaign deleted.");
     };
@@ -77,12 +82,13 @@ export default function CampaignsPage() {
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canEdit && <ReadOnlyNotice message="Campaigns are read-only for this account. You can review campaign data, but creation and deletion are disabled." />}
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Campaign Management</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Aggregate media into thematic sequences for your screens.</p>
                 </div>
-                <button className="btn-primary" onClick={() => setIsEditorOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button className="btn-primary" disabled={!canEdit} onClick={() => canEdit && setIsEditorOpen(true)} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                     <Plus size={18} /> New Campaign
                 </button>
             </div>
@@ -146,7 +152,7 @@ export default function CampaignsPage() {
                                             }}>{c.status}</span>
                                         </div>
                                     </div>
-                                    <button className="btn-icon-soft" onClick={() => handleDelete(c.id)}><Trash2 size={16} /></button>
+                                    <button className="btn-icon-soft" disabled={!canEdit} onClick={() => handleDelete(c.id)} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}><Trash2 size={16} /></button>
                                 </div>
                                 <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 20, lineHeight: 1.5 }}>{c.description}</p>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
@@ -172,7 +178,7 @@ export default function CampaignsPage() {
 
             {/* Create Modal */}
             <AnimatePresence>
-                {isEditorOpen && (
+                {isEditorOpen && canEdit && (
                     <motion.div key="editor" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setIsEditorOpen(false)}>

@@ -5,9 +5,11 @@ import { CurrentActor } from '../common/decorators/current-actor.decorator';
 import { PlatformRoles } from '../common/decorators/platform-roles.decorator';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { ActivateOrganizationDto } from './dto/activate-organization.dto';
+import { CreateMemberDto } from './dto/create-member.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { InviteFirstAdminDto } from './dto/invite-first-admin.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
+import { UpdateMemberPermissionsDto } from './dto/update-member-permissions.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { OrganizationsService } from './organizations.service';
 
@@ -69,6 +71,15 @@ export class OrganizationsController {
     return this.organizationsService.inviteMember(actor, organizationId, dto);
   }
 
+  @Post(':organizationId/members')
+  createMember(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Body() dto: CreateMemberDto,
+  ) {
+    return this.organizationsService.createMember(actor, organizationId, dto);
+  }
+
   @Patch(':organizationId/members/:membershipId/role')
   updateMemberRole(
     @CurrentActor() actor: RequestActor,
@@ -77,6 +88,16 @@ export class OrganizationsController {
     @Body() dto: UpdateMemberRoleDto,
   ) {
     return this.organizationsService.updateMemberRole(actor, organizationId, membershipId, dto);
+  }
+
+  @Patch(':organizationId/members/:membershipId/permissions')
+  updateMemberPermissions(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('membershipId') membershipId: string,
+    @Body() dto: UpdateMemberPermissionsDto,
+  ) {
+    return this.organizationsService.updateMemberPermissions(actor, organizationId, membershipId, dto);
   }
 
   @Delete(':organizationId/members/:membershipId')

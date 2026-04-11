@@ -55,7 +55,13 @@ export class AuthService {
       include: {
         memberships: {
           where: { status: MembershipStatus.ACTIVE },
-          include: { organization: true },
+          include: {
+            organization: true,
+            permissions: {
+              select: { featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
+            },
+          },
         },
       },
     });
@@ -165,7 +171,13 @@ export class AuthService {
       where: { id: actor.userId },
       include: {
         memberships: {
-          include: { organization: true },
+          include: {
+            organization: true,
+            permissions: {
+              select: { featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
+            },
+          },
         },
       },
     });
@@ -185,6 +197,7 @@ export class AuthService {
           slug: membership.organization.slug,
           status: membership.organization.status,
         },
+        permissions: membership.permissions,
       }))
       .sort((left, right) => left.organization.name.localeCompare(right.organization.name));
 
@@ -214,7 +227,13 @@ export class AuthService {
       include: {
         memberships: {
           where: { status: MembershipStatus.ACTIVE },
-          include: { organization: true },
+          include: {
+            organization: true,
+            permissions: {
+              select: { featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
+            },
+          },
         },
       },
     });
@@ -269,7 +288,13 @@ export class AuthService {
       where: { id: userId },
       include: {
         memberships: {
-          include: { organization: true },
+          include: {
+            organization: true,
+            permissions: {
+              select: { featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
+            },
+          },
         },
       },
     });
@@ -288,6 +313,7 @@ export class AuthService {
             organizationSlug: membership.organization.slug,
             role: membership.role,
             status: membership.status,
+            permissions: membership.permissions,
           })) ?? [],
       },
     };

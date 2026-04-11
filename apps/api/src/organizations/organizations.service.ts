@@ -5,15 +5,18 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InvitationScope, InvitationStatus, MembershipStatus, OrganizationRole, OrganizationStatus } from '@prisma/client';
+import { FeatureAccessLevel, FeatureKey, InvitationScope, InvitationStatus, MembershipStatus, OrganizationRole, OrganizationStatus, UserStatus } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 import { AuditService } from '../audit/audit.service';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
 import { ActivateOrganizationDto } from './dto/activate-organization.dto';
+import { CreateMemberDto } from './dto/create-member.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
 import { InviteFirstAdminDto } from './dto/invite-first-admin.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
+import { UpdateMemberPermissionsDto } from './dto/update-member-permissions.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 
 @Injectable()
@@ -67,7 +70,16 @@ export class OrganizationsService {
       where,
       include: {
         memberships: {
-          select: { id: true, role: true, status: true, userId: true },
+          select: {
+            id: true,
+            role: true,
+            status: true,
+            userId: true,
+            permissions: {
+              select: { featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
+            },
+          },
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -90,6 +102,10 @@ export class OrganizationsService {
                 status: true,
                 platformRole: true,
               },
+            },
+            permissions: {
+              select: { id: true, featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
             },
           },
           orderBy: { createdAt: 'asc' },
@@ -192,6 +208,10 @@ export class OrganizationsService {
                 platformRole: true,
               },
             },
+            permissions: {
+              select: { id: true, featureKey: true, accessLevel: true },
+              orderBy: { featureKey: 'asc' },
+            },
           },
           orderBy: { createdAt: 'asc' },
         },
@@ -230,6 +250,94 @@ export class OrganizationsService {
       action: 'organization.member_invited',
       summary: `${actor.email} invited ${dto.email.toLowerCase()} as ${dto.role} for ${organization.name}`,
       message: dto.message,
+    });
+  }
+
+  async createMember(actor: RequestActor, organizationId: string, dto: CreateMemberDto) {
+    await this.ensureOrgAdminPrivileges(actor, organizationId);
+
+    const organization = await this.prisma.organization.findUnique({ where: { id: organizationId } });
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    if (organization.status !== OrganizationStatus.ACTIVE) {
+      throw new BadRequestException('Organization must be active before adding users');
+    }
+
+    const email = dto.email.toLowerCase();
+    const normalizedPermissions = this.normalizePermissions(dto.permissions);
+
+    const existingMembership = await this.prisma.organizationMembership.findFirst({
+      where: { organizationId, user: { email } },
+    });
+
+    if (existingMembership) {
+      throw new ConflictException('User already has access to this organization');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const existingUser = await this.prisma.user.findUnique({ where: { email } });
+    const user =
+      existingUser ??
+      (await this.prisma.user.create({
+        data: {
+          email,
+          fullName: dto.fullName,
+          passwordHash,
+          status: UserStatus.ACTIVE,
+        },
+      }));
+
+    if (existingUser) {
+      await this.prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          fullName: dto.fullName,
+          passwordHash,
+          status: UserStatus.ACTIVE,
+        },
+      });
+    }
+
+    const membership = await this.prisma.organizationMembership.create({
+      data: {
+        userId: user.id,
+        organizationId,
+        role: OrganizationRole.MANAGER,
+        status: MembershipStatus.ACTIVE,
+      },
+    });
+
+    await this.syncMembershipPermissions(membership.id, normalizedPermissions);
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'membership.created',
+      targetType: 'membership',
+      targetId: membership.id,
+      summary: `${actor.email} created ${email} in ${organization.name}`,
+      metadata: { permissions: normalizedPermissions },
+    });
+
+    return this.prisma.organizationMembership.findUnique({
+      where: { id: membership.id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            status: true,
+            platformRole: true,
+          },
+        },
+        permissions: {
+          select: { id: true, featureKey: true, accessLevel: true },
+          orderBy: { featureKey: 'asc' },
+        },
+      },
     });
   }
 
@@ -300,6 +408,51 @@ export class OrganizationsService {
     });
 
     return { success: true };
+  }
+
+  async updateMemberPermissions(actor: RequestActor, organizationId: string, membershipId: string, dto: UpdateMemberPermissionsDto) {
+    await this.ensureOrgAdminPrivileges(actor, organizationId);
+
+    const membership = await this.prisma.organizationMembership.findFirst({
+      where: { id: membershipId, organizationId },
+      include: { user: true, organization: true },
+    });
+
+    if (!membership) {
+      throw new NotFoundException('Membership not found');
+    }
+
+    const normalizedPermissions = this.normalizePermissions(dto.permissions);
+    await this.syncMembershipPermissions(membershipId, normalizedPermissions);
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'membership.permissions_updated',
+      targetType: 'membership',
+      targetId: membershipId,
+      summary: `${actor.email} updated permissions for ${membership.user.email} in ${membership.organization.name}`,
+      metadata: { permissions: normalizedPermissions },
+    });
+
+    return this.prisma.organizationMembership.findUnique({
+      where: { id: membershipId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            fullName: true,
+            status: true,
+            platformRole: true,
+          },
+        },
+        permissions: {
+          select: { id: true, featureKey: true, accessLevel: true },
+          orderBy: { featureKey: 'asc' },
+        },
+      },
+    });
   }
 
   private async createInvitation(params: {
@@ -386,11 +539,7 @@ export class OrganizationsService {
       return;
     }
 
-    if (actor.organization?.id === organizationId && actor.organization.role === 'ORG_ADMIN') {
-      return;
-    }
-
-    throw new ForbiddenException('Only org admins can manage tenant members');
+    throw new ForbiddenException('Only platform admins can manage tenant members');
   }
 
   private async assertOrgAdminSafety(params: {
@@ -424,5 +573,38 @@ export class OrganizationsService {
     if (remainingAdmins === 0) {
       throw new BadRequestException(`Cannot ${params.action} because every organization needs at least one org admin`);
     }
+  }
+
+  private normalizePermissions(
+    permissions: Array<{ featureKey: FeatureKey; accessLevel: FeatureAccessLevel }>,
+  ) {
+    const unique = new Map<FeatureKey, FeatureAccessLevel>();
+
+    for (const permission of permissions) {
+      unique.set(permission.featureKey, permission.accessLevel);
+    }
+
+    return Array.from(unique.entries())
+      .map(([featureKey, accessLevel]) => ({ featureKey, accessLevel }))
+      .sort((left, right) => left.featureKey.localeCompare(right.featureKey));
+  }
+
+  private async syncMembershipPermissions(
+    membershipId: string,
+    permissions: Array<{ featureKey: FeatureKey; accessLevel: FeatureAccessLevel }>,
+  ) {
+    await this.prisma.membershipFeaturePermission.deleteMany({ where: { membershipId } });
+
+    if (permissions.length === 0) {
+      return;
+    }
+
+    await this.prisma.membershipFeaturePermission.createMany({
+      data: permissions.map((permission) => ({
+        membershipId,
+        featureKey: permission.featureKey,
+        accessLevel: permission.accessLevel,
+      })),
+    });
   }
 }

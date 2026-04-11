@@ -9,6 +9,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { apiRequest } from "@/lib/api";
 import type { PortalNavItem } from "@/lib/navigation/platform-nav";
+import { resolveClientRouteRequirement } from "@/lib/permissions/client-permissions";
 
 type PortalShellProps = {
     children: React.ReactNode;
@@ -28,7 +29,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     const pathname = usePathname();
     const router = useRouter();
     const { theme, toggleTheme } = useTheme();
-    const { user, isLoading, logout, activeOrganizationId, setActiveOrganization } = useAuth();
+    const { user, isLoading, logout, activeOrganizationId, setActiveOrganization, hasClientFeatureAccess } = useAuth();
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [isDesktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
     const [allOrganizations, setAllOrganizations] = useState<Array<{ id: string; name: string; slug: string; status: string }>>([]);
@@ -39,6 +40,13 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     const hasElevatedDashboardAccess = ["SUPER_ADMIN", "PLATFORM_ADMIN"].includes(user?.platformRole ?? "");
     const hasClientAccess = memberships.length > 0 || hasElevatedDashboardAccess;
     const homePath = getPortalHomePath(portal);
+    const clientRouteRequirement = portal === "client" ? resolveClientRouteRequirement(pathname) : null;
+    const canAccessCurrentClientRoute = clientRouteRequirement
+        ? hasClientFeatureAccess(clientRouteRequirement.featureKey, clientRouteRequirement.requiredAccess)
+        : true;
+    const visibleNavItems = portal === "client"
+        ? navItems.filter((item) => !item.featureKey || hasClientFeatureAccess(item.featureKey, item.requiredAccess))
+        : navItems;
 
     useEffect(() => {
         if (portal !== "client" || !hasElevatedDashboardAccess) return;
@@ -150,7 +158,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                     </div>
 
                     <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
-                        {navItems.map((item) => {
+                        {visibleNavItems.map((item) => {
                             const isActive = pathname === item.path;
                             const Icon = item.icon;
                             return (
@@ -297,7 +305,17 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                 </header>
 
                 <div className="page-container">
-                    {children}
+                    {portal === "client" && !canAccessCurrentClientRoute ? (
+                        <div className="glass-panel" style={{ padding: 28, display: "grid", gap: 10, maxWidth: 680 }}>
+                            <div style={{ fontSize: "1.15rem", fontWeight: 800 }}>You don&apos;t have access to this workspace area</div>
+                            <div style={{ color: "hsl(var(--text-muted))", fontSize: "0.92rem" }}>
+                                Your current organization permissions don&apos;t include this feature. Ask a platform admin to update your access level for this module.
+                            </div>
+                            <div style={{ color: "hsl(var(--text-secondary))", fontSize: "0.82rem" }}>
+                                Required: {clientRouteRequirement?.featureKey.replaceAll("_", " ")} {clientRouteRequirement?.requiredAccess}
+                            </div>
+                        </div>
+                    ) : children}
                 </div>
             </main>
 

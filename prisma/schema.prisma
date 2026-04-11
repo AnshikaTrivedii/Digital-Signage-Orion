@@ -21,6 +21,27 @@ enum OrganizationRole {
   ANALYST_VIEWER
 }
 
+enum FeatureKey {
+  DASHBOARD
+  ASSETS
+  PLAYLISTS
+  CAMPAIGNS
+  SCHEDULE
+  TICKERS
+  DEVICES
+  REPORTS
+  TEAM
+  SETTINGS
+}
+
+enum FeatureAccessLevel {
+  NONE
+  VIEW
+  EDIT
+  MANAGE
+  CONTROL
+}
+
 enum UserStatus {
   ACTIVE
   INVITED
@@ -91,10 +112,25 @@ model OrganizationMembership {
 
   user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions    MembershipFeaturePermission[]
 
   @@unique([userId, organizationId])
   @@index([organizationId])
   @@index([role])
+}
+
+model MembershipFeaturePermission {
+  id            String             @id @default(cuid())
+  membershipId  String
+  featureKey    FeatureKey
+  accessLevel   FeatureAccessLevel
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  membership    OrganizationMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, featureKey])
+  @@index([featureKey])
 }
 
 model Invitation {
@@ -105,6 +141,7 @@ model Invitation {
   status          InvitationStatus   @default(PENDING)
   organizationId  String
   role            OrganizationRole
+  permissions     Json?
   invitedById     String
   acceptedByUserId String?
   expiresAt       DateTime

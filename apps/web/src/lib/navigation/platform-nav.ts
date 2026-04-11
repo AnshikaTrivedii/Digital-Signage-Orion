@@ -1,10 +1,13 @@
 import type { LucideIcon } from "lucide-react";
 import { BellRing, Building2, CreditCard, LayoutDashboard, LifeBuoy, Settings, ShieldCheck, Users } from "lucide-react";
+import type { ClientAccessLevel, ClientFeatureKey } from "@/lib/permissions/client-permissions";
 
 export type PortalNavItem = {
     name: string;
     path: string;
     icon: LucideIcon;
+    featureKey?: ClientFeatureKey;
+    requiredAccess?: ClientAccessLevel;
 };
 
 export const platformNavItems: PortalNavItem[] = [

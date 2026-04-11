@@ -7,6 +7,8 @@ import {
     Eye, Download, CloudUpload, FileCode, Archive, AlertCircle
 } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface Asset {
     id: string;
@@ -35,6 +37,7 @@ const mockAssets: Asset[] = [
 ];
 
 export default function AssetsPage() {
+    const { canEdit } = useClientFeature("ASSETS");
     const [assets, setAssets] = useState<Asset[]>(mockAssets);
     const [activeTab, setActiveTab] = useState("All");
     const [search, setSearch] = useState("");
@@ -74,6 +77,7 @@ export default function AssetsPage() {
     }, [assets, activeTab, search]);
 
     const handleDelete = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to assets.");
         setAssets(prev => prev.filter(a => a.id !== id));
         toast.success("Asset deleted successfully");
     };
@@ -84,6 +88,7 @@ export default function AssetsPage() {
     };
 
     const handleFileUpload = (files: FileList | null) => {
+        if (!canEdit) return toast.error("You only have view access to assets.");
         if (!files || files.length === 0) return;
         setIsUploadOpen(false);
         for (let i = 0; i < files.length; i++) {
@@ -109,12 +114,13 @@ export default function AssetsPage() {
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canEdit && <ReadOnlyNotice message="Assets are in read-only mode for this account. You can browse and preview, but uploads and deletions are disabled." />}
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Asset Library</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Centralized repository for all your digital signage content.</p>
                 </div>
-                <button className="btn-primary" onClick={() => setIsUploadOpen(true)} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <button className="btn-primary" disabled={!canEdit} onClick={() => canEdit && setIsUploadOpen(true)} style={{ display: "flex", alignItems: "center", gap: 10, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                     <UploadCloud size={18} /> <span>Ingest Media</span>
                 </button>
             </div>
@@ -156,7 +162,7 @@ export default function AssetsPage() {
                                     <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.58)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s" }}>
                                         <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => setSelectedAsset(asset)}><Eye size={18} /></button>
                                         <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleCopyLink(asset.name)}><LinkIcon size={18} /></button>
-                                        <button className="btn-icon-soft" style={{ background: "hsla(var(--status-danger), 0.85)", color: "hsl(var(--surface-contrast))" }} onClick={() => handleDelete(asset.id)}><Trash2 size={18} /></button>
+                                        <button className="btn-icon-soft" disabled={!canEdit} style={{ background: "hsla(var(--status-danger), 0.85)", color: "hsl(var(--surface-contrast))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(asset.id)}><Trash2 size={18} /></button>
                                     </div>
                                     {asset.duration && (
                                         <div style={{ position: "absolute", bottom: 8, right: 8, background: "hsla(var(--overlay-base), 0.7)", color: "hsl(var(--surface-contrast))", padding: "2px 8px", borderRadius: 6, fontSize: "0.7rem", fontWeight: 600 }}>{asset.duration}</div>
@@ -217,7 +223,7 @@ export default function AssetsPage() {
                             </div>
                             <div style={{ marginTop: 32, display: "flex", justifyContent: "flex-end", gap: 12 }}>
                                 <button className="btn-outline" onClick={() => setIsUploadOpen(false)}>Cancel</button>
-                                <button className="btn-primary" onClick={() => fileInputRef.current?.click()}>Select Files</button>
+                                <button className="btn-primary" disabled={!canEdit} onClick={() => canEdit && fileInputRef.current?.click()} style={{ opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>Select Files</button>
                             </div>
                         </motion.div>
                     </motion.div>

@@ -7,6 +7,8 @@ import {
     Trash2, Monitor, Play, Pause, X, Repeat,
     Zap, Eye, CheckCircle
 } from "lucide-react";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface ScheduleEvent {
     id: string;
@@ -55,6 +57,7 @@ const priorityLabel = (p: string) => {
 };
 
 export default function SchedulePage() {
+    const { canEdit } = useClientFeature("SCHEDULE");
     const [events, setEvents] = useState<ScheduleEvent[]>(mockEvents);
     const [selectedDay, setSelectedDay] = useState("Mon");
     const [viewMode, setViewMode] = useState<"timeline" | "list">("timeline");
@@ -75,6 +78,7 @@ export default function SchedulePage() {
     };
 
     const handleCreate = () => {
+        if (!canEdit) return toast.error("You only have view access to schedules.");
         if (!newName.trim()) return toast.error("Provide a schedule name");
         if (newDays.length === 0) return toast.error("Select at least one day");
         const colors = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa"];
@@ -91,6 +95,7 @@ export default function SchedulePage() {
     };
 
     const handleDelete = (id: string) => {
+        if (!canEdit) return toast.error("You only have view access to schedules.");
         setEvents(events.filter(e => e.id !== id));
         if (selectedEvent?.id === id) setSelectedEvent(null);
         toast.success("Schedule removed");
@@ -102,12 +107,13 @@ export default function SchedulePage() {
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canEdit && <ReadOnlyNotice message="Schedules are read-only for this account. You can review schedule timelines, but create, save, and delete actions are disabled." />}
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Content Schedule</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Orchestrate time-based content delivery across your signage network.</p>
                 </div>
-                <button className="btn-primary" onClick={() => setShowCreator(true)} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button className="btn-primary" disabled={!canEdit} onClick={() => canEdit && setShowCreator(true)} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                     <Plus size={18} /> New Schedule
                 </button>
             </div>

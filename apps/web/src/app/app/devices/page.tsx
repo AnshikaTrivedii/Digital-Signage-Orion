@@ -8,6 +8,8 @@ import {
     Search, Filter, ChevronRight, Zap, Activity,
     X, Play, Eye, BarChart3, Globe, Cpu, AlertTriangle
 } from "lucide-react";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
 interface Device {
     id: string;
@@ -37,6 +39,7 @@ const mockDevices: Device[] = [
 ];
 
 export default function DevicesPage() {
+    const { canControl } = useClientFeature("DEVICES");
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
@@ -69,12 +72,13 @@ export default function DevicesPage() {
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+            {!canControl && <ReadOnlyNotice message="Devices are visible in monitoring mode. Control actions like register and reboot are disabled for this account." />}
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Device Management</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Monitor and manage all connected signage players.</p>
                 </div>
-                <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => toast.success("Device pairing mode activated")}>
+                <button className="btn-primary" disabled={!canControl} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canControl ? 1 : 0.55, cursor: canControl ? "pointer" : "not-allowed" }} onClick={() => canControl && toast.success("Device pairing mode activated")}>
                     <Plus size={18} /> Register Device
                 </button>
             </div>
@@ -132,7 +136,7 @@ export default function DevicesPage() {
                                             <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", display: "flex", alignItems: "center", gap: 4 }}><MapPin size={10} /> {d.location}</p>
                                         </div>
                                     </div>
-                                    <button className="btn-icon-soft" onClick={e => { e.stopPropagation(); toast.success(`Rebooting ${d.name}...`); }}><RefreshCw size={14} /></button>
+                                    <button className="btn-icon-soft" disabled={!canControl} onClick={e => { e.stopPropagation(); if (!canControl) return; toast.success(`Rebooting ${d.name}...`); }} style={{ opacity: canControl ? 1 : 0.45, cursor: canControl ? "pointer" : "not-allowed" }}><RefreshCw size={14} /></button>
                                 </div>
 
                                 {d.status !== "offline" ? (
@@ -229,7 +233,7 @@ export default function DevicesPage() {
                                 )}
                                 <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
                                     <button className="btn-outline" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => { toast.success("Screenshot captured"); }}><Eye size={16} /> Screenshot</button>
-                                    <button className="btn-outline" style={{ display: "flex", alignItems: "center", gap: 8, borderColor: "#fbbf24", color: "#fbbf24" }} onClick={() => { toast.success("Reboot signal sent"); }}><RefreshCw size={16} /> Reboot</button>
+                                    <button className="btn-outline" disabled={!canControl} style={{ display: "flex", alignItems: "center", gap: 8, borderColor: "#fbbf24", color: "#fbbf24", opacity: canControl ? 1 : 0.55, cursor: canControl ? "pointer" : "not-allowed" }} onClick={() => { if (!canControl) return; toast.success("Reboot signal sent"); }}><RefreshCw size={16} /> Reboot</button>
                                     <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => setSelectedDevice(null)}>Close</button>
                                 </div>
                             </div>

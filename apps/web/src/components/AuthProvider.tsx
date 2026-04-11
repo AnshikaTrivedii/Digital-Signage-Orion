@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "@/lib/api";
 import { ACTIVE_ORGANIZATION_STORAGE_KEY, AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
+import { getClientFeatureAccess, hasClientFeatureAccess, type ClientAccessLevel, type ClientFeatureKey, type MembershipPermission } from "@/lib/permissions/client-permissions";
 
 export type AuthMembership = {
     id: string;
@@ -14,6 +15,7 @@ export type AuthMembership = {
         slug: string;
         status: "DRAFT" | "ACTIVE" | "SUSPENDED";
     };
+    permissions: MembershipPermission[];
 };
 
 export type AuthUser = {
@@ -43,6 +45,7 @@ type LoginResponse = {
             organizationSlug: string;
             role: AuthMembership["role"];
             status: AuthMembership["status"];
+            permissions?: MembershipPermission[];
         }>;
     };
 };
@@ -59,6 +62,9 @@ type AuthContextValue = {
     activeOrganizationId: string | null;
     canManageOrganizations: boolean;
     canManagePlatformUsers: boolean;
+    activeMembership: AuthMembership | null;
+    getClientFeatureAccess: (featureKey: ClientFeatureKey) => ClientAccessLevel;
+    hasClientFeatureAccess: (featureKey: ClientFeatureKey, requiredAccess?: ClientAccessLevel) => boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -181,6 +187,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         },
         canManageOrganizations: ["SUPER_ADMIN", "PLATFORM_ADMIN", "SALES"].includes(user?.platformRole ?? ""),
         canManagePlatformUsers: ["SUPER_ADMIN", "PLATFORM_ADMIN"].includes(user?.platformRole ?? ""),
+        activeMembership: user?.memberships.find((membership) => membership.organization.id === activeOrganizationId) ?? user?.memberships[0] ?? null,
+        getClientFeatureAccess: (featureKey: ClientFeatureKey) => getClientFeatureAccess(user, activeOrganizationId, featureKey),
+        hasClientFeatureAccess: (featureKey: ClientFeatureKey, requiredAccess: ClientAccessLevel = "VIEW") =>
+            hasClientFeatureAccess(user, activeOrganizationId, featureKey, requiredAccess),
     }), [activeOrganizationId, applySession, clearSession, isLoading, token, user]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
