@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
     Monitor, CheckCircle, XCircle, HardDrive,
@@ -11,35 +11,14 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import { apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 const AnimatedGlobe = dynamic(() => import("@/components/AnimatedGlobe"), { ssr: false });
 const DonutChart = dynamic(() => import("@/components/DonutChart"), { ssr: false });
 const SparklineChart = dynamic(() => import("@/components/SparklineChart"), { ssr: false });
 
-const recentActivityLog = [
-    { id: 1, action: "Content deployed to LOBBY-SCR-001", time: "2 min ago", type: "success" },
-    { id: 2, action: "Device CAFE-SCR-003 went offline", time: "8 min ago", type: "danger" },
-    { id: 3, action: "New asset uploaded: Holiday_Promo.mp4", time: "15 min ago", type: "info" },
-    { id: 4, action: "Playlist 'Morning Loop' activated", time: "22 min ago", type: "success" },
-    { id: 5, action: "Ticker broadcast: Q1 earnings update", time: "35 min ago", type: "info" },
-    { id: 6, action: "Device RETAIL-SCR-007 rebooted", time: "1h ago", type: "warning" },
-];
-
-const topDevices = [
-    { name: "LOBBY-SCR-001", location: "Main Lobby", uptime: "99.98%", status: "online" },
-    { name: "CAFE-SCR-003", location: "London Cafe", uptime: "97.2%", status: "offline" },
-    { name: "CONF-SCR-012", location: "Berlin Office", uptime: "99.87%", status: "online" },
-    { name: "RETAIL-SCR-007", location: "Tokyo Retail", uptime: "99.41%", status: "online" },
-];
-
 const chartData = [40, 55, 42, 68, 75, 48, 52, 90, 82, 60, 45, 78, 92, 85, 96, 70, 55, 65, 42, 58, 75, 48, 88, 74];
-
-const schedulePreview = [
-    { name: "Morning Welcome", time: "06:00-10:00", color: "#4ade80", active: true },
-    { name: "Flash Sale Push", time: "10:00-14:00", color: "#f87171", active: false },
-    { name: "Lunch Menu", time: "11:30-14:30", color: "#00e5ff", active: true },
-    { name: "Afternoon Promo", time: "14:00-18:00", color: "#a78bfa", active: false },
-];
 
 const quickActions = [
     { label: "Assets", desc: "Upload media", icon: Upload, path: "/app/assets", color: "var(--accent-primary)" },
@@ -55,6 +34,20 @@ const sparkData2 = [20, 35, 40, 30, 55, 45, 70, 60, 80, 75, 85, 92];
 const sparkData3 = [80, 75, 82, 70, 65, 60, 55, 45, 40, 35, 30, 28];
 
 export default function ClientDashboardPage() {
+    const { activeOrganizationId } = useAuth();
+    const [dashboardData, setDashboardData] = useState<{
+        stats: {
+            totalDevices: number;
+            onlineDevices: number;
+            warningDevices: number;
+            offlineDevices: number;
+            totalAssets: number;
+        };
+        recentActivityLog: { id: string; action: string; time: string; type: string }[];
+        topDevices: { name: string; location: string; uptime: string; status: string }[];
+        schedulePreview: { name: string; time: string; color: string; active: boolean }[];
+    } | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
     const [liveCount, setLiveCount] = useState(1105);
     const [chartRange, setChartRange] = useState("7d");
     const [currentTime, setCurrentTime] = useState("");
@@ -77,11 +70,48 @@ export default function ClientDashboardPage() {
         return () => clearInterval(interval);
     }, []);
 
+    useEffect(() => {
+        if (!activeOrganizationId) return;
+        void (async () => {
+            setIsLoading(true);
+            try {
+                const response = await apiRequest<{
+                    stats: {
+                        totalDevices: number;
+                        onlineDevices: number;
+                        warningDevices: number;
+                        offlineDevices: number;
+                        totalAssets: number;
+                    };
+                    recentActivityLog: { id: string; action: string; time: string; type: string }[];
+                    topDevices: { name: string; location: string; uptime: string; status: string }[];
+                    schedulePreview: { name: string; time: string; color: string; active: boolean }[];
+                }>("/api/client-data/dashboard", {
+                    headers: { "x-organization-id": activeOrganizationId },
+                });
+                setDashboardData(response);
+            } finally {
+                setIsLoading(false);
+            }
+        })();
+    }, [activeOrganizationId]);
+
+    const recentActivityLog = useMemo(
+        () =>
+            (dashboardData?.recentActivityLog ?? []).map((entry) => ({
+                ...entry,
+                time: new Date(entry.time).toLocaleTimeString(),
+            })),
+        [dashboardData],
+    );
+    const topDevices = dashboardData?.topDevices ?? [];
+    const schedulePreview = dashboardData?.schedulePreview ?? [];
+
     const statCards = [
-        { title: "Total Devices", value: "1,248", change: "+12%", up: true, icon: Monitor, color: "var(--accent-primary)", spark: sparkData1 },
-        { title: "Active Streams", value: liveCount.toLocaleString(), change: "+8%", up: true, icon: CheckCircle, color: "var(--status-success)", spark: sparkData2 },
-        { title: "Offline / Errors", value: "143", change: "-5%", up: false, icon: XCircle, color: "var(--status-danger)", spark: sparkData3 },
-        { title: "Storage Used", value: "4.2 TB", change: "+3%", up: true, icon: HardDrive, color: "var(--accent-secondary)", spark: sparkData1.map((v) => v * 0.8) },
+        { title: "Total Devices", value: (dashboardData?.stats.totalDevices ?? 0).toLocaleString(), change: "Live", up: true, icon: Monitor, color: "var(--accent-primary)", spark: sparkData1 },
+        { title: "Active Streams", value: (dashboardData?.stats.onlineDevices ?? liveCount).toLocaleString(), change: "Live", up: true, icon: CheckCircle, color: "var(--status-success)", spark: sparkData2 },
+        { title: "Offline / Errors", value: ((dashboardData?.stats.offlineDevices ?? 0) + (dashboardData?.stats.warningDevices ?? 0)).toLocaleString(), change: "Live", up: false, icon: XCircle, color: "var(--status-danger)", spark: sparkData3 },
+        { title: "Assets", value: (dashboardData?.stats.totalAssets ?? 0).toLocaleString(), change: "Live", up: true, icon: HardDrive, color: "var(--accent-secondary)", spark: sparkData1.map((v) => v * 0.8) },
     ];
 
     const typeColor = (type: string) => {
@@ -210,6 +240,7 @@ export default function ClientDashboardPage() {
                         <button className="btn-icon-soft" style={{ fontSize: "0.75rem", color: "hsl(var(--accent-primary))" }}>View All</button>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        {isLoading ? <div style={{ padding: 8, color: "hsl(var(--text-muted))" }}>Loading activity...</div> : null}
                         {recentActivityLog.map((log, idx) => (
                             <motion.div key={log.id} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.06 }}
                                 style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, background: idx === 0 ? "hsla(var(--bg-surface-elevated), 0.4)" : "transparent" }}>

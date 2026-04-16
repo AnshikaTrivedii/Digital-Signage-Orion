@@ -1,15 +1,16 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    Monitor, Wifi, WifiOff, MapPin, MoreVertical, Plus,
-    RefreshCw, Power, HardDrive, Thermometer, Clock,
-    Search, Filter, ChevronRight, Zap, Activity,
-    X, Play, Eye, BarChart3, Globe, Cpu, AlertTriangle
+    Wifi, WifiOff, MapPin, Plus,
+    RefreshCw, HardDrive, Thermometer,
+    Search, X, Eye, Cpu, AlertTriangle
 } from "lucide-react";
-import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
+import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
+import { apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 interface Device {
     id: string;
@@ -27,25 +28,32 @@ interface Device {
     currentContent: string;
 }
 
-const mockDevices: Device[] = [
-    { id: "d1", name: "LOBBY-SCR-001", status: "online", location: "Main Lobby", ip: "192.168.1.101", resolution: "3840x2160", uptime: "45d 12h", cpu: 23, ram: 41, temp: 42, lastSync: "2 min ago", os: "Android 13", currentContent: "Welcome Loop" },
-    { id: "d2", name: "CAFE-SCR-003", status: "offline", location: "London Café", ip: "192.168.2.45", resolution: "1920x1080", uptime: "0d 0h", cpu: 0, ram: 0, temp: 0, lastSync: "3 hours ago", os: "Android 12", currentContent: "N/A" },
-    { id: "d3", name: "CONF-SCR-012", status: "online", location: "Berlin Conference", ip: "10.0.3.88", resolution: "3840x2160", uptime: "120d 8h", cpu: 18, ram: 35, temp: 38, lastSync: "Just now", os: "Android 14", currentContent: "Corporate Updates" },
-    { id: "d4", name: "RETAIL-SCR-007", status: "online", location: "Tokyo Retail Store", ip: "172.16.5.22", resolution: "1920x1080", uptime: "60d 4h", cpu: 45, ram: 62, temp: 51, lastSync: "1 min ago", os: "Android 13", currentContent: "Product Showcase" },
-    { id: "d5", name: "WAYFIND-SCR-005", status: "online", location: "Singapore Airport", ip: "10.10.1.15", resolution: "3840x2160", uptime: "200d 3h", cpu: 12, ram: 28, temp: 36, lastSync: "Just now", os: "Android 14", currentContent: "Wayfinding Map" },
-    { id: "d6", name: "FOOD-SCR-009", status: "warning", location: "Paris Food Court", ip: "192.168.8.77", resolution: "1920x1080", uptime: "15d 6h", cpu: 89, ram: 91, temp: 72, lastSync: "10 min ago", os: "Android 12", currentContent: "Menu Board" },
-    { id: "d7", name: "EXEC-SCR-002", status: "online", location: "Dubai Executive Suite", ip: "10.0.7.33", resolution: "7680x4320", uptime: "90d 11h", cpu: 31, ram: 44, temp: 40, lastSync: "Just now", os: "Android 14", currentContent: "KPI Dashboard" },
-    { id: "d8", name: "PARK-SCR-011", status: "online", location: "Sydney Theme Park", ip: "172.20.3.50", resolution: "1920x1080", uptime: "30d 7h", cpu: 27, ram: 38, temp: 44, lastSync: "5 min ago", os: "Android 13", currentContent: "Event Schedule" },
-];
-
 export default function DevicesPage() {
     const { canControl } = useClientFeature("DEVICES");
+    const { activeOrganizationId } = useAuth();
+    const [devices, setDevices] = useState<Device[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
 
+    useEffect(() => {
+        if (!activeOrganizationId) return;
+        void (async () => {
+            setIsLoading(true);
+            try {
+                const response = await apiRequest<Device[]>("/api/client-data/devices", {
+                    headers: { "x-organization-id": activeOrganizationId },
+                });
+                setDevices(response);
+            } finally {
+                setIsLoading(false);
+            }
+        })();
+    }, [activeOrganizationId]);
+
     const filtered = useMemo(() => {
-        return mockDevices.filter(d => {
+        return devices.filter(d => {
             if (statusFilter !== "all" && d.status !== statusFilter) return false;
             if (search) {
                 const s = search.toLowerCase();
@@ -53,11 +61,11 @@ export default function DevicesPage() {
             }
             return true;
         });
-    }, [search, statusFilter]);
+    }, [devices, search, statusFilter]);
 
-    const onlineCount = mockDevices.filter(d => d.status === "online").length;
-    const offlineCount = mockDevices.filter(d => d.status === "offline").length;
-    const warningCount = mockDevices.filter(d => d.status === "warning").length;
+    const onlineCount = devices.filter(d => d.status === "online").length;
+    const offlineCount = devices.filter(d => d.status === "offline").length;
+    const warningCount = devices.filter(d => d.status === "warning").length;
 
     const statusDot = (s: string) => {
         const c = s === "online" ? "#4ade80" : s === "warning" ? "#fbbf24" : "#f87171";
@@ -124,6 +132,11 @@ export default function DevicesPage() {
             {/* Device Grid */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 20 }}>
                 <AnimatePresence mode="popLayout">
+                    {isLoading ? (
+                        <div className="glass-panel" style={{ gridColumn: "1 / -1", padding: 24, textAlign: "center", color: "hsl(var(--text-muted))" }}>
+                            Loading devices...
+                        </div>
+                    ) : null}
                     {filtered.map((d, idx) => (
                         <motion.div key={d.id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: idx * 0.04 }}
                             className="glass-card" style={{ padding: 0, overflow: "hidden", cursor: "pointer" }} onClick={() => setSelectedDevice(d)}>

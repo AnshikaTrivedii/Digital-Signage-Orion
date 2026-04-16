@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
+import { apiDelete, apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 interface ScheduleEvent {
     id: string;
@@ -25,16 +27,6 @@ interface ScheduleEvent {
 }
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const mockEvents: ScheduleEvent[] = [
-    { id: "s1", name: "Morning Welcome", campaign: "Corporate Welcome Loop", startTime: "06:00", endTime: "10:00", days: ["Mon", "Tue", "Wed", "Thu", "Fri"], screens: 45, status: "active", color: "#4ade80", priority: "high", recurring: true },
-    { id: "s2", name: "Flash Sale Push", campaign: "Summer Flash Sale 2026", startTime: "10:00", endTime: "14:00", days: ["Mon", "Wed", "Fri"], screens: 80, status: "scheduled", color: "#f87171", priority: "high", recurring: true },
-    { id: "s3", name: "Lunch Menu Display", campaign: "Cafe Menu Board", startTime: "11:30", endTime: "14:30", days: ["Mon", "Tue", "Wed", "Thu", "Fri"], screens: 12, status: "active", color: "#00e5ff", priority: "normal", recurring: true },
-    { id: "s4", name: "Afternoon Promo", campaign: "Product Showcase", startTime: "14:00", endTime: "18:00", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], screens: 120, status: "scheduled", color: "#a78bfa", priority: "normal", recurring: true },
-    { id: "s5", name: "Evening Ambience", campaign: "Holiday Season Warmup", startTime: "18:00", endTime: "22:00", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], screens: 200, status: "active", color: "#f472b6", priority: "low", recurring: true },
-    { id: "s6", name: "Safety Broadcast", campaign: "Safety Procedures", startTime: "08:00", endTime: "08:30", days: ["Mon"], screens: 200, status: "completed", color: "#fbbf24", priority: "high", recurring: false },
-    { id: "s7", name: "Weekend Entertainment", campaign: "Brand Entertainment", startTime: "12:00", endTime: "20:00", days: ["Sat", "Sun"], screens: 60, status: "scheduled", color: "#60a5fa", priority: "normal", recurring: true },
-];
 
 const statusIcon = (s: string) => {
     if (s === "active") return <Play size={12} />;
@@ -58,7 +50,24 @@ const priorityLabel = (p: string) => {
 
 export default function SchedulePage() {
     const { canEdit } = useClientFeature("SCHEDULE");
-    const [events, setEvents] = useState<ScheduleEvent[]>(mockEvents);
+    const { activeOrganizationId } = useAuth();
+    const [events, setEvents] = useState<ScheduleEvent[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    useEffect(() => {
+        if (!activeOrganizationId) return;
+        void (async () => {
+            setIsLoading(true);
+            try {
+                const response = await apiRequest<ScheduleEvent[]>("/api/client-data/schedule-events", {
+                    headers: { "x-organization-id": activeOrganizationId },
+                });
+                setEvents(response);
+            } finally {
+                setIsLoading(false);
+            }
+        })();
+    }, [activeOrganizationId]);
+
     const [selectedDay, setSelectedDay] = useState("Mon");
     const [viewMode, setViewMode] = useState<"timeline" | "list">("timeline");
     const [showCreator, setShowCreator] = useState(false);
@@ -81,24 +90,37 @@ export default function SchedulePage() {
         if (!canEdit) return toast.error("You only have view access to schedules.");
         if (!newName.trim()) return toast.error("Provide a schedule name");
         if (newDays.length === 0) return toast.error("Select at least one day");
-        const colors = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa"];
-        const ne: ScheduleEvent = {
-            id: Date.now().toString(), name: newName, campaign: "New Campaign",
-            startTime: newStart, endTime: newEnd, days: newDays, screens: 0,
-            status: "scheduled", color: colors[Math.floor(Math.random() * colors.length)],
-            priority: "normal", recurring: true
-        };
-        setEvents([ne, ...events]);
-        setShowCreator(false);
-        setNewName("");
-        toast.success("Schedule slot created!");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            const created = await apiRequest<ScheduleEvent>("/api/client-data/schedule-events", {
+                method: "POST",
+                headers: { "x-organization-id": activeOrganizationId },
+                body: JSON.stringify({
+                    name: newName,
+                    startTime: newStart,
+                    endTime: newEnd,
+                    days: newDays,
+                }),
+            });
+            setEvents((previous) => [created, ...previous]);
+            setShowCreator(false);
+            setNewName("");
+            toast.success("Schedule slot created!");
+        })();
     };
 
     const handleDelete = (id: string) => {
         if (!canEdit) return toast.error("You only have view access to schedules.");
-        setEvents(events.filter(e => e.id !== id));
-        if (selectedEvent?.id === id) setSelectedEvent(null);
-        toast.success("Schedule removed");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            const ok = await apiDelete(`/api/client-data/schedule-events/${id}`, {
+                headers: { "x-organization-id": activeOrganizationId },
+            });
+            if (!ok) return toast.error("Failed to delete schedule");
+            setEvents((previous) => previous.filter((event) => event.id !== id));
+            if (selectedEvent?.id === id) setSelectedEvent(null);
+            toast.success("Schedule removed");
+        })();
     };
 
     const toggleDay = (day: string) => {
@@ -205,7 +227,12 @@ export default function SchedulePage() {
                             }}>
                             <div style={{ position: "absolute", top: -6, left: -4, width: 10, height: 10, borderRadius: "50%", background: "#f87171" }} />
                         </motion.div>
-                        {todayEvents.length === 0 && (
+                        {isLoading ? (
+                            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--text-muted))" }}>
+                                Loading schedule...
+                            </div>
+                        ) : null}
+                        {todayEvents.length === 0 && !isLoading && (
                             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--text-muted))" }}>
                                 <div style={{ textAlign: "center" }}>
                                     <Calendar size={48} style={{ opacity: 0.15, marginBottom: 12 }} />

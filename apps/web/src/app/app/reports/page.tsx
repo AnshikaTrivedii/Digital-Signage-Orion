@@ -1,58 +1,61 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
-    BarChart3, TrendingUp, Activity, Eye, Globe, Download,
-    Calendar, Filter, Search, ChevronRight, ArrowUpRight,
-    Zap, Monitor, Clock, Users, FileText
+    Activity, Eye, Globe, Download, Search, ArrowUpRight, Monitor, FileText
 } from "lucide-react";
 import { toast } from "react-hot-toast";
+import { apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
-const kpiCards = [
-    { title: "Billed Impressions", value: "2.4M", change: "+18%", icon: Eye, color: "var(--accent-primary)" },
-    { title: "Avg. Engagement", value: "34.2s", change: "+12%", icon: Activity, color: "var(--accent-secondary)" },
-    { title: "Playback Fidelity", value: "99.97%", change: "+0.3%", icon: TrendingUp, color: "var(--status-success)" },
-    { title: "Active Nodes", value: "1,105", change: "+8%", icon: Monitor, color: "var(--accent-tertiary)" },
-];
-
-const chartData = [
-    { day: "Mon", impressions: 340, engagement: 72 },
-    { day: "Tue", impressions: 420, engagement: 68 },
-    { day: "Wed", impressions: 380, engagement: 85 },
-    { day: "Thu", impressions: 510, engagement: 78 },
-    { day: "Fri", impressions: 480, engagement: 92 },
-    { day: "Sat", impressions: 290, engagement: 55 },
-    { day: "Sun", impressions: 260, engagement: 48 },
-];
-
-const regionData = [
-    { name: "North America", nodes: 420, impressions: "980K", health: 99.9 },
-    { name: "Europe", nodes: 310, impressions: "720K", health: 99.8 },
-    { name: "Asia Pacific", nodes: 220, impressions: "460K", health: 99.5 },
-    { name: "Middle East", nodes: 95, impressions: "180K", health: 99.7 },
-    { name: "South America", nodes: 60, impressions: "60K", health: 98.9 },
-];
-
-const proofOfPlay = [
-    { id: "1", device: "LOBBY-SCR-001", content: "Summer_Promo.mp4", timestamp: "2026-03-23 14:02:12", status: "Verified" },
-    { id: "2", device: "CAFE-SCR-003", content: "Menu_Board.html", timestamp: "2026-03-23 13:58:45", status: "Verified" },
-    { id: "3", device: "CONF-SCR-012", content: "Corporate_Update.mp4", timestamp: "2026-03-23 13:55:30", status: "Verified" },
-    { id: "4", device: "RETAIL-SCR-007", content: "Flash_Sale.png", timestamp: "2026-03-23 13:50:18", status: "Failed" },
-    { id: "5", device: "EXEC-SCR-002", content: "KPI_Dashboard.html", timestamp: "2026-03-23 13:45:02", status: "Verified" },
-    { id: "6", device: "PARK-SCR-011", content: "Event_Schedule.mp4", timestamp: "2026-03-23 13:40:55", status: "Verified" },
-];
+type ReportResponse = {
+    kpis: {
+        billedImpressions: number;
+        avgEngagement: number;
+        playbackFidelity: number;
+        activeNodes: number;
+    };
+    chartData: { day: string; impressions: number; engagement: number }[];
+    proofOfPlay: { id: string; device: string; content: string; timestamp: string; status: string }[];
+};
 
 export default function ReportsPage() {
+    const { activeOrganizationId } = useAuth();
     const [dateRange, setDateRange] = useState("7d");
     const [logSearch, setLogSearch] = useState("");
+    const [reportData, setReportData] = useState<ReportResponse | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
-    const maxImpressions = Math.max(...chartData.map(d => d.impressions));
+    useEffect(() => {
+        if (!activeOrganizationId) return;
+        void (async () => {
+            setIsLoading(true);
+            try {
+                const response = await apiRequest<ReportResponse>("/api/client-data/reports", {
+                    headers: { "x-organization-id": activeOrganizationId },
+                });
+                setReportData(response);
+            } finally {
+                setIsLoading(false);
+            }
+        })();
+    }, [activeOrganizationId]);
 
-    const filteredLogs = proofOfPlay.filter(log => {
+    const chartData = reportData?.chartData ?? [];
+    const maxImpressions = Math.max(...chartData.map((d) => d.impressions), 1);
+
+    const filteredLogs = (reportData?.proofOfPlay ?? []).filter((log) => {
         if (!logSearch) return true;
         const s = logSearch.toLowerCase();
         return log.device.toLowerCase().includes(s) || log.content.toLowerCase().includes(s);
     });
+
+    const kpiCards = [
+        { title: "Billed Impressions", value: (reportData?.kpis.billedImpressions ?? 0).toLocaleString(), change: "Live", icon: Eye, color: "var(--accent-primary)" },
+        { title: "Avg. Engagement", value: `${reportData?.kpis.avgEngagement ?? 0}s`, change: "Live", icon: Activity, color: "var(--accent-secondary)" },
+        { title: "Playback Fidelity", value: `${reportData?.kpis.playbackFidelity ?? 0}%`, change: "Live", icon: Activity, color: "var(--status-success)" },
+        { title: "Active Nodes", value: (reportData?.kpis.activeNodes ?? 0).toLocaleString(), change: "Live", icon: Monitor, color: "var(--accent-tertiary)" },
+    ];
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
@@ -132,9 +135,12 @@ export default function ReportsPage() {
                 {/* Regional Breakdown */}
                 <div className="glass-panel" style={{ padding: 24 }}>
                     <h2 style={{ fontSize: "1.15rem", fontWeight: 700, marginBottom: 8 }}>Regional Delivery</h2>
-                    <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 24 }}>Global content distribution by region</p>
+                    <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 24 }}>Live distribution based on connected nodes</p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                        {regionData.map((r, i) => (
+                        {(reportData ? [
+                            { name: "Online", nodes: reportData.kpis.activeNodes, impressions: `${reportData.kpis.billedImpressions}`, health: Math.min(100, reportData.kpis.playbackFidelity) },
+                            { name: "All Nodes", nodes: reportData.kpis.activeNodes, impressions: `${reportData.kpis.billedImpressions}`, health: Math.max(0, Math.min(100, reportData.kpis.playbackFidelity - 2)) },
+                        ] : []).map((r, i) => (
                             <motion.div key={i} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.08 }}>
                                 <div className="flex-between" style={{ marginBottom: 8 }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -182,12 +188,19 @@ export default function ReportsPage() {
                             </tr>
                         </thead>
                         <tbody>
+                            {isLoading ? (
+                                <tr>
+                                    <td colSpan={4} style={{ padding: "20px 16px", color: "hsl(var(--text-muted))" }}>
+                                        Loading report data...
+                                    </td>
+                                </tr>
+                            ) : null}
                             {filteredLogs.map((log, i) => (
                                 <motion.tr key={log.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
                                     style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
                                     <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>{log.device}</td>
                                     <td style={{ padding: "12px 16px", fontSize: "0.85rem", color: "hsl(var(--text-secondary))" }}>{log.content}</td>
-                                    <td style={{ padding: "12px 16px", fontSize: "0.8rem", color: "hsl(var(--text-muted))", fontFamily: "monospace" }}>{log.timestamp}</td>
+                                    <td style={{ padding: "12px 16px", fontSize: "0.8rem", color: "hsl(var(--text-muted))", fontFamily: "monospace" }}>{new Date(log.timestamp).toLocaleString()}</td>
                                     <td style={{ padding: "12px 16px" }}>
                                         <span style={{
                                             fontSize: "0.7rem", fontWeight: 700, padding: "4px 12px", borderRadius: 20,

@@ -71,6 +71,67 @@ enum InvitationScope {
   ORGANIZATION
 }
 
+enum CampaignStatus {
+  ACTIVE
+  DRAFT
+  SCHEDULED
+}
+
+enum PlaylistStatus {
+  ACTIVE
+  PAUSED
+  DRAFT
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  WARNING
+}
+
+enum TickerSpeed {
+  SLOW
+  NORMAL
+  FAST
+}
+
+enum TickerStyle {
+  CLASSIC
+  NEON
+  GRADIENT
+  MINIMAL
+}
+
+enum TickerStatus {
+  ACTIVE
+  PAUSED
+  DRAFT
+}
+
+enum TickerPriority {
+  LOW
+  NORMAL
+  URGENT
+}
+
+enum ScheduleStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+enum SchedulePriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum ProofOfPlayStatus {
+  VERIFIED
+  FAILED
+}
+
 model User {
   id               String                   @id @default(cuid())
   email            String                   @unique
@@ -80,6 +141,7 @@ model User {
   status           UserStatus               @default(ACTIVE)
   memberships      OrganizationMembership[]
   sentInvitations  Invitation[]             @relation("InvitationSender")
+  uploadedAssets   Asset[]                  @relation("AssetUploader")
   auditLogs        AuditLog[]               @relation("AuditActor")
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
@@ -95,9 +157,186 @@ model Organization {
   salesNotes         String?
   memberships        OrganizationMembership[]
   invitations        Invitation[]
+  assets             Asset[]
+  campaigns          Campaign[]
+  playlists          Playlist[]
+  scheduleEvents     ScheduleEvent[]
+  devices            Device[]
+  tickers            Ticker[]
+  proofOfPlayLogs    ProofOfPlayLog[]
   auditLogs          AuditLog[]
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
+}
+
+model Asset {
+  id             String        @id @default(cuid())
+  organizationId String
+  uploadedById   String?
+  name           String
+  originalName   String
+  mimeType       String
+  fileExtension  String?
+  fileSizeBytes  Int
+  storagePath    String
+  publicUrl      String?
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  uploadedBy     User?         @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([uploadedById])
+}
+
+model Campaign {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  description    String
+  assetCount     Int            @default(0)
+  status         CampaignStatus @default(DRAFT)
+  screens        Int            @default(0)
+  impressions    Int            @default(0)
+  color          String         @default("#4ade80")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  playlistLinks  PlaylistCampaign[]
+
+  @@index([organizationId, createdAt])
+}
+
+model Playlist {
+  id             String         @id @default(cuid())
+  organizationId String
+  name           String
+  status         PlaylistStatus @default(DRAFT)
+  screens        Int            @default(0)
+  color          String         @default("#4ade80")
+  lastPlayedAt   DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  items          PlaylistItem[]
+  campaignLinks  PlaylistCampaign[]
+  devices        Device[]
+
+  @@index([organizationId, createdAt])
+}
+
+model PlaylistCampaign {
+  id         String   @id @default(cuid())
+  playlistId String
+  campaignId String
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, campaignId])
+  @@index([campaignId])
+  @@index([playlistId, position])
+}
+
+model PlaylistItem {
+  id              String   @id @default(cuid())
+  playlistId      String
+  name            String
+  type            String
+  durationSeconds Int
+  position        Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+
+  @@index([playlistId, position])
+}
+
+model ScheduleEvent {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  campaign       String
+  startTime      String
+  endTime        String
+  days           String[]
+  screens        Int              @default(0)
+  status         ScheduleStatus   @default(SCHEDULED)
+  color          String           @default("#4ade80")
+  priority       SchedulePriority @default(NORMAL)
+  recurring      Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model Device {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  status         DeviceStatus @default(ONLINE)
+  location       String
+  ip             String
+  resolution     String
+  uptime         String
+  cpu            Int          @default(0)
+  ram            Int          @default(0)
+  temp           Int          @default(0)
+  lastSync       String
+  os             String
+  currentContent String?
+  currentPlaylistId String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  currentPlaylist Playlist?   @relation(fields: [currentPlaylistId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, currentPlaylistId])
+}
+
+model Ticker {
+  id             String         @id @default(cuid())
+  organizationId String
+  text           String
+  speed          TickerSpeed    @default(NORMAL)
+  style          TickerStyle    @default(NEON)
+  color          String         @default("#00e5ff")
+  status         TickerStatus   @default(DRAFT)
+  priority       TickerPriority @default(NORMAL)
+  screens        Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+}
+
+model ProofOfPlayLog {
+  id             String           @id @default(cuid())
+  organizationId String
+  device         String
+  content        String
+  status         ProofOfPlayStatus
+  timestamp      DateTime
+  createdAt      DateTime         @default(now())
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, timestamp])
 }
 
 model OrganizationMembership {

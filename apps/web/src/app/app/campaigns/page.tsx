@@ -1,14 +1,14 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    Folder, Plus, Search, Trash2, Edit2, Copy,
-    Calendar, CheckCircle, Clock, Eye, Tag, Zap,
-    Archive, Play, X, MoreVertical, Monitor, Image as ImageIcon
+    Folder, Plus, Search, Trash2, Edit2, X, CheckCircle, Calendar
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
+import { ApiError, apiDelete, apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 interface Campaign {
     id: string;
@@ -22,15 +22,6 @@ interface Campaign {
     impressions: string;
 }
 
-const mockCampaigns: Campaign[] = [
-    { id: "c1", name: "Summer Flash Sale 2026", description: "High-impact retail promotion across all storefronts.", assetCount: 14, status: "active", lastModified: "2 hours ago", color: "#4ade80", screens: 45, impressions: "124K" },
-    { id: "c2", name: "Corporate Welcome Loop", description: "Professional lobby welcome content for visitors and guests.", assetCount: 6, status: "active", lastModified: "1 day ago", color: "#00e5ff", screens: 12, impressions: "89K" },
-    { id: "c3", name: "Q1 Earnings Broadcast", description: "Internal broadcast of quarterly financial results.", assetCount: 3, status: "draft", lastModified: "3 days ago", color: "#a78bfa", screens: 0, impressions: "0" },
-    { id: "c4", name: "New Product Reveal", description: "Teaser campaign for upcoming product launch event.", assetCount: 22, status: "scheduled", lastModified: "5 days ago", color: "#f472b6", screens: 80, impressions: "0" },
-    { id: "c5", name: "Safety Procedures Update", description: "Compliance-required safety content for all facilities.", assetCount: 8, status: "active", lastModified: "1 week ago", color: "#fb923c", screens: 200, impressions: "310K" },
-    { id: "c6", name: "Holiday Season Warmup", description: "Seasonal decorative content and promotional offers.", assetCount: 18, status: "draft", lastModified: "2 weeks ago", color: "#60a5fa", screens: 0, impressions: "0" },
-];
-
 const statusColor = (s: string) => {
     if (s === "active") return "var(--status-success)";
     if (s === "scheduled") return "var(--accent-primary)";
@@ -39,39 +30,83 @@ const statusColor = (s: string) => {
 
 export default function CampaignsPage() {
     const { canEdit } = useClientFeature("CAMPAIGNS");
-    const [campaigns, setCampaigns] = useState(mockCampaigns);
+    const { activeOrganizationId } = useAuth();
+    const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [isEditorOpen, setIsEditorOpen] = useState(false);
     const [newName, setNewName] = useState("");
     const [newDesc, setNewDesc] = useState("");
     const [activeTab, setActiveTab] = useState("all");
     const [search, setSearch] = useState("");
 
+    const loadCampaigns = useCallback(async () => {
+        if (!activeOrganizationId) return;
+        setIsLoading(true);
+        try {
+            const response = await apiRequest<Campaign[]>("/api/client-data/campaigns", {
+                headers: { "x-organization-id": activeOrganizationId },
+            });
+            setCampaigns(
+                response.map((campaign) => ({
+                    ...campaign,
+                    lastModified: new Date(campaign.lastModified).toLocaleString(),
+                    impressions: Number(campaign.impressions).toLocaleString(),
+                })),
+            );
+        } catch (error) {
+            toast.error(error instanceof ApiError ? error.message : "Failed to load campaigns");
+        } finally {
+            setIsLoading(false);
+        }
+    }, [activeOrganizationId]);
+
+    useEffect(() => {
+        void loadCampaigns();
+    }, [loadCampaigns]);
+
     const handleCreate = () => {
         if (!canEdit) return toast.error("You only have view access to campaigns.");
         if (!newName.trim()) return toast.error("Provide a campaign name");
-        const colors = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa"];
-        const newCampaign: Campaign = {
-            id: Date.now().toString(),
-            name: newName,
-            description: newDesc || "New campaign created.",
-            assetCount: 0,
-            status: "draft",
-            lastModified: "Just now",
-            color: colors[Math.floor(Math.random() * colors.length)],
-            screens: 0,
-            impressions: "0"
-        };
-        setCampaigns([newCampaign, ...campaigns]);
-        setIsEditorOpen(false);
-        setNewName("");
-        setNewDesc("");
-        toast.success("Campaign created successfully!");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            try {
+                const created = await apiRequest<Campaign>("/api/client-data/campaigns", {
+                    method: "POST",
+                    headers: { "x-organization-id": activeOrganizationId },
+                    body: JSON.stringify({ name: newName, description: newDesc }),
+                });
+                setCampaigns((previous) => [
+                    {
+                        ...created,
+                        lastModified: new Date(created.lastModified).toLocaleString(),
+                        impressions: Number(created.impressions).toLocaleString(),
+                    },
+                    ...previous,
+                ]);
+                setIsEditorOpen(false);
+                setNewName("");
+                setNewDesc("");
+                toast.success("Campaign created successfully!");
+            } catch (error) {
+                toast.error(error instanceof ApiError ? error.message : "Failed to create campaign");
+            }
+        })();
     };
 
     const handleDelete = (id: string) => {
         if (!canEdit) return toast.error("You only have view access to campaigns.");
-        setCampaigns(prev => prev.filter(c => c.id !== id));
-        toast.success("Campaign deleted.");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            const ok = await apiDelete(`/api/client-data/campaigns/${id}`, {
+                headers: { "x-organization-id": activeOrganizationId },
+            });
+            if (!ok) {
+                toast.error("Failed to delete campaign");
+                return;
+            }
+            setCampaigns((prev) => prev.filter((campaign) => campaign.id !== id));
+            toast.success("Campaign deleted.");
+        })();
     };
 
     const filtered = campaigns.filter(c => {
@@ -134,6 +169,11 @@ export default function CampaignsPage() {
             {/* Campaign Grid */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 24 }}>
                 <AnimatePresence mode="popLayout">
+                    {isLoading ? (
+                        <div className="glass-panel" style={{ gridColumn: "1 / -1", padding: 28, textAlign: "center", color: "hsl(var(--text-muted))" }}>
+                            Loading campaigns...
+                        </div>
+                    ) : null}
                     {filtered.map((c, idx) => (
                         <motion.div key={c.id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: idx * 0.04 }}
                             className="glass-card" style={{ padding: 0, overflow: "hidden" }}>

@@ -1,28 +1,20 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
     Sun, Volume2, MonitorPlay, RotateCw, Monitor, Activity,
     Power, Clock, Layers, Play, ToggleLeft, Wifi,
-    X, ChevronRight, Minus, Plus, VolumeX, Volume1,
-    Maximize, MinimizeIcon, RefreshCw, Zap, Settings2,
+    X, Minus, Plus, VolumeX, Volume1,
+    RefreshCw, Zap,
     Signal, CheckCircle, AlertTriangle, Pause,
-    SkipForward, SkipBack, Square, Tv, Smartphone,
-    Laptop, Globe, Router, Gauge, Timer
+    SkipForward, SkipBack, Square, Tv,
+    Globe, Router, Gauge, Timer
 } from "lucide-react";
+import { apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
-/* ─── Mock data for target devices ─── */
-const targetDevices = [
-    { id: "d1", name: "LOBBY-SCR-001", location: "Main Lobby", status: "online" as const },
-    { id: "d2", name: "CAFE-SCR-003", location: "London Café", status: "offline" as const },
-    { id: "d3", name: "CONF-SCR-012", location: "Berlin Conference", status: "online" as const },
-    { id: "d4", name: "RETAIL-SCR-007", location: "Tokyo Retail Store", status: "online" as const },
-    { id: "d5", name: "WAYFIND-SCR-005", location: "Singapore Airport", status: "online" as const },
-    { id: "d6", name: "FOOD-SCR-009", location: "Paris Food Court", status: "online" as const },
-    { id: "d7", name: "EXEC-SCR-002", location: "Dubai Executive Suite", status: "online" as const },
-    { id: "d8", name: "PARK-SCR-011", location: "Sydney Theme Park", status: "online" as const },
-];
+type TargetDevice = { id: string; name: string; location: string; status: "online" | "offline" | "warning" };
 
 const videoSources = ["HDMI 1", "HDMI 2", "DisplayPort", "USB-C", "VGA", "Network Stream"];
 
@@ -95,18 +87,18 @@ function SliderControl({ value, onChange, min = 0, max = 100, color, label, icon
 }
 
 /* ─── Device selector component ─── */
-function DeviceSelector({ selected, onToggle }: { selected: string[]; onToggle: (id: string) => void }) {
+function DeviceSelector({ selected, onToggle, devices }: { selected: string[]; onToggle: (id: string) => void; devices: TargetDevice[] }) {
     return (
         <div style={{ marginBottom: 24 }}>
             <div className="flex-between" style={{ marginBottom: 12 }}>
                 <p style={{ fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase", color: "hsl(var(--text-muted))", letterSpacing: "0.05em" }}>Target Devices</p>
                 <button style={{ fontSize: "0.7rem", fontWeight: 600, color: "hsl(var(--accent-primary))", background: "none", border: "none", cursor: "pointer" }}
-                    onClick={() => targetDevices.forEach(d => { if (!selected.includes(d.id) && d.status === "online") onToggle(d.id); })}>
+                    onClick={() => devices.forEach(d => { if (!selected.includes(d.id) && d.status === "online") onToggle(d.id); })}>
                     Select All Online
                 </button>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {targetDevices.map(device => {
+                {devices.map(device => {
                     const isSelected = selected.includes(device.id);
                     const isOnline = device.status === "online";
                     return (
@@ -132,14 +124,40 @@ function DeviceSelector({ selected, onToggle }: { selected: string[]; onToggle: 
 
 /* ─── Main Control Page ─── */
 export default function ControlPage() {
+    const { activeOrganizationId } = useAuth();
+    const [targetDevices, setTargetDevices] = useState<TargetDevice[]>([]);
     const [activePanel, setActivePanel] = useState<string | null>(null);
-    const [selectedDevices, setSelectedDevices] = useState<string[]>(["d1", "d3", "d4"]);
+    const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
 
     // Control states
     const [brightness, setBrightness] = useState(72);
     const [volume, setVolume] = useState(45);
     const [videoSource, setVideoSource] = useState("HDMI 1");
-    const [screenPower, setScreenPower] = useState<Record<string, boolean>>({ d1: true, d3: true, d4: true, d5: true, d6: true, d7: true, d8: true });
+    const [screenPower, setScreenPower] = useState<Record<string, boolean>>({});
+    useEffect(() => {
+        if (!activeOrganizationId) return;
+        void (async () => {
+            const devices = await apiRequest<{ id: string; name: string; location: string; status: "online" | "offline" | "warning" }[]>(
+                "/api/client-data/devices",
+                { headers: { "x-organization-id": activeOrganizationId } },
+            );
+            const mapped = devices.map((device) => ({
+                id: device.id,
+                name: device.name,
+                location: device.location,
+                status: device.status,
+            }));
+            setTargetDevices(mapped);
+            setSelectedDevices(mapped.filter((device) => device.status === "online").slice(0, 3).map((device) => device.id));
+            setScreenPower(
+                mapped.reduce<Record<string, boolean>>((accumulator, device) => {
+                    accumulator[device.id] = device.status !== "offline";
+                    return accumulator;
+                }, {}),
+            );
+        })();
+    }, [activeOrganizationId]);
+
     const [playbackState, setPlaybackState] = useState<"playing" | "paused" | "stopped">("playing");
     const [syncEnabled, setSyncEnabled] = useState(true);
 
@@ -195,7 +213,7 @@ export default function ControlPage() {
                             </div>
                             <Toggle on={true} />
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                         <button className="btn-primary" style={{ width: "100%" }} onClick={() => handleApply(`Brightness set to ${brightness}%`)}>
                             Apply Brightness
                         </button>
@@ -217,7 +235,7 @@ export default function ControlPage() {
                                 <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>Reset Default</p>
                             </button>
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                         <button className="btn-primary" style={{ width: "100%" }} onClick={() => handleApply(`Volume set to ${volume}%`)}>
                             Apply Volume
                         </button>
@@ -244,7 +262,7 @@ export default function ControlPage() {
                                 ))}
                             </div>
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                         <button className="btn-primary" style={{ width: "100%" }} onClick={() => handleApply(`Source switched to ${videoSource}`)}>
                             Switch Source
                         </button>
@@ -275,7 +293,7 @@ export default function ControlPage() {
                                 <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>Full system reboot</p>
                             </button>
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                     </>
                 );
 
@@ -378,7 +396,7 @@ export default function ControlPage() {
                                 </button>
                             ))}
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                     </>
                 );
 
@@ -405,7 +423,7 @@ export default function ControlPage() {
                                 </div>
                             ))}
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                         <button className="btn-primary" style={{ width: "100%" }} onClick={() => handleApply("Time synchronized via NTP")}>
                             Sync Now
                         </button>
@@ -442,7 +460,7 @@ export default function ControlPage() {
                                 ))}
                             </div>
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                         <button className="btn-primary" style={{ width: "100%" }} onClick={() => handleApply("Playback sync started")}>
                             Start Synchronized Playback
                         </button>
@@ -486,7 +504,7 @@ export default function ControlPage() {
                                 </button>
                             ))}
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                     </>
                 );
 
@@ -519,7 +537,7 @@ export default function ControlPage() {
                                 Tap to toggle {selectedDevices.length} selected device{selectedDevices.length !== 1 ? "s" : ""}
                             </p>
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                     </>
                 );
 
@@ -559,7 +577,7 @@ export default function ControlPage() {
                                 </div>
                             ))}
                         </div>
-                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} />
+                        <DeviceSelector selected={selectedDevices} onToggle={toggleDevice} devices={targetDevices} />
                         <button className="btn-primary" style={{ width: "100%" }} onClick={() => handleApply("Network config applied")}>
                             Apply Network Config
                         </button>
@@ -580,7 +598,9 @@ export default function ControlPage() {
                 <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 20, background: "hsla(var(--status-success), 0.08)", border: "1px solid hsla(var(--status-success), 0.15)" }}>
                         <div style={{ width: 8, height: 8, borderRadius: "50%", background: "hsl(var(--status-success))", boxShadow: "0 0 8px hsl(var(--status-success))" }} />
-                        <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "hsl(var(--status-success))" }}>7 / 8 Online</span>
+                        <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "hsl(var(--status-success))" }}>
+                            {targetDevices.filter((device) => device.status === "online").length} / {targetDevices.length || 0} Online
+                        </span>
                     </div>
                 </div>
             </div>
@@ -588,7 +608,7 @@ export default function ControlPage() {
             {/* Summary stats */}
             <div className="grid-stats" style={{ marginBottom: 32 }}>
                 {[
-                    { label: "Connected", value: "7", icon: CheckCircle, color: "var(--status-success)" },
+                    { label: "Connected", value: targetDevices.filter((device) => device.status === "online").length.toString(), icon: CheckCircle, color: "var(--status-success)" },
                     { label: "Selected", value: selectedDevices.length.toString(), icon: Monitor, color: "var(--accent-primary)" },
                     { label: "Avg Brightness", value: `${brightness}%`, icon: Sun, color: "var(--status-warning)" },
                     { label: "Avg Volume", value: `${volume}%`, icon: Volume2, color: "var(--accent-secondary)" },

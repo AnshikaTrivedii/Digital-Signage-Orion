@@ -1,13 +1,15 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
     Plus, Type, Trash2, Play, Pause, Eye,
-    Clock, Monitor, Zap, X, AlertTriangle, Edit3
+    Clock, Monitor, Zap, X
 } from "lucide-react";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
+import { apiDelete, apiRequest } from "@/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 
 interface Ticker {
     id: string;
@@ -20,14 +22,6 @@ interface Ticker {
     screens: number;
     createdAt: string;
 }
-
-const mockTickers: Ticker[] = [
-    { id: "t1", text: "🔥 FLASH SALE: 50% off all summer collection items — Limited time only!", speed: "Normal", style: "Neon", color: "#f87171", status: "Active", priority: "Urgent", screens: 45, createdAt: "2 hours ago" },
-    { id: "t2", text: "Welcome to the visitor lobby. Please keep your access pass visible while on site.", speed: "Slow", style: "Classic", color: "#00e5ff", status: "Active", priority: "Normal", screens: 12, createdAt: "1 day ago" },
-    { id: "t3", text: "Q1 2026 revenue up 23% YoY. Full earnings report available on the intranet.", speed: "Normal", style: "Gradient", color: "#4ade80", status: "Active", priority: "Normal", screens: 200, createdAt: "3 days ago" },
-    { id: "t4", text: "Scheduled maintenance: Building A elevators offline Saturday 8AM-12PM.", speed: "Fast", style: "Minimal", color: "#fbbf24", status: "Paused", priority: "Low", screens: 30, createdAt: "5 days ago" },
-    { id: "t5", text: "🎉 Team spotlight: congratulations on this month’s service milestone.", speed: "Normal", style: "Neon", color: "#a78bfa", status: "Draft", priority: "Normal", screens: 0, createdAt: "1 week ago" },
-];
 
 const priorityColor = (p: string) => {
     if (p === "Urgent") return "var(--status-danger)";
@@ -42,8 +36,20 @@ const statusColor = (s: string) => {
 };
 
 export default function TickersPage() {
+    const parseSpeed = (value: string): "Slow" | "Normal" | "Fast" => {
+        if (value === "Slow" || value === "Fast") return value;
+        return "Normal";
+    };
+
+    const parsePriority = (value: string): "Normal" | "Urgent" | "Low" => {
+        if (value === "Urgent" || value === "Low") return value;
+        return "Normal";
+    };
+
     const { canEdit } = useClientFeature("TICKERS");
-    const [tickers, setTickers] = useState<Ticker[]>(mockTickers);
+    const { activeOrganizationId } = useAuth();
+    const [tickers, setTickers] = useState<Ticker[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const [showEditor, setShowEditor] = useState(false);
     const [editorText, setEditorText] = useState("");
     const [editorSpeed, setEditorSpeed] = useState<"Slow" | "Normal" | "Fast">("Normal");
@@ -51,36 +57,77 @@ export default function TickersPage() {
     const [editorColor, setEditorColor] = useState("#00e5ff");
     const [previewTicker, setPreviewTicker] = useState<Ticker | null>(null);
 
+    useEffect(() => {
+        if (!activeOrganizationId) return;
+        void (async () => {
+            setIsLoading(true);
+            try {
+                const response = await apiRequest<Ticker[]>("/api/client-data/tickers", {
+                    headers: { "x-organization-id": activeOrganizationId },
+                });
+                setTickers(
+                    response.map((ticker) => ({
+                        ...ticker,
+                        createdAt: new Date(ticker.createdAt).toLocaleString(),
+                    })),
+                );
+            } finally {
+                setIsLoading(false);
+            }
+        })();
+    }, [activeOrganizationId]);
+
     const handleSave = () => {
         if (!canEdit) return toast.error("You only have view access to tickers.");
         if (!editorText.trim()) return toast.error("Ticker text is required");
-        const newTicker: Ticker = {
-            id: Date.now().toString(),
-            text: editorText,
-            speed: editorSpeed,
-            style: "Neon",
-            color: editorColor,
-            status: "Active",
-            priority: editorPriority,
-            screens: 0,
-            createdAt: "Just now"
-        };
-        setTickers([newTicker, ...tickers]);
-        setShowEditor(false);
-        setEditorText("");
-        toast.success("Ticker broadcast live!");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            const created = await apiRequest<Ticker>("/api/client-data/tickers", {
+                method: "POST",
+                headers: { "x-organization-id": activeOrganizationId },
+                body: JSON.stringify({
+                    text: editorText,
+                    speed: editorSpeed,
+                    priority: editorPriority,
+                    color: editorColor,
+                }),
+            });
+            setTickers((previous) => [
+                { ...created, createdAt: new Date(created.createdAt).toLocaleString() },
+                ...previous,
+            ]);
+            setShowEditor(false);
+            setEditorText("");
+            toast.success("Ticker broadcast live!");
+        })();
     };
 
     const toggleStatus = (id: string) => {
         if (!canEdit) return toast.error("You only have view access to tickers.");
-        setTickers(tickers.map(t => t.id === id ? { ...t, status: t.status === "Active" ? "Paused" : "Active" } as Ticker : t));
-        toast.success("Ticker status updated");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            const updated = await apiRequest<{ id: string; status: string }>(`/api/client-data/tickers/${id}/toggle`, {
+                method: "PATCH",
+                headers: { "x-organization-id": activeOrganizationId },
+            });
+            setTickers((previous) =>
+                previous.map((ticker) => (ticker.id === id ? { ...ticker, status: updated.status as Ticker["status"] } : ticker)),
+            );
+            toast.success("Ticker status updated");
+        })();
     };
 
     const handleDelete = (id: string) => {
         if (!canEdit) return toast.error("You only have view access to tickers.");
-        setTickers(tickers.filter(t => t.id !== id));
-        toast.success("Ticker removed");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        void (async () => {
+            const ok = await apiDelete(`/api/client-data/tickers/${id}`, {
+                headers: { "x-organization-id": activeOrganizationId },
+            });
+            if (!ok) return toast.error("Failed to delete ticker");
+            setTickers((previous) => previous.filter((ticker) => ticker.id !== id));
+            toast.success("Ticker removed");
+        })();
     };
 
     return (
@@ -119,6 +166,11 @@ export default function TickersPage() {
             {/* Ticker List */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                 <AnimatePresence mode="popLayout">
+                    {isLoading ? (
+                        <div className="glass-panel" style={{ padding: 24, textAlign: "center", color: "hsl(var(--text-muted))" }}>
+                            Loading tickers...
+                        </div>
+                    ) : null}
                     {tickers.map((t, idx) => (
                         <motion.div key={t.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ delay: idx * 0.04 }}
                             className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
@@ -206,7 +258,7 @@ export default function TickersPage() {
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 24 }}>
                                 <div>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Speed</label>
-                                    <select value={editorSpeed} onChange={e => setEditorSpeed(e.target.value as any)}
+                                    <select value={editorSpeed} onChange={e => setEditorSpeed(parseSpeed(e.target.value))}
                                         style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))" }}>
                                         <option value="Slow">Slow</option>
                                         <option value="Normal">Normal</option>
@@ -215,7 +267,7 @@ export default function TickersPage() {
                                 </div>
                                 <div>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Priority</label>
-                                    <select value={editorPriority} onChange={e => setEditorPriority(e.target.value as any)}
+                                    <select value={editorPriority} onChange={e => setEditorPriority(parsePriority(e.target.value))}
                                         style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))" }}>
                                         <option value="Normal">Normal</option>
                                         <option value="Urgent">Urgent</option>

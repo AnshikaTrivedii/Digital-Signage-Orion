@@ -14,6 +14,19 @@
     "build:api": "npm run build --workspace @orion/api",
     "build:worker": "npm run build --workspace @orion/worker",
     "lint:web": "npm run lint --workspace @orion/web",
-    "prisma:generate": "npx prisma generate"
+    "prisma:generate": "npx prisma generate",
+    "db:push": "npx prisma db push",
+    "db:seed": "npx prisma db seed"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.19.3",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^16.4.7",
+    "prisma": "^6.19.3",
+    "tsx": "^4.19.3"
   }
 }

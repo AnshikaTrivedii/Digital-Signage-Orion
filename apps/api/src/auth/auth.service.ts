@@ -259,12 +259,45 @@ export class AuthService {
       return false;
     });
 
-    if (orgMembership) {
+    const fallbackMembership = !scope.organizationId && !scope.organizationSlug && user.memberships.length === 1
+      ? user.memberships[0]
+      : undefined;
+
+    if (orgMembership || fallbackMembership) {
+      const resolvedMembership = orgMembership ?? fallbackMembership!;
       actor.organization = {
-        id: orgMembership.organization.id,
-        slug: orgMembership.organization.slug,
-        role: orgMembership.role,
-        status: orgMembership.organization.status,
+        id: resolvedMembership.organization.id,
+        slug: resolvedMembership.organization.slug,
+        role: resolvedMembership.role,
+        status: resolvedMembership.organization.status,
+      };
+      return actor;
+    }
+
+    const canImpersonateOrganization =
+      user.platformRole === PlatformRole.SUPER_ADMIN ||
+      user.platformRole === PlatformRole.PLATFORM_ADMIN ||
+      user.platformRole === PlatformRole.SALES ||
+      user.platformRole === PlatformRole.SUPPORT;
+
+    if (canImpersonateOrganization && (scope.organizationId || scope.organizationSlug)) {
+      const organization = await this.prisma.organization.findFirst({
+        where: scope.organizationId
+          ? { id: scope.organizationId }
+          : scope.organizationSlug
+            ? { slug: scope.organizationSlug }
+            : undefined,
+      });
+
+      if (!organization) {
+        throw new NotFoundException('Organization not found for requested context');
+      }
+
+      actor.organization = {
+        id: organization.id,
+        slug: organization.slug,
+        role: OrganizationRole.ORG_ADMIN,
+        status: organization.status,
       };
     }
 
