@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Building2, CheckCircle2, Copy, Link2, Plus, RefreshCw, Shield, Trash2, UserPlus } from "lucide-react";
+import { Building2, CheckCircle2, Copy, Link2, Plus, RefreshCw, Shield, Trash2, UserPlus, Users2 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "@/components/AuthProvider";
 import { ApiError, apiRequest } from "@/lib/api";
@@ -115,6 +115,13 @@ function formatStatusTone(status: string) {
     if (status === "ACTIVE" || status === "PENDING") return "hsl(var(--status-success))";
     if (status === "INVITED") return "hsl(var(--status-warning))";
     return "hsl(var(--status-danger))";
+}
+
+function accessLevelTone(level: FeatureAccessLevel) {
+    if (level === "CONTROL" || level === "MANAGE") return "hsl(var(--accent-primary))";
+    if (level === "EDIT") return "hsl(var(--status-info))";
+    if (level === "VIEW") return "hsl(var(--status-success))";
+    return "hsl(var(--text-muted))";
 }
 
 export function AccessManagementPanel() {
@@ -326,18 +333,27 @@ export function AccessManagementPanel() {
     };
 
     return (
-        <div style={{ display: "grid", gap: 28 }}>
-            <div className="flex-between" style={{ gap: 16, alignItems: "flex-start" }}>
-                <div>
-                    <h2 style={{ fontSize: "1.5rem", fontWeight: 700 }}>Users & Access Control</h2>
-                    <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>
-                        Live access data from the new Orion backend. Platform users, tenant memberships, and invitations now come from PostgreSQL.
-                    </p>
+        <div style={{ display: "grid", gap: 24 }}>
+            <section className="glass-panel" style={{ padding: 20, border: "1px solid hsla(var(--accent-primary), 0.2)" }}>
+                <div className="flex-between" style={{ gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <div style={{ minWidth: 280, maxWidth: 760 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                            <Users2 size={18} style={{ color: "hsl(var(--accent-primary))" }} />
+                            <h2 style={{ fontSize: "1.4rem", fontWeight: 700, lineHeight: 1.25 }}>Users & Access Control</h2>
+                        </div>
+                        <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.86rem", lineHeight: 1.5 }}>
+                            Manage platform users, organization members, and feature-level permissions from one place with live backend data.
+                        </p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                        <span style={metricPillStyle}>{organizations.length} orgs</span>
+                        <span style={metricPillStyle}>{organizationData?.memberships.length ?? 0} members</span>
+                        <button className="btn-outline" onClick={() => void loadData()} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <RefreshCw size={16} /> Refresh
+                        </button>
+                    </div>
                 </div>
-                <button className="btn-outline" onClick={() => void loadData()} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <RefreshCw size={16} /> Refresh
-                </button>
-            </div>
+            </section>
 
             {canManagePlatformUsers && (
                 <section className="glass-panel" style={{ padding: 24 }}>
@@ -350,14 +366,14 @@ export function AccessManagementPanel() {
                     </div>
 
                     {user?.platformRole === "SUPER_ADMIN" && (
-                        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.2fr 0.9fr 1fr auto", gap: 12, marginBottom: 20 }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 20 }}>
                             <input value={platformDraft.fullName} onChange={(event) => setPlatformDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" style={inputStyle} />
                             <input value={platformDraft.email} onChange={(event) => setPlatformDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email" style={inputStyle} />
                             <select value={platformDraft.platformRole} onChange={(event) => setPlatformDraft((current) => ({ ...current, platformRole: event.target.value as typeof current.platformRole }))} style={selectStyle}>
                                 {platformRoleOptions.map((role) => <option key={role} value={role}>{formatRoleLabel(role)}</option>)}
                             </select>
                             <input value={platformDraft.password} onChange={(event) => setPlatformDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Temporary password" type="password" style={inputStyle} />
-                            <button className="btn-primary" onClick={() => void createPlatformUser()} disabled={savingPlatformUser} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                            <button className="btn-primary" onClick={() => void createPlatformUser()} disabled={savingPlatformUser} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", minHeight: 44 }}>
                                 <UserPlus size={16} /> Add
                             </button>
                         </div>
@@ -390,12 +406,12 @@ export function AccessManagementPanel() {
                         <div style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{organizations.length} organizations</div>
                     </div>
 
-                    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr 1fr 1.2fr", gap: 12, marginBottom: 18 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 18 }}>
                         <input value={organizationDraft.name} onChange={(event) => setOrganizationDraft((current) => ({ ...current, name: event.target.value, slug: current.slug || event.target.value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") }))} placeholder="Organization name" style={inputStyle} />
                         <input value={organizationDraft.slug} onChange={(event) => setOrganizationDraft((current) => ({ ...current, slug: event.target.value.toLowerCase() }))} placeholder="Slug" style={inputStyle} />
                         <input value={organizationDraft.primaryContactName} onChange={(event) => setOrganizationDraft((current) => ({ ...current, primaryContactName: event.target.value }))} placeholder="Primary contact" style={inputStyle} />
                         <input value={organizationDraft.primaryContactEmail} onChange={(event) => setOrganizationDraft((current) => ({ ...current, primaryContactEmail: event.target.value }))} placeholder="Contact email" style={inputStyle} />
-                        <button className="btn-primary" onClick={() => void createOrganization()} disabled={savingOrganization} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
+                        <button className="btn-primary" onClick={() => void createOrganization()} disabled={savingOrganization} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", minHeight: 44 }}>
                             <Building2 size={16} /> Create Organization
                         </button>
                     </div>
@@ -450,8 +466,8 @@ export function AccessManagementPanel() {
             )}
 
             <section ref={accessSectionRef} className="glass-panel" style={{ padding: 24 }}>
-                <div className="flex-between" style={{ marginBottom: 20, gap: 16 }}>
-                    <div>
+                <div className="flex-between" style={{ marginBottom: 20, gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <div style={{ maxWidth: 700 }}>
                         <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>
                             {organizationData?.name ?? selectedOrganization?.name ?? "Organization"} Access
                         </h3>
@@ -465,7 +481,7 @@ export function AccessManagementPanel() {
                         <select
                             value={effectiveOrganizationId ?? ""}
                             onChange={(event) => setSelectedOrganizationId(event.target.value || null)}
-                            style={{ ...selectStyle, minWidth: 240 }}
+                            style={{ ...selectStyle, minWidth: 250 }}
                         >
                             <option value="" disabled>Select organization</option>
                             {organizations.map((organization) => (
@@ -507,40 +523,69 @@ export function AccessManagementPanel() {
                 )}
 
                 {canManageTenantMembers && effectiveOrganizationId && organizationData?.status === "ACTIVE" && (
-                    <div style={{ display: "grid", gap: 16, marginBottom: 24, padding: 18, borderRadius: 16, border: "1px solid hsla(var(--border-subtle), 0.18)", background: "hsla(var(--bg-base), 0.28)" }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12 }}>
-                            <input value={memberDraft.fullName} onChange={(event) => setMemberDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" style={inputStyle} />
-                            <input value={memberDraft.email} onChange={(event) => setMemberDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email" style={inputStyle} />
-                            <input value={memberDraft.password} onChange={(event) => setMemberDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Temporary password" type="password" style={inputStyle} />
-                            <button className="btn-primary" onClick={() => void createMember()} disabled={savingMember} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
-                                <Plus size={16} /> Add User
+                    <div style={{ display: "grid", gap: 14, marginBottom: 24, padding: 20, borderRadius: 18, border: "1px solid hsla(var(--accent-primary), 0.22)", background: "linear-gradient(145deg, hsla(var(--bg-surface-elevated), 0.55), hsla(var(--bg-base), 0.48))" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                            <div>
+                                <h4 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: 4 }}>Create Organization User</h4>
+                                <p style={{ fontSize: "0.77rem", color: "hsl(var(--text-muted))" }}>
+                                    Add a member and define their exact feature access before inviting them into production workflows.
+                                </p>
+                            </div>
+                            <button className="btn-primary" onClick={() => void createMember()} disabled={savingMember} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", minHeight: 42, paddingInline: 16 }}>
+                                <Plus size={16} /> {savingMember ? "Adding..." : "Add User"}
                             </button>
                         </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 12 }}>
-                            {featureDefinitions.map((feature) => (
-                                <div key={feature.key} style={{ display: "grid", gap: 6 }}>
-                                    <label style={{ fontSize: "0.78rem", color: "hsl(var(--text-muted))", fontWeight: 700 }}>{feature.label}</label>
-                                    <select
-                                        value={memberDraft.permissions.find((permission) => permission.featureKey === feature.key)?.accessLevel ?? "NONE"}
-                                        onChange={(event) =>
-                                            setMemberDraft((current) => ({
-                                                ...current,
-                                                permissions: current.permissions.map((permission) =>
-                                                    permission.featureKey === feature.key
-                                                        ? { ...permission, accessLevel: event.target.value as FeatureAccessLevel }
-                                                        : permission,
-                                                ),
-                                            }))
-                                        }
-                                        style={selectStyle}
-                                    >
-                                        {feature.levels.map((level) => (
-                                            <option key={level} value={level}>{formatRoleLabel(level)}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            ))}
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1fr) 2fr", gap: 14 }}>
+                            <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
+                                <input value={memberDraft.fullName} onChange={(event) => setMemberDraft((current) => ({ ...current, fullName: event.target.value }))} placeholder="Full name" style={inputStyle} />
+                                <input value={memberDraft.email} onChange={(event) => setMemberDraft((current) => ({ ...current, email: event.target.value }))} placeholder="Email" style={inputStyle} />
+                                <input value={memberDraft.password} onChange={(event) => setMemberDraft((current) => ({ ...current, password: event.target.value }))} placeholder="Temporary password" type="password" style={inputStyle} />
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+                                {featureDefinitions.map((feature) => {
+                                    const selectedLevel = memberDraft.permissions.find((permission) => permission.featureKey === feature.key)?.accessLevel ?? "NONE";
+                                    return (
+                                        <div key={feature.key} style={{ display: "grid", gap: 6, padding: 10, borderRadius: 12, border: "1px solid hsla(var(--border-subtle), 0.22)", background: "hsla(var(--bg-base), 0.33)" }}>
+                                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                                                <label style={{ fontSize: "0.77rem", color: "hsl(var(--text-secondary))", fontWeight: 700 }}>{feature.label}</label>
+                                                <span style={{ fontSize: "0.65rem", fontWeight: 700, color: accessLevelTone(selectedLevel), padding: "2px 6px", borderRadius: 999, background: "hsla(var(--bg-surface-elevated), 0.6)", border: "1px solid hsla(var(--border-subtle), 0.3)" }}>
+                                                    {selectedLevel}
+                                                </span>
+                                            </div>
+                                            <select
+                                                value={selectedLevel}
+                                                onChange={(event) =>
+                                                    setMemberDraft((current) => ({
+                                                        ...current,
+                                                        permissions: current.permissions.map((permission) =>
+                                                            permission.featureKey === feature.key
+                                                                ? { ...permission, accessLevel: event.target.value as FeatureAccessLevel }
+                                                                : permission,
+                                                        ),
+                                                    }))
+                                                }
+                                                style={selectStyle}
+                                            >
+                                                {feature.levels.map((level) => (
+                                                    <option key={level} value={level}>{formatRoleLabel(level)}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
+                        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <button className="btn-outline" onClick={() => setMemberDraft({ fullName: "", email: "", password: "", permissions: defaultFeaturePermissions })} style={{ fontSize: "0.75rem" }}>
+                                Reset Fields
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {canManageTenantMembers && effectiveOrganizationId && organizationData?.status !== "ACTIVE" && (
+                    <div style={{ marginBottom: 24, padding: 14, borderRadius: 12, border: "1px solid hsla(var(--status-warning), 0.28)", background: "hsla(var(--status-warning), 0.08)", fontSize: "0.8rem", color: "hsl(var(--text-secondary))" }}>
+                        This organization is <b>{organizationData?.status}</b>. Activate it before adding users.
                     </div>
                 )}
 
@@ -552,11 +597,24 @@ export function AccessManagementPanel() {
                     <div style={{ display: "grid", gap: 20 }}>
                         <div style={{ display: "grid", gap: 12 }}>
                             {organizationData.memberships.map((membership) => (
-                                <div key={membership.id} style={{ ...rowStyle, alignItems: "flex-start" }}>
+                                <div key={membership.id} style={{ ...rowStyle, alignItems: "stretch", padding: 18 }}>
                                     <div style={{ display: "grid", gap: 10, flex: 1 }}>
-                                        <div style={{ fontWeight: 600, fontSize: "0.92rem" }}>{membership.user.fullName}</div>
-                                        <div style={{ color: "hsl(var(--text-muted))", fontSize: "0.75rem" }}>{membership.user.email}</div>
-                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+                                            <div>
+                                                <div style={{ fontWeight: 700, fontSize: "0.96rem" }}>{membership.user.fullName}</div>
+                                                <div style={{ color: "hsl(var(--text-muted))", fontSize: "0.78rem" }}>{membership.user.email}</div>
+                                            </div>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                                <span style={pillStyle}>{formatRoleLabel(membership.role)}</span>
+                                                <span style={{ color: formatStatusTone(membership.status), fontSize: "0.78rem", fontWeight: 700 }}>{membership.status}</span>
+                                                {canManageTenantMembers && (
+                                                    <button className="btn-icon-soft" onClick={() => void removeMember(membership.id)} title="Remove member">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
                                             {featureDefinitions.map((feature) => {
                                                 const value = membership.permissions.find((permission) => permission.featureKey === feature.key)?.accessLevel ?? "NONE";
                                                 return (
@@ -585,14 +643,6 @@ export function AccessManagementPanel() {
                                                 );
                                             })}
                                         </div>
-                                    </div>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 6 }}>
-                                        <span style={{ color: formatStatusTone(membership.status), fontSize: "0.78rem", fontWeight: 700 }}>{membership.status}</span>
-                                        {canManageTenantMembers && (
-                                            <button className="btn-icon-soft" onClick={() => void removeMember(membership.id)} title="Remove member">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -685,4 +735,14 @@ const pillStyle: CSSProperties = {
     borderRadius: 999,
     background: "hsla(var(--bg-surface-elevated), 0.65)",
     border: "1px solid hsla(var(--border-subtle), 0.4)",
+};
+
+const metricPillStyle: CSSProperties = {
+    fontSize: "0.74rem",
+    fontWeight: 700,
+    padding: "6px 12px",
+    borderRadius: 999,
+    background: "hsla(var(--accent-primary), 0.12)",
+    border: "1px solid hsla(var(--accent-primary), 0.24)",
+    color: "hsl(var(--accent-primary))",
 };

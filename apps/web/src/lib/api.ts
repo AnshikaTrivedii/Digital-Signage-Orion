@@ -73,13 +73,38 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T | null>
     });
 }
 
-export async function apiDelete(path: string): Promise<boolean> {
+export async function apiDelete(path: string, options?: { headers?: HeadersInit }): Promise<boolean> {
     try {
-        const res = await fetch(`${API_BASE}${path}`, { method: "DELETE" });
+        const headers = new Headers(getStoredAuthHeaders(options?.headers));
+        const res = await fetch(`${API_BASE}${path}`, { method: "DELETE", headers });
         return res.ok;
     } catch {
         return false;
     }
+}
+
+export async function apiUpload<T>(path: string, formData: FormData, options?: { headers?: HeadersInit }): Promise<T> {
+    const headers = new Headers(getStoredAuthHeaders(options?.headers));
+    const res = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers,
+        body: formData,
+    });
+
+    const contentType = res.headers.get("content-type") ?? "";
+    const payload = contentType.includes("application/json")
+        ? await res.json()
+        : await res.text();
+
+    if (!res.ok) {
+        const message =
+            typeof payload === "object" && payload && "message" in payload
+                ? String((payload as { message?: string | string[] }).message)
+                : `API ${res.status}`;
+        throw new ApiError(message, res.status, payload);
+    }
+
+    return payload as T;
 }
 
 export { API_BASE };
