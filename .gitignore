@@ -5,3 +5,6 @@ apps/*/node_modules/
 apps/*/.next/
 apps/*/dist/
 coverage/
+
+.env
+*.env
