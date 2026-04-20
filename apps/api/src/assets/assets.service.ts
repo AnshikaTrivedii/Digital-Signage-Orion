@@ -82,7 +82,11 @@ export class AssetsService {
     }
 
     if (asset.status === AssetStatus.READY) {
-      return this.formatAsset(asset);
+      const downloadUrl = await this.s3.generateDownloadUrl(asset.s3Key);
+      return {
+        ...this.formatAsset(asset),
+        downloadUrl,
+      };
     }
 
     // Verify the file actually exists in S3
@@ -113,7 +117,11 @@ export class AssetsService {
       metadata: { filename: asset.name, type: asset.type, fileSize: updatedAsset.fileSize },
     });
 
-    return this.formatAsset(updatedAsset);
+    const downloadUrl = await this.s3.generateDownloadUrl(updatedAsset.s3Key);
+    return {
+      ...this.formatAsset(updatedAsset),
+      downloadUrl,
+    };
   }
 
   async listAssets(
@@ -155,8 +163,20 @@ export class AssetsService {
       this.prisma.asset.count({ where }),
     ]);
 
+    const assetsWithUrls = await Promise.all(
+      assets.map(async (asset) => {
+        const downloadUrl = asset.status === AssetStatus.READY
+          ? await this.s3.generateDownloadUrl(asset.s3Key)
+          : null;
+        return {
+          ...this.formatAsset(asset),
+          downloadUrl,
+        };
+      })
+    );
+
     return {
-      assets: assets.map((asset) => this.formatAsset(asset)),
+      assets: assetsWithUrls,
       pagination: {
         page,
         limit,
@@ -243,7 +263,14 @@ export class AssetsService {
       data: { tags: dto.tags },
     });
 
-    return this.formatAsset(updated);
+    const downloadUrl = updated.status === AssetStatus.READY
+      ? await this.s3.generateDownloadUrl(updated.s3Key)
+      : null;
+
+    return {
+      ...this.formatAsset(updated),
+      downloadUrl,
+    };
   }
 
   private ensureOrganizationAccess(actor: RequestActor, organizationId: string) {

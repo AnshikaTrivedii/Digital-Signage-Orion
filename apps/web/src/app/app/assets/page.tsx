@@ -347,15 +347,20 @@ export default function AssetsPage() {
                                 <motion.div layout key={asset.id} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: idx * 0.03 }}
                                     className="glass-card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
                                     <div style={{ height: 160, position: "relative", background: "hsla(var(--bg-base), 0.4)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                                        <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at center, ${getGlowColor(asset.type)}15, transparent 70%)` }} />
-                                        <motion.div whileHover={{ scale: 1.15, rotate: 2 }} transition={{ type: "spring", stiffness: 300 }}>{getIcon(asset.type, 48)}</motion.div>
-                                        <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.58)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s" }}>
+                                        <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at center, ${getGlowColor(asset.type)}15, transparent 70%)`, pointerEvents: "none" }} />
+                                        {asset.downloadUrl && asset.type === "IMAGE" ? (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img src={asset.downloadUrl} alt={asset.name} style={{ width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }} />
+                                        ) : asset.downloadUrl && asset.type === "VIDEO" ? (
+                                            <video src={asset.downloadUrl} style={{ width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }} />
+                                        ) : (
+                                            <motion.div style={{ zIndex: 1 }} whileHover={{ scale: 1.15, rotate: 2 }} transition={{ type: "spring", stiffness: 300 }}>{getIcon(asset.type, 48)}</motion.div>
+                                        )}
+                                        <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.58)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s", zIndex: 2 }}>
                                             <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleViewAsset(asset)}><Eye size={18} /></button>
-                                            <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleCopyLink(asset.id)}><LinkIcon size={18} /></button>
-                                            <button className="btn-icon-soft" disabled={!canEdit} style={{ background: "hsla(var(--status-danger), 0.85)", color: "hsl(var(--surface-contrast))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(asset.id)}><Trash2 size={18} /></button>
                                         </div>
                                         {asset.durationMs && (
-                                            <div style={{ position: "absolute", bottom: 8, right: 8, background: "hsla(var(--overlay-base), 0.7)", color: "hsl(var(--surface-contrast))", padding: "2px 8px", borderRadius: 6, fontSize: "0.7rem", fontWeight: 600 }}>{formatDuration(asset.durationMs)}</div>
+                                            <div style={{ position: "absolute", bottom: 8, right: 8, background: "hsla(var(--overlay-base), 0.7)", color: "hsl(var(--surface-contrast))", padding: "2px 8px", borderRadius: 6, fontSize: "0.7rem", fontWeight: 600, zIndex: 3 }}>{formatDuration(asset.durationMs)}</div>
                                         )}
                                     </div>
                                     <div style={{ padding: 20, flex: 1, display: "flex", flexDirection: "column" }}>
@@ -392,9 +397,13 @@ export default function AssetsPage() {
                                                 ))}
                                             </div>
                                         )}
-                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 12 }}>
                                             <span>{formatFileSize(asset.fileSize)}</span>
                                             <span>{formatDate(asset.createdAt)}</span>
+                                        </div>
+                                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: "auto", borderTop: "1px solid hsla(var(--border-subtle), 0.5)", paddingTop: 12 }}>
+                                            <button className="btn-icon-soft" style={{ padding: "6px" }} onClick={() => handleCopyLink(asset.id)} title="Copy Link"><LinkIcon size={16} /></button>
+                                            <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(asset.id)} title="Delete"><Trash2 size={16} /></button>
                                         </div>
                                     </div>
                                 </motion.div>

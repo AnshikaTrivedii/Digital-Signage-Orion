@@ -29,6 +29,38 @@ export class ClientDataController {
     return this.clientDataService.deleteCampaign(actor, campaignId);
   }
 
+  @Get('campaigns/:campaignId/assets')
+  getCampaignAssets(@CurrentActor() actor: RequestActor, @Param('campaignId') campaignId: string) {
+    return this.clientDataService.getCampaignAssets(actor, campaignId);
+  }
+
+  @Post('campaigns/:campaignId/assets')
+  addCampaignAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('campaignId') campaignId: string,
+    @Body() body: { assetId: string; durationSeconds: number },
+  ) {
+    return this.clientDataService.addCampaignAsset(actor, campaignId, body.assetId, body.durationSeconds);
+  }
+
+  @Delete('campaigns/:campaignId/assets/:assetId')
+  removeCampaignAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('campaignId') campaignId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.clientDataService.removeCampaignAsset(actor, campaignId, assetId);
+  }
+
+  @Patch('campaigns/:campaignId/assets/reorder')
+  reorderCampaignAssets(
+    @CurrentActor() actor: RequestActor,
+    @Param('campaignId') campaignId: string,
+    @Body() body: { assetIds: string[] },
+  ) {
+    return this.clientDataService.reorderCampaignAssets(actor, campaignId, body);
+  }
+
   @Get('playlists')
   listPlaylists(@CurrentActor() actor: RequestActor) {
     return this.clientDataService.listPlaylists(actor);

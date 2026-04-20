@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import { S3Service } from '../s3/s3.service';
 
 const campaignPalette = ['#4ade80', '#00e5ff', '#a78bfa', '#f472b6', '#fb923c', '#60a5fa'];
 
@@ -33,7 +34,10 @@ type PlaylistDto = {
 
 @Injectable()
 export class ClientDataService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3: S3Service,
+  ) {}
 
   async dashboard(actor: RequestActor) {
     const organizationId = this.getOrgId(actor);
@@ -80,7 +84,7 @@ export class ClientDataService {
       })),
       recentAssets: assets.map((asset) => ({
         id: asset.id,
-        name: asset.originalName,
+        name: asset.name,
       })),
     };
   }
@@ -141,6 +145,113 @@ export class ClientDataService {
     const existing = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
     if (!existing) throw new NotFoundException('Campaign not found');
     await this.prisma.campaign.delete({ where: { id: campaignId } });
+    return { success: true };
+  }
+
+  async getCampaignAssets(actor: RequestActor, campaignId: string) {
+    const organizationId = this.getOrgId(actor);
+    const campaignAssets = await this.prisma.campaignAsset.findMany({
+      where: { campaignId, campaign: { organizationId } },
+      orderBy: { position: 'asc' },
+      include: { asset: true },
+    });
+
+    const assetsWithUrls = await Promise.all(
+      campaignAssets.map(async (ca) => {
+        const downloadUrl =
+          ca.asset.status === 'READY'
+            ? await this.s3.generateDownloadUrl(ca.asset.s3Key)
+            : null;
+        return {
+          id: ca.asset.id,
+          campaignAssetId: ca.id,
+          name: ca.asset.name,
+          type: ca.asset.type,
+          durationSeconds: ca.durationSeconds,
+          position: ca.position,
+          downloadUrl,
+          fileSize: ca.asset.fileSize,
+          mimeType: ca.asset.mimeType,
+        };
+      }),
+    );
+
+    return assetsWithUrls;
+  }
+
+  async addCampaignAsset(actor: RequestActor, campaignId: string, assetId: string, durationSeconds: number) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    
+    // Verify ownership
+    const campaign = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
+    const asset = await this.prisma.asset.findFirst({ where: { id: assetId, organizationId } });
+    if (!campaign || !asset) throw new NotFoundException('Campaign or Asset not found');
+
+    const lastAsset = await this.prisma.campaignAsset.findFirst({
+      where: { campaignId },
+      orderBy: { position: 'desc' },
+    });
+    const position = lastAsset ? lastAsset.position + 1 : 0;
+
+    const ca = await this.prisma.campaignAsset.create({
+      data: {
+        campaignId,
+        assetId,
+        durationSeconds: durationSeconds || 10,
+        position,
+      },
+      include: { asset: true },
+    });
+
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { assetCount: { increment: 1 } },
+    });
+
+    return { success: true, campaignAssetId: ca.id };
+  }
+
+  async removeCampaignAsset(actor: RequestActor, campaignId: string, assetId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    
+    const ca = await this.prisma.campaignAsset.findUnique({
+      where: { campaignId_assetId: { campaignId, assetId } },
+      include: { campaign: true },
+    });
+
+    if (!ca || ca.campaign.organizationId !== organizationId) {
+      throw new NotFoundException('Campaign asset not found');
+    }
+
+    await this.prisma.campaignAsset.delete({
+      where: { id: ca.id },
+    });
+
+    await this.prisma.campaign.update({
+      where: { id: campaignId },
+      data: { assetCount: { decrement: 1 } },
+    });
+
+    return { success: true };
+  }
+
+  async reorderCampaignAssets(actor: RequestActor, campaignId: string, body: { assetIds: string[] }) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const campaign = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
+    if (!campaign) throw new NotFoundException('Campaign not found');
+
+    for (const [index, assetId] of body.assetIds.entries()) {
+      // Find the specific campaignAsset by campaign and asset
+      await this.prisma.campaignAsset.update({
+        where: { campaignId_assetId: { campaignId, assetId } },
+        data: { position: index },
+      });
+    }
+
     return { success: true };
   }
 

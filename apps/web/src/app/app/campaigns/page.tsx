@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Folder, Plus, Search, Trash2, Edit2, X, CheckCircle, Calendar
@@ -29,6 +30,7 @@ const statusColor = (s: string) => {
 };
 
 export default function CampaignsPage() {
+    const router = useRouter();
     const { canEdit } = useClientFeature("CAMPAIGNS");
     const { activeOrganizationId } = useAuth();
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -176,7 +178,7 @@ export default function CampaignsPage() {
                     ) : null}
                     {filtered.map((c, idx) => (
                         <motion.div key={c.id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: idx * 0.04 }}
-                            className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
+                            className="glass-card" style={{ padding: 0, overflow: "hidden", cursor: "pointer" }} onClick={() => router.push(`/app/campaigns/${c.id}`)}>
                             <div style={{ height: 6, background: c.color }} />
                             <div style={{ padding: 24 }}>
                                 <div className="flex-between" style={{ marginBottom: 12 }}>
@@ -192,7 +194,7 @@ export default function CampaignsPage() {
                                             }}>{c.status}</span>
                                         </div>
                                     </div>
-                                    <button className="btn-icon-soft" disabled={!canEdit} onClick={() => handleDelete(c.id)} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}><Trash2 size={16} /></button>
+                                    <button className="btn-icon-soft" disabled={!canEdit} onClick={(e) => { e.stopPropagation(); handleDelete(c.id); }} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}><Trash2 size={16} /></button>
                                 </div>
                                 <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 20, lineHeight: 1.5 }}>{c.description}</p>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>

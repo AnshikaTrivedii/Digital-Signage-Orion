@@ -198,6 +198,7 @@ model Campaign {
 
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   playlistLinks  PlaylistCampaign[]
+  campaignAssets CampaignAsset[]
 
   @@index([organizationId, createdAt])
 }
@@ -423,7 +424,24 @@ model Asset {
 
   organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   uploadedBy       User          @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  campaignAssets   CampaignAsset[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, type])
+}
+
+model CampaignAsset {
+  id              String   @id @default(cuid())
+  campaignId      String
+  assetId         String
+  position        Int
+  durationSeconds Int      @default(10)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign        Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, assetId])
+  @@index([campaignId, position])
 }
