@@ -6,5 +6,9 @@ apps/*/.next/
 apps/*/dist/
 coverage/
 
+# Local-only scratch / legacy folders
+cms-dashboard/
+tmp/
+
 .env
 *.env

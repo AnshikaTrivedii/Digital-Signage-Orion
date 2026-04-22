@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
-import { apiDelete, apiRequest } from "@/lib/api";
+import { apiDelete, apiRequest, ApiError } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 
 interface PlaylistItem {
@@ -95,17 +95,28 @@ export default function PlaylistsPage() {
         })();
     }, [activeOrganizationId]);
 
-    useEffect(() => {
+    const loadAssignmentOptions = useCallback(async () => {
         if (!activeOrganizationId) return;
-        void (async () => {
+        try {
             const options = await apiRequest<{ campaigns: CampaignOption[]; devices: DeviceOption[] }>(
                 "/api/client-data/playlists/assignment-options",
                 { headers: { "x-organization-id": activeOrganizationId } },
             );
             setCampaignOptions(options.campaigns);
             setDeviceOptions(options.devices);
-        })();
+        } catch (error) {
+            const message = error instanceof ApiError ? error.message : "Failed to load assignment options";
+            toast.error(message);
+        }
     }, [activeOrganizationId]);
+
+    useEffect(() => {
+        void loadAssignmentOptions();
+    }, [loadAssignmentOptions]);
+
+    useEffect(() => {
+        if (selectedPlaylist) void loadAssignmentOptions();
+    }, [selectedPlaylist, loadAssignmentOptions]);
 
     const handleCreate = () => {
         if (!canEdit) return toast.error("You only have view access to playlists.");
@@ -210,8 +221,13 @@ export default function PlaylistsPage() {
                 })),
             );
             toast.success("Playlist assignments updated");
-        } catch {
-            toast.error("Failed to save assignments");
+        } catch (error) {
+            const message = error instanceof ApiError
+                ? error.message || "Failed to save assignments"
+                : error instanceof Error
+                    ? error.message
+                    : "Failed to save assignments";
+            toast.error(message);
         } finally {
             setIsSavingAssignments(false);
         }
@@ -346,17 +362,23 @@ export default function PlaylistsPage() {
                                             Assign Campaigns
                                         </h3>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 180, overflowY: "auto" }}>
-                                            {campaignOptions.map((campaign) => (
-                                                <label key={campaign.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.65 }}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedCampaignIds.includes(campaign.id)}
-                                                        onChange={() => toggleCampaignAssignment(campaign.id)}
-                                                        disabled={!canEdit}
-                                                    />
-                                                    <span>{campaign.name}</span>
-                                                </label>
-                                            ))}
+                                            {campaignOptions.length === 0 ? (
+                                                <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
+                                                    No campaigns yet. Create one from the Campaigns page.
+                                                </p>
+                                            ) : (
+                                                campaignOptions.map((campaign) => (
+                                                    <label key={campaign.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.65 }}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedCampaignIds.includes(campaign.id)}
+                                                            onChange={() => toggleCampaignAssignment(campaign.id)}
+                                                            disabled={!canEdit}
+                                                        />
+                                                        <span>{campaign.name}</span>
+                                                    </label>
+                                                ))
+                                            )}
                                         </div>
                                     </div>
                                     <div className="glass-panel" style={{ padding: 16 }}>
@@ -364,17 +386,70 @@ export default function PlaylistsPage() {
                                             Assign Devices
                                         </h3>
                                         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 180, overflowY: "auto" }}>
-                                            {deviceOptions.map((device) => (
-                                                <label key={device.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.82rem", cursor: canEdit ? "pointer" : "not-allowed", opacity: canEdit ? 1 : 0.65 }}>
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedDeviceIds.includes(device.id)}
-                                                        onChange={() => toggleDeviceAssignment(device.id)}
-                                                        disabled={!canEdit || device.status === "offline"}
-                                                    />
-                                                    <span>{device.name} • {device.location}</span>
-                                                </label>
-                                            ))}
+                                            {deviceOptions.length === 0 ? (
+                                                <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
+                                                    No devices registered yet. Register one from the Devices page.
+                                                </p>
+                                            ) : (
+                                                deviceOptions.map((device) => {
+                                                    const statusColorVar =
+                                                        device.status === "online"
+                                                            ? "var(--status-success)"
+                                                            : device.status === "warning"
+                                                                ? "var(--status-warning)"
+                                                                : "var(--status-danger)";
+                                                    return (
+                                                        <label
+                                                            key={device.id}
+                                                            style={{
+                                                                display: "flex",
+                                                                alignItems: "center",
+                                                                gap: 8,
+                                                                fontSize: "0.82rem",
+                                                                cursor: canEdit ? "pointer" : "not-allowed",
+                                                                opacity: canEdit ? 1 : 0.65,
+                                                            }}
+                                                            title={
+                                                                device.status === "offline"
+                                                                    ? "Device is offline — it will pick up this playlist on next sync"
+                                                                    : undefined
+                                                            }
+                                                        >
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedDeviceIds.includes(device.id)}
+                                                                onChange={() => toggleDeviceAssignment(device.id)}
+                                                                disabled={!canEdit}
+                                                            />
+                                                            <span
+                                                                style={{
+                                                                    width: 7,
+                                                                    height: 7,
+                                                                    borderRadius: "50%",
+                                                                    background: `hsl(${statusColorVar})`,
+                                                                    boxShadow: `0 0 6px hsla(${statusColorVar}, 0.6)`,
+                                                                    flexShrink: 0,
+                                                                }}
+                                                            />
+                                                            <span style={{ flex: 1 }}>
+                                                                {device.name} • {device.location}
+                                                            </span>
+                                                            {device.status === "offline" && (
+                                                                <span
+                                                                    style={{
+                                                                        fontSize: "0.65rem",
+                                                                        color: "hsl(var(--text-muted))",
+                                                                        textTransform: "uppercase",
+                                                                        fontWeight: 700,
+                                                                    }}
+                                                                >
+                                                                    Offline
+                                                                </span>
+                                                            )}
+                                                        </label>
+                                                    );
+                                                })
+                                            )}
                                         </div>
                                     </div>
                                 </div>

@@ -1,8 +1,26 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  Param,
+  Patch,
+  Post,
+  Query,
+  StreamableFile,
+  UseGuards,
+} from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentActor } from '../common/decorators/current-actor.decorator';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { ClientDataService } from './client-data.service';
+import { CreateDeviceDto } from './dto/create-device.dto';
+import { UpdateDeviceDto } from './dto/update-device.dto';
+import { CreateScheduleEventDto } from './dto/create-schedule-event.dto';
+import { UpdateScheduleEventDto } from './dto/update-schedule-event.dto';
+import { CreateTickerDto } from './dto/create-ticker.dto';
+import { UpdateTickerDto } from './dto/update-ticker.dto';
 
 @Controller('client-data')
 @UseGuards(JwtAuthGuard)
@@ -107,9 +125,26 @@ export class ClientDataController {
   @Post('schedule-events')
   createScheduleEvent(
     @CurrentActor() actor: RequestActor,
-    @Body() body: { name: string; startTime: string; endTime: string; days: string[] },
+    @Body() body: CreateScheduleEventDto,
   ) {
     return this.clientDataService.createScheduleEvent(actor, body);
+  }
+
+  @Patch('schedule-events/:eventId')
+  updateScheduleEvent(
+    @CurrentActor() actor: RequestActor,
+    @Param('eventId') eventId: string,
+    @Body() body: UpdateScheduleEventDto,
+  ) {
+    return this.clientDataService.updateScheduleEvent(actor, eventId, body);
+  }
+
+  @Patch('schedule-events/:eventId/toggle')
+  toggleScheduleStatus(
+    @CurrentActor() actor: RequestActor,
+    @Param('eventId') eventId: string,
+  ) {
+    return this.clientDataService.toggleScheduleStatus(actor, eventId);
   }
 
   @Delete('schedule-events/:eventId')
@@ -122,17 +157,57 @@ export class ClientDataController {
     return this.clientDataService.listDevices(actor);
   }
 
+  @Post('devices')
+  createDevice(@CurrentActor() actor: RequestActor, @Body() body: CreateDeviceDto) {
+    return this.clientDataService.createDevice(actor, body);
+  }
+
+  @Patch('devices/:deviceId')
+  updateDevice(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Body() body: UpdateDeviceDto,
+  ) {
+    return this.clientDataService.updateDevice(actor, deviceId, body);
+  }
+
+  @Delete('devices/:deviceId')
+  deleteDevice(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.deleteDevice(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/reboot')
+  rebootDevice(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.rebootDevice(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/screenshot')
+  captureDeviceScreenshot(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.captureDeviceScreenshot(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/refresh-status')
+  refreshDeviceStatus(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.refreshDeviceStatus(actor, deviceId);
+  }
+
   @Get('tickers')
   listTickers(@CurrentActor() actor: RequestActor) {
     return this.clientDataService.listTickers(actor);
   }
 
   @Post('tickers')
-  createTicker(
-    @CurrentActor() actor: RequestActor,
-    @Body() body: { text: string; speed: string; priority: string; color: string },
-  ) {
+  createTicker(@CurrentActor() actor: RequestActor, @Body() body: CreateTickerDto) {
     return this.clientDataService.createTicker(actor, body);
+  }
+
+  @Patch('tickers/:tickerId')
+  updateTicker(
+    @CurrentActor() actor: RequestActor,
+    @Param('tickerId') tickerId: string,
+    @Body() body: UpdateTickerDto,
+  ) {
+    return this.clientDataService.updateTicker(actor, tickerId, body);
   }
 
   @Patch('tickers/:tickerId/toggle')
@@ -146,7 +221,22 @@ export class ClientDataController {
   }
 
   @Get('reports')
-  reports(@CurrentActor() actor: RequestActor) {
-    return this.clientDataService.reports(actor);
+  reports(@CurrentActor() actor: RequestActor, @Query('range') range?: string) {
+    return this.clientDataService.reports(actor, range);
+  }
+
+  @Get('reports/export')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  async exportReport(
+    @CurrentActor() actor: RequestActor,
+    @Query('range') range: string | undefined,
+  ) {
+    const csv = await this.clientDataService.exportReportCsv(actor, range);
+    const safeRange = (range ?? '7d').replace(/[^a-z0-9]/gi, '') || '7d';
+    const filename = `proof-of-play-${safeRange}-${new Date().toISOString().slice(0, 10)}.csv`;
+    return new StreamableFile(Buffer.from(csv, 'utf-8'), {
+      type: 'text/csv; charset=utf-8',
+      disposition: `attachment; filename="${filename}"`,
+    });
   }
 }

@@ -447,47 +447,158 @@ export class ClientDataService {
       orderBy: [{ startTime: 'asc' }, { createdAt: 'desc' }],
     });
 
-    return events.map((event) => ({
-      id: event.id,
-      name: event.name,
-      campaign: event.campaign,
-      startTime: event.startTime,
-      endTime: event.endTime,
-      days: event.days,
-      screens: event.screens,
-      status: this.toLowerStatus(event.status),
-      color: event.color,
-      priority: this.toLowerStatus(event.priority),
-      recurring: event.recurring,
-    }));
+    return events.map((event) => this.serializeScheduleEvent(event));
   }
 
   async createScheduleEvent(
     actor: RequestActor,
-    body: { name: string; startTime: string; endTime: string; days: string[] },
+    body: {
+      name: string;
+      campaign?: string;
+      startTime: string;
+      endTime: string;
+      days: string[];
+      screens?: number;
+      status?: string;
+      priority?: string;
+      recurring?: boolean;
+      color?: string;
+    },
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
     const name = body.name?.trim();
     if (!name) throw new BadRequestException('Schedule name is required');
     if (!body.days?.length) throw new BadRequestException('At least one day is required');
+    if (!this.isValidTime(body.startTime) || !this.isValidTime(body.endTime)) {
+      throw new BadRequestException('Start and end time must be in HH:MM 24h format');
+    }
+    if (this.timeToMinutes(body.endTime) <= this.timeToMinutes(body.startTime)) {
+      throw new BadRequestException('End time must be later than start time');
+    }
 
     const count = await this.prisma.scheduleEvent.count({ where: { organizationId } });
     const event = await this.prisma.scheduleEvent.create({
       data: {
         organizationId,
         name,
-        campaign: 'New Campaign',
+        campaign: body.campaign?.trim() || 'Unassigned',
         startTime: body.startTime,
         endTime: body.endTime,
         days: body.days,
-        status: ScheduleStatus.SCHEDULED,
-        priority: SchedulePriority.NORMAL,
-        recurring: true,
-        color: campaignPalette[count % campaignPalette.length],
+        screens: body.screens ?? 0,
+        status: this.toScheduleStatus(body.status),
+        priority: this.toSchedulePriority(body.priority),
+        recurring: body.recurring ?? true,
+        color: this.sanitizeHexColor(body.color, campaignPalette[count % campaignPalette.length]),
       },
     });
 
+    return this.serializeScheduleEvent(event);
+  }
+
+  async updateScheduleEvent(
+    actor: RequestActor,
+    eventId: string,
+    body: {
+      name?: string;
+      campaign?: string;
+      startTime?: string;
+      endTime?: string;
+      days?: string[];
+      screens?: number;
+      status?: string;
+      priority?: string;
+      recurring?: boolean;
+      color?: string;
+    },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
+    if (!existing) throw new NotFoundException('Schedule event not found');
+
+    const data: Record<string, unknown> = {};
+    if (body.name !== undefined) {
+      const trimmed = body.name.trim();
+      if (!trimmed) throw new BadRequestException('Schedule name cannot be empty');
+      data.name = trimmed;
+    }
+    if (body.campaign !== undefined) data.campaign = body.campaign.trim() || 'Unassigned';
+    if (body.startTime !== undefined) {
+      if (!this.isValidTime(body.startTime)) throw new BadRequestException('startTime must be HH:MM');
+      data.startTime = body.startTime;
+    }
+    if (body.endTime !== undefined) {
+      if (!this.isValidTime(body.endTime)) throw new BadRequestException('endTime must be HH:MM');
+      data.endTime = body.endTime;
+    }
+    const nextStart = (data.startTime as string | undefined) ?? existing.startTime;
+    const nextEnd = (data.endTime as string | undefined) ?? existing.endTime;
+    if (this.timeToMinutes(nextEnd) <= this.timeToMinutes(nextStart)) {
+      throw new BadRequestException('End time must be later than start time');
+    }
+    if (body.days !== undefined) {
+      if (!body.days.length) throw new BadRequestException('At least one day is required');
+      data.days = body.days;
+    }
+    if (body.screens !== undefined) data.screens = Math.max(0, body.screens);
+    if (body.status !== undefined) data.status = this.toScheduleStatus(body.status);
+    if (body.priority !== undefined) data.priority = this.toSchedulePriority(body.priority);
+    if (body.recurring !== undefined) data.recurring = body.recurring;
+    if (body.color !== undefined) data.color = this.sanitizeHexColor(body.color, existing.color);
+
+    const updated = await this.prisma.scheduleEvent.update({
+      where: { id: eventId },
+      data,
+    });
+
+    return this.serializeScheduleEvent(updated);
+  }
+
+  async toggleScheduleStatus(actor: RequestActor, eventId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
+    if (!existing) throw new NotFoundException('Schedule event not found');
+
+    const next =
+      existing.status === ScheduleStatus.ACTIVE
+        ? ScheduleStatus.PAUSED
+        : existing.status === ScheduleStatus.PAUSED
+          ? ScheduleStatus.ACTIVE
+          : ScheduleStatus.ACTIVE;
+
+    const updated = await this.prisma.scheduleEvent.update({
+      where: { id: eventId },
+      data: { status: next },
+    });
+
+    return this.serializeScheduleEvent(updated);
+  }
+
+  async deleteScheduleEvent(actor: RequestActor, eventId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
+    if (!existing) throw new NotFoundException('Schedule event not found');
+    await this.prisma.scheduleEvent.delete({ where: { id: eventId } });
+    return { success: true };
+  }
+
+  private serializeScheduleEvent(event: {
+    id: string;
+    name: string;
+    campaign: string;
+    startTime: string;
+    endTime: string;
+    days: string[];
+    screens: number;
+    status: ScheduleStatus;
+    color: string;
+    priority: SchedulePriority;
+    recurring: boolean;
+  }) {
     return {
       id: event.id,
       name: event.name,
@@ -503,13 +614,42 @@ export class ClientDataService {
     };
   }
 
-  async deleteScheduleEvent(actor: RequestActor, eventId: string) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
-    if (!existing) throw new NotFoundException('Schedule event not found');
-    await this.prisma.scheduleEvent.delete({ where: { id: eventId } });
-    return { success: true };
+  private toScheduleStatus(value?: string): ScheduleStatus {
+    switch ((value ?? '').toLowerCase()) {
+      case 'active':
+        return ScheduleStatus.ACTIVE;
+      case 'paused':
+        return ScheduleStatus.PAUSED;
+      case 'completed':
+        return ScheduleStatus.COMPLETED;
+      default:
+        return ScheduleStatus.SCHEDULED;
+    }
+  }
+
+  private toSchedulePriority(value?: string): SchedulePriority {
+    switch ((value ?? '').toLowerCase()) {
+      case 'high':
+        return SchedulePriority.HIGH;
+      case 'low':
+        return SchedulePriority.LOW;
+      default:
+        return SchedulePriority.NORMAL;
+    }
+  }
+
+  private isValidTime(value: string): boolean {
+    return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+  }
+
+  private timeToMinutes(value: string): number {
+    const [h, m] = value.split(':').map(Number);
+    return h * 60 + m;
+  }
+
+  private sanitizeHexColor(value: string | undefined, fallback: string): string {
+    if (!value) return fallback;
+    return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value) ? value : fallback;
   }
 
   async listDevices(actor: RequestActor) {
@@ -520,7 +660,199 @@ export class ClientDataService {
       orderBy: { createdAt: 'asc' },
     });
 
-    return devices.map((device) => ({
+    return devices.map((device) => this.serializeDevice(device));
+  }
+
+  async createDevice(
+    actor: RequestActor,
+    body: { name: string; location: string; resolution?: string; os?: string; ip?: string },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const name = body.name?.trim();
+    const location = body.location?.trim();
+    if (!name) throw new BadRequestException('Device name is required');
+    if (!location) throw new BadRequestException('Device location is required');
+
+    const existing = await this.prisma.device.findFirst({
+      where: { organizationId, name },
+    });
+    if (existing) {
+      throw new BadRequestException('A device with this name already exists');
+    }
+
+    const device = await this.prisma.device.create({
+      data: {
+        organizationId,
+        name,
+        location,
+        status: DeviceStatus.OFFLINE,
+        ip: body.ip?.trim() || 'Pending',
+        resolution: body.resolution?.trim() || '1920x1080',
+        uptime: '0s',
+        cpu: 0,
+        ram: 0,
+        temp: 0,
+        lastSync: 'Awaiting first sync',
+        os: body.os?.trim() || 'Unknown',
+      },
+      include: { currentPlaylist: { select: { name: true } } },
+    });
+
+    return this.serializeDevice(device);
+  }
+
+  async updateDevice(
+    actor: RequestActor,
+    deviceId: string,
+    body: { name?: string; location?: string; resolution?: string; os?: string; ip?: string },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
+    if (!device) throw new NotFoundException('Device not found');
+
+    const data: {
+      name?: string;
+      location?: string;
+      resolution?: string;
+      os?: string;
+      ip?: string;
+    } = {};
+    if (typeof body.name === 'string') {
+      const name = body.name.trim();
+      if (!name) throw new BadRequestException('Device name cannot be empty');
+      if (name !== device.name) {
+        const clash = await this.prisma.device.findFirst({
+          where: { organizationId, name, id: { not: deviceId } },
+        });
+        if (clash) throw new BadRequestException('A device with this name already exists');
+      }
+      data.name = name;
+    }
+    if (typeof body.location === 'string') {
+      const location = body.location.trim();
+      if (!location) throw new BadRequestException('Device location cannot be empty');
+      data.location = location;
+    }
+    if (typeof body.resolution === 'string' && body.resolution.trim()) {
+      data.resolution = body.resolution.trim();
+    }
+    if (typeof body.os === 'string' && body.os.trim()) {
+      data.os = body.os.trim();
+    }
+    if (typeof body.ip === 'string' && body.ip.trim()) {
+      data.ip = body.ip.trim();
+    }
+
+    const updated = await this.prisma.device.update({
+      where: { id: deviceId },
+      data,
+      include: { currentPlaylist: { select: { name: true } } },
+    });
+
+    return this.serializeDevice(updated);
+  }
+
+  async deleteDevice(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
+    if (!device) throw new NotFoundException('Device not found');
+
+    await this.prisma.device.delete({ where: { id: deviceId } });
+    return { success: true };
+  }
+
+  async rebootDevice(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
+    if (!device) throw new NotFoundException('Device not found');
+
+    // Real-device reboot would be dispatched via the worker/socket channel here.
+    // For now we record the request and mark the device as warning until next sync.
+    const updated = await this.prisma.device.update({
+      where: { id: deviceId },
+      data: {
+        status: DeviceStatus.WARNING,
+        lastSync: `Reboot requested at ${new Date().toISOString()}`,
+      },
+      include: { currentPlaylist: { select: { name: true } } },
+    });
+
+    return this.serializeDevice(updated);
+  }
+
+  async captureDeviceScreenshot(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
+    if (!device) throw new NotFoundException('Device not found');
+
+    // Screenshot capture is delegated to the player agent in production.
+    return {
+      deviceId: device.id,
+      requestedAt: new Date().toISOString(),
+      status: 'queued' as const,
+      message: 'Screenshot request queued — it will appear in reports once the player responds.',
+    };
+  }
+
+  async refreshDeviceStatus(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
+    if (!device) throw new NotFoundException('Device not found');
+
+    // Simulated telemetry pull. The real player agent would push these numbers.
+    const cpu = Math.min(99, Math.max(2, Math.round(device.cpu + (Math.random() * 20 - 10))));
+    const ram = Math.min(99, Math.max(5, Math.round(device.ram + (Math.random() * 20 - 10))));
+    const temp = Math.min(95, Math.max(25, Math.round(device.temp + (Math.random() * 10 - 5))));
+    const nextStatus =
+      device.status === DeviceStatus.OFFLINE
+        ? DeviceStatus.ONLINE
+        : cpu > 85 || temp > 80
+          ? DeviceStatus.WARNING
+          : DeviceStatus.ONLINE;
+
+    const updated = await this.prisma.device.update({
+      where: { id: deviceId },
+      data: {
+        cpu,
+        ram,
+        temp,
+        status: nextStatus,
+        lastSync: new Date().toISOString(),
+      },
+      include: { currentPlaylist: { select: { name: true } } },
+    });
+
+    return this.serializeDevice(updated);
+  }
+
+  private serializeDevice(device: {
+    id: string;
+    name: string;
+    status: DeviceStatus;
+    location: string;
+    ip: string;
+    resolution: string;
+    uptime: string;
+    cpu: number;
+    ram: number;
+    temp: number;
+    lastSync: string;
+    os: string;
+    currentContent: string | null;
+    currentPlaylist?: { name: string } | null;
+  }) {
+    return {
       id: device.id,
       name: device.name,
       status: this.toLowerStatus(device.status),
@@ -534,7 +866,7 @@ export class ClientDataService {
       lastSync: device.lastSync,
       os: device.os,
       currentContent: device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',
-    }));
+    };
   }
 
   async listTickers(actor: RequestActor) {
@@ -544,22 +876,19 @@ export class ClientDataService {
       orderBy: { updatedAt: 'desc' },
     });
 
-    return tickers.map((ticker) => ({
-      id: ticker.id,
-      text: ticker.text,
-      speed: this.toTitleStatus(ticker.speed),
-      style: this.toTitleStatus(ticker.style),
-      color: ticker.color,
-      status: this.toTitleStatus(ticker.status),
-      priority: this.toTitleStatus(ticker.priority),
-      screens: ticker.screens,
-      createdAt: ticker.createdAt,
-    }));
+    return tickers.map((ticker) => this.serializeTicker(ticker));
   }
 
   async createTicker(
     actor: RequestActor,
-    body: { text: string; speed: string; priority: string; color: string },
+    body: {
+      text: string;
+      speed?: string;
+      priority?: string;
+      style?: string;
+      status?: string;
+      color?: string;
+    },
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
@@ -571,24 +900,61 @@ export class ClientDataService {
         organizationId,
         text,
         speed: this.toTickerSpeed(body.speed),
-        style: TickerStyle.NEON,
-        color: body.color || '#00e5ff',
-        status: TickerStatus.ACTIVE,
+        style: this.toTickerStyle(body.style),
+        color: this.sanitizeTickerColor(body.color),
+        status: this.toTickerStatus(body.status, TickerStatus.ACTIVE),
         priority: this.toTickerPriority(body.priority),
       },
     });
 
-    return {
-      id: ticker.id,
-      text: ticker.text,
-      speed: this.toTitleStatus(ticker.speed),
-      style: this.toTitleStatus(ticker.style),
-      color: ticker.color,
-      status: this.toTitleStatus(ticker.status),
-      priority: this.toTitleStatus(ticker.priority),
-      screens: ticker.screens,
-      createdAt: ticker.createdAt,
-    };
+    return this.serializeTicker(ticker);
+  }
+
+  async updateTicker(
+    actor: RequestActor,
+    tickerId: string,
+    body: {
+      text?: string;
+      speed?: string;
+      priority?: string;
+      style?: string;
+      status?: string;
+      color?: string;
+    },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.ticker.findFirst({
+      where: { id: tickerId, organizationId },
+    });
+    if (!existing) throw new NotFoundException('Ticker not found');
+
+    const data: {
+      text?: string;
+      speed?: TickerSpeed;
+      priority?: TickerPriority;
+      style?: TickerStyle;
+      status?: TickerStatus;
+      color?: string;
+    } = {};
+
+    if (typeof body.text === 'string') {
+      const trimmed = body.text.trim();
+      if (!trimmed) throw new BadRequestException('Ticker text is required');
+      data.text = trimmed;
+    }
+    if (body.speed !== undefined) data.speed = this.toTickerSpeed(body.speed);
+    if (body.priority !== undefined) data.priority = this.toTickerPriority(body.priority);
+    if (body.style !== undefined) data.style = this.toTickerStyle(body.style);
+    if (body.status !== undefined) data.status = this.toTickerStatus(body.status, existing.status);
+    if (body.color !== undefined) data.color = this.sanitizeTickerColor(body.color);
+
+    const updated = await this.prisma.ticker.update({
+      where: { id: tickerId },
+      data,
+    });
+
+    return this.serializeTicker(updated);
   }
 
   async toggleTickerStatus(actor: RequestActor, tickerId: string) {
@@ -603,10 +969,7 @@ export class ClientDataService {
       data: { status: nextStatus },
     });
 
-    return {
-      id: updated.id,
-      status: this.toTitleStatus(updated.status),
-    };
+    return this.serializeTicker(updated);
   }
 
   async deleteTicker(actor: RequestActor, tickerId: string) {
@@ -618,29 +981,114 @@ export class ClientDataService {
     return { success: true };
   }
 
-  async reports(actor: RequestActor) {
+  async reports(actor: RequestActor, range = '7d') {
     const organizationId = this.getOrgId(actor);
+    const { startDate, bucketCount, bucketMs, formatLabel } = this.resolveReportRange(range);
+
     const [devices, logs] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
-      this.prisma.proofOfPlayLog.findMany({ where: { organizationId }, orderBy: { timestamp: 'desc' }, take: 200 }),
+      this.prisma.proofOfPlayLog.findMany({
+        where: { organizationId, timestamp: { gte: startDate } },
+        orderBy: { timestamp: 'desc' },
+      }),
     ]);
 
-    const byDay = new Map<string, { impressions: number; engagement: number }>();
-    for (const log of logs) {
-      const key = log.timestamp.toLocaleDateString('en-US', { weekday: 'short' });
-      const current = byDay.get(key) ?? { impressions: 0, engagement: 0 };
-      current.impressions += 1;
-      current.engagement += log.status === ProofOfPlayStatus.VERIFIED ? 70 : 30;
-      byDay.set(key, current);
-    }
+    const verifiedCount = logs.filter((log) => log.status === ProofOfPlayStatus.VERIFIED).length;
 
-    const chartData = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => ({
-      day,
-      impressions: byDay.get(day)?.impressions ?? 0,
-      engagement: byDay.get(day)?.engagement ?? 0,
+    const buckets = Array.from({ length: bucketCount }, (_, index) => {
+      const bucketStart = new Date(startDate.getTime() + index * bucketMs);
+      return {
+        label: formatLabel(bucketStart),
+        impressions: 0,
+        verified: 0,
+      };
+    });
+    for (const log of logs) {
+      const offset = log.timestamp.getTime() - startDate.getTime();
+      const bucketIndex = Math.min(Math.max(Math.floor(offset / bucketMs), 0), bucketCount - 1);
+      buckets[bucketIndex].impressions += 1;
+      if (log.status === ProofOfPlayStatus.VERIFIED) {
+        buckets[bucketIndex].verified += 1;
+      }
+    }
+    const chartData = buckets.map((bucket) => ({
+      day: bucket.label,
+      impressions: bucket.impressions,
+      engagement: bucket.impressions > 0
+        ? Math.round((bucket.verified / bucket.impressions) * 100)
+        : 0,
     }));
 
+    const deviceByName = new Map(devices.map((device) => [device.name, device]));
+    const deviceAgg = new Map<string, {
+      id: string | null;
+      name: string;
+      location: string;
+      status: DeviceStatus | null;
+      impressions: number;
+      verified: number;
+      lastPlay: Date | null;
+    }>();
+    for (const log of logs) {
+      const matched = deviceByName.get(log.device);
+      const key = matched?.id ?? log.device;
+      const current = deviceAgg.get(key) ?? {
+        id: matched?.id ?? null,
+        name: log.device,
+        location: matched?.location ?? 'Unknown',
+        status: matched?.status ?? null,
+        impressions: 0,
+        verified: 0,
+        lastPlay: null,
+      };
+      current.impressions += 1;
+      if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
+      if (!current.lastPlay || log.timestamp > current.lastPlay) current.lastPlay = log.timestamp;
+      deviceAgg.set(key, current);
+    }
+    const deviceBreakdown = Array.from(deviceAgg.values())
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 12)
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        location: entry.location,
+        status: entry.status ? this.toLowerStatus(entry.status) : 'unknown',
+        impressions: entry.impressions,
+        verifiedRate:
+          entry.impressions > 0
+            ? Math.round((entry.verified / entry.impressions) * 10000) / 100
+            : 0,
+        lastPlay: entry.lastPlay,
+      }));
+
+    const contentAgg = new Map<string, { content: string; impressions: number; verified: number }>();
+    for (const log of logs) {
+      const current = contentAgg.get(log.content) ?? {
+        content: log.content,
+        impressions: 0,
+        verified: 0,
+      };
+      current.impressions += 1;
+      if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
+      contentAgg.set(log.content, current);
+    }
+    const topContent = Array.from(contentAgg.values())
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 10)
+      .map((entry) => ({
+        content: entry.content,
+        impressions: entry.impressions,
+        verifiedRate:
+          entry.impressions > 0
+            ? Math.round((entry.verified / entry.impressions) * 10000) / 100
+            : 0,
+      }));
+
     return {
+      range,
+      rangeStart: startDate,
+      rangeEnd: new Date(),
       kpis: {
         billedImpressions: logs.length,
         avgEngagement: Math.round(
@@ -648,19 +1096,78 @@ export class ClientDataService {
             Math.max(logs.length, 1),
         ),
         playbackFidelity:
-          Math.round(
-            (logs.filter((log) => log.status === ProofOfPlayStatus.VERIFIED).length / Math.max(logs.length, 1)) * 10000,
-          ) / 100,
+          Math.round((verifiedCount / Math.max(logs.length, 1)) * 10000) / 100,
         activeNodes: devices.filter((device) => device.status === DeviceStatus.ONLINE).length,
+        totalNodes: devices.length,
+        verifiedCount,
+        failedCount: logs.length - verifiedCount,
       },
       chartData,
-      proofOfPlay: logs.slice(0, 50).map((log) => ({
+      deviceBreakdown,
+      topContent,
+      proofOfPlay: logs.slice(0, 200).map((log) => ({
         id: log.id,
         device: log.device,
         content: log.content,
         timestamp: log.timestamp,
         status: this.toTitleStatus(log.status),
       })),
+    };
+  }
+
+  async exportReportCsv(actor: RequestActor, range = '7d') {
+    const organizationId = this.getOrgId(actor);
+    const { startDate } = this.resolveReportRange(range);
+    const logs = await this.prisma.proofOfPlayLog.findMany({
+      where: { organizationId, timestamp: { gte: startDate } },
+      orderBy: { timestamp: 'desc' },
+      take: 5000,
+    });
+
+    const header = 'Timestamp,Device,Content,Status\n';
+    const escape = (value: string) => {
+      if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
+      return value;
+    };
+    const rows = logs
+      .map((log) =>
+        [
+          log.timestamp.toISOString(),
+          escape(log.device),
+          escape(log.content),
+          this.toTitleStatus(log.status),
+        ].join(','),
+      )
+      .join('\n');
+
+    return header + rows + (rows.length > 0 ? '\n' : '');
+  }
+
+  private resolveReportRange(range: string) {
+    const now = new Date();
+    const normalized = (range ?? '').toLowerCase();
+
+    if (normalized === '24h') {
+      const startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      return {
+        startDate,
+        bucketCount: 24,
+        bucketMs: 60 * 60 * 1000,
+        formatLabel: (date: Date) =>
+          date.toLocaleTimeString('en-US', { hour: '2-digit', hour12: false }),
+      };
+    }
+
+    const days = normalized === '30d' ? 30 : normalized === '90d' ? 90 : 7;
+    const startDate = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+    return {
+      startDate,
+      bucketCount: days,
+      bucketMs: 24 * 60 * 60 * 1000,
+      formatLabel: (date: Date) =>
+        days <= 7
+          ? date.toLocaleDateString('en-US', { weekday: 'short' })
+          : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     };
   }
 
@@ -694,16 +1201,65 @@ export class ClientDataService {
     return `${m}:${String(s).padStart(2, '0')}`;
   }
 
-  private toTickerSpeed(speed: string) {
-    if (speed.toLowerCase() === 'slow') return TickerSpeed.SLOW;
-    if (speed.toLowerCase() === 'fast') return TickerSpeed.FAST;
+  private toTickerSpeed(speed?: string | null) {
+    const normalized = (speed ?? '').toLowerCase();
+    if (normalized === 'slow') return TickerSpeed.SLOW;
+    if (normalized === 'fast') return TickerSpeed.FAST;
     return TickerSpeed.NORMAL;
   }
 
-  private toTickerPriority(priority: string) {
-    if (priority.toLowerCase() === 'urgent') return TickerPriority.URGENT;
-    if (priority.toLowerCase() === 'low') return TickerPriority.LOW;
+  private toTickerPriority(priority?: string | null) {
+    const normalized = (priority ?? '').toLowerCase();
+    if (normalized === 'urgent') return TickerPriority.URGENT;
+    if (normalized === 'low') return TickerPriority.LOW;
     return TickerPriority.NORMAL;
+  }
+
+  private toTickerStyle(style?: string | null) {
+    const normalized = (style ?? '').toLowerCase();
+    if (normalized === 'classic') return TickerStyle.CLASSIC;
+    if (normalized === 'gradient') return TickerStyle.GRADIENT;
+    if (normalized === 'minimal') return TickerStyle.MINIMAL;
+    return TickerStyle.NEON;
+  }
+
+  private toTickerStatus(status: string | undefined | null, fallback: TickerStatus) {
+    const normalized = (status ?? '').toLowerCase();
+    if (normalized === 'active') return TickerStatus.ACTIVE;
+    if (normalized === 'paused') return TickerStatus.PAUSED;
+    if (normalized === 'draft') return TickerStatus.DRAFT;
+    return fallback;
+  }
+
+  private sanitizeTickerColor(color?: string | null) {
+    if (!color) return '#00e5ff';
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#00e5ff';
+  }
+
+  private serializeTicker(ticker: {
+    id: string;
+    text: string;
+    speed: TickerSpeed;
+    style: TickerStyle;
+    color: string;
+    status: TickerStatus;
+    priority: TickerPriority;
+    screens: number;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: ticker.id,
+      text: ticker.text,
+      speed: this.toTitleStatus(ticker.speed),
+      style: this.toTitleStatus(ticker.style),
+      color: ticker.color,
+      status: this.toTitleStatus(ticker.status),
+      priority: this.toTitleStatus(ticker.priority),
+      screens: ticker.screens,
+      createdAt: ticker.createdAt,
+      updatedAt: ticker.updatedAt,
+    };
   }
 
   private serializePlaylist(playlist: {

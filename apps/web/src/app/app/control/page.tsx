@@ -11,8 +11,16 @@ import {
     SkipForward, SkipBack, Square, Tv,
     Globe, Router, Gauge, Timer
 } from "lucide-react";
-import { apiRequest } from "@/lib/api";
+import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+
+const LIVE_ACTION_IDS = new Set(["restart", "screen-status", "on-off"]);
+
+const describeError = (error: unknown): string => {
+    if (error instanceof ApiError) return error.message || `API ${error.status}`;
+    if (error instanceof Error) return error.message;
+    return "Something went wrong";
+};
 
 type TargetDevice = { id: string; name: string; location: string; status: "online" | "offline" | "warning" };
 
@@ -160,6 +168,7 @@ export default function ControlPage() {
 
     const [playbackState, setPlaybackState] = useState<"playing" | "paused" | "stopped">("playing");
     const [syncEnabled, setSyncEnabled] = useState(true);
+    const [isRebooting, setIsRebooting] = useState(false);
 
     const toggleDevice = useCallback((id: string) => {
         setSelectedDevices(prev => prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]);
@@ -173,7 +182,45 @@ export default function ControlPage() {
             toast.error("Select at least one target device");
             return;
         }
-        toast.success(`${action} applied to ${count} device${count > 1 ? "s" : ""}`);
+        toast.success(`${action} queued for ${count} device${count > 1 ? "s" : ""} (simulated)`);
+    };
+
+    const handleReboot = async (mode: "soft" | "hard") => {
+        const count = selectedDevices.length;
+        if (count === 0) {
+            toast.error("Select at least one target device");
+            return;
+        }
+        if (!activeOrganizationId) {
+            toast.error("Select an organization first");
+            return;
+        }
+        if (typeof window !== "undefined") {
+            const confirmed = window.confirm(
+                `${mode === "hard" ? "Hard reboot" : "Soft restart"} ${count} device${count > 1 ? "s" : ""}? Screens will go dark briefly.`,
+            );
+            if (!confirmed) return;
+        }
+        setIsRebooting(true);
+        const results = await Promise.allSettled(
+            selectedDevices.map((deviceId) =>
+                apiRequest(`/api/client-data/devices/${deviceId}/reboot`, {
+                    method: "POST",
+                    headers: { "x-organization-id": activeOrganizationId },
+                }),
+            ),
+        );
+        const succeeded = results.filter((r) => r.status === "fulfilled").length;
+        const failed = results.length - succeeded;
+        setIsRebooting(false);
+        if (failed === 0) {
+            toast.success(`Reboot command sent to ${succeeded} device${succeeded > 1 ? "s" : ""}`);
+        } else if (succeeded === 0) {
+            const firstFailure = results.find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+            toast.error(`Reboot failed: ${firstFailure ? describeError(firstFailure.reason) : "unknown error"}`);
+        } else {
+            toast.error(`${succeeded} succeeded, ${failed} failed. Check device status.`);
+        }
     };
 
     /* ─── Panel Content Renderer ─── */
@@ -280,15 +327,15 @@ export default function ControlPage() {
                             </p>
                         </div>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 24 }}>
-                            <button className="glass-panel" style={{ padding: 16, textAlign: "center", cursor: "pointer", border: "1px solid hsla(var(--border-subtle), 0.2)" }}
-                                onClick={() => handleApply("Soft restart initiated")}>
-                                <RefreshCw size={20} style={{ marginBottom: 8, color: "#fbbf24" }} />
+                            <button className="glass-panel" disabled={isRebooting} style={{ padding: 16, textAlign: "center", cursor: isRebooting ? "wait" : "pointer", border: "1px solid hsla(var(--border-subtle), 0.2)", opacity: isRebooting ? 0.6 : 1 }}
+                                onClick={() => handleReboot("soft")}>
+                                <RefreshCw size={20} style={{ marginBottom: 8, color: "#fbbf24", animation: isRebooting ? "spin 1s linear infinite" : undefined }} />
                                 <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>Soft Restart</p>
-                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>Restart app only</p>
+                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>Restart player app</p>
                             </button>
-                            <button className="glass-panel" style={{ padding: 16, textAlign: "center", cursor: "pointer", border: "1px solid hsla(var(--border-subtle), 0.2)" }}
-                                onClick={() => handleApply("Hard reboot initiated")}>
-                                <RotateCw size={20} style={{ marginBottom: 8, color: "#f87171" }} />
+                            <button className="glass-panel" disabled={isRebooting} style={{ padding: 16, textAlign: "center", cursor: isRebooting ? "wait" : "pointer", border: "1px solid hsla(var(--border-subtle), 0.2)", opacity: isRebooting ? 0.6 : 1 }}
+                                onClick={() => handleReboot("hard")}>
+                                <RotateCw size={20} style={{ marginBottom: 8, color: "#f87171", animation: isRebooting ? "spin 1s linear infinite" : undefined }} />
                                 <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>Hard Reboot</p>
                                 <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>Full system reboot</p>
                             </button>
@@ -709,6 +756,15 @@ export default function ControlPage() {
                                 </button>
                             </div>
 
+                            {!LIVE_ACTION_IDS.has(activePanel) && (
+                                <div style={{ padding: 12, borderRadius: 10, background: "hsla(var(--accent-primary), 0.06)", border: "1px solid hsla(var(--accent-primary), 0.2)", color: "hsl(var(--text-secondary))", fontSize: "0.78rem", marginBottom: 20, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                                    <AlertTriangle size={16} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0, marginTop: 1 }} />
+                                    <span>
+                                        <strong>Simulated control.</strong> Commands for this panel are queued in the UI but require a connected player agent to execute on hardware. Reboot actions below the Restart tile are already wired end-to-end.
+                                    </span>
+                                </div>
+                            )}
+
                             {/* Dynamic Content */}
                             <div style={{ maxWidth: 640 }}>
                                 {renderPanelContent()}
@@ -717,6 +773,13 @@ export default function ControlPage() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            <style jsx global>{`
+                @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                }
+            `}</style>
         </motion.div>
     );
 }

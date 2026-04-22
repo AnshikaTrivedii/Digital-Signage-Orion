@@ -2,6 +2,8 @@
 
 This repository is the `orion-platform` monorepo for the CMS platform.
 
+> **Looking for the full walkthrough?** See [`PROJECT_GUIDE.md`](./PROJECT_GUIDE.md) for architecture, data model, auth, the asset upload flow, S3 setup, and troubleshooting.
+
 The Android player has been prepared as a separate standalone folder at:
 
 - `/Users/aman/Documents/Coding/orion-android-player`
