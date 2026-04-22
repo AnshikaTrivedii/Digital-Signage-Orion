@@ -6,7 +6,7 @@ import {
     Wifi, WifiOff, MapPin, Plus,
     RefreshCw, HardDrive, Thermometer,
     Search, X, Eye, Cpu, AlertTriangle,
-    Trash2, Pencil, Monitor, Save,
+    Trash2, Pencil, Monitor, Save, Link2,
 } from "lucide-react";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
@@ -70,6 +70,12 @@ export default function DevicesPage() {
 
     const [isRegisterOpen, setIsRegisterOpen] = useState(false);
     const [registerForm, setRegisterForm] = useState<DeviceFormState>(EMPTY_FORM);
+
+    // Pairing modal state
+    const [isPairingOpen, setIsPairingOpen] = useState(false);
+    const [pairingCode, setPairingCode] = useState("");
+    const [pairingName, setPairingName] = useState("");
+    const [showManualRegister, setShowManualRegister] = useState(false);
 
     const [pendingAction, setPendingAction] = useState<string | null>(null);
     const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
@@ -146,12 +152,28 @@ export default function DevicesPage() {
     const openRegister = () => {
         if (!canControl) return;
         setRegisterForm(EMPTY_FORM);
-        setIsRegisterOpen(true);
+        setShowManualRegister(true);
+        setIsPairingOpen(true);
     };
 
     const closeRegister = () => {
         setIsRegisterOpen(false);
         setRegisterForm(EMPTY_FORM);
+    };
+
+    const openPairing = () => {
+        if (!canControl) return;
+        setPairingCode("");
+        setPairingName("");
+        setShowManualRegister(false);
+        setIsPairingOpen(true);
+    };
+
+    const closePairing = () => {
+        setIsPairingOpen(false);
+        setPairingCode("");
+        setPairingName("");
+        setShowManualRegister(false);
     };
 
     const submitRegister = async () => {
@@ -177,8 +199,33 @@ export default function DevicesPage() {
             setDevices((prev) => [...prev, created]);
             toast.success(`${created.name} registered`);
             closeRegister();
+            closePairing();
         } catch (error) {
             toast.error(describeError(error, "Failed to register device"));
+        } finally {
+            setPendingAction(null);
+        }
+    };
+
+    const submitPairing = async () => {
+        if (!canControl || !activeOrganizationId) return;
+        const code = pairingCode.trim().toUpperCase();
+        const name = pairingName.trim();
+        if (!code || code.length !== 6) return toast.error("Enter the full 6-digit code from your screen");
+        if (!name) return toast.error("Give your display a name");
+
+        setPendingAction("pair");
+        try {
+            const paired = await apiRequest<Device>("/api/client-data/devices/pair", {
+                method: "POST",
+                headers: orgHeaders,
+                body: JSON.stringify({ pairingCode: code, name }),
+            });
+            setDevices((prev) => [...prev, paired]);
+            toast.success(`${paired.name} paired successfully!`);
+            closePairing();
+        } catch (error) {
+            toast.error(describeError(error, "Pairing failed — check the code and try again"));
         } finally {
             setPendingAction(null);
         }
@@ -349,9 +396,9 @@ export default function DevicesPage() {
                             opacity: canControl ? 1 : 0.55,
                             cursor: canControl ? "pointer" : "not-allowed",
                         }}
-                        onClick={openRegister}
+                        onClick={openPairing}
                     >
-                        <Plus size={18} /> Register Device
+                        <Plus size={18} /> Add Device
                     </button>
                 </div>
             </div>
@@ -511,10 +558,10 @@ export default function DevicesPage() {
                     {devices.length === 0 && canControl && (
                         <button
                             className="btn-primary"
-                            onClick={openRegister}
+                            onClick={openPairing}
                             style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}
                         >
-                            <Plus size={16} /> Register Device
+                            <Plus size={16} /> Add Device
                         </button>
                     )}
                 </div>
@@ -886,11 +933,11 @@ export default function DevicesPage() {
                 )}
             </AnimatePresence>
 
-            {/* Register Modal */}
+            {/* Pairing / Add Device Modal */}
             <AnimatePresence>
-                {isRegisterOpen && canControl && (
+                {isPairingOpen && canControl && (
                     <motion.div
-                        key="register"
+                        key="pairing"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
@@ -905,7 +952,7 @@ export default function DevicesPage() {
                             justifyContent: "center",
                             padding: 20,
                         }}
-                        onClick={closeRegister}
+                        onClick={closePairing}
                     >
                         <motion.div
                             initial={{ scale: 0.95, y: 20 }}
@@ -917,30 +964,177 @@ export default function DevicesPage() {
                         >
                             <div className="flex-between" style={{ marginBottom: 24 }}>
                                 <h2 style={{ fontSize: "1.25rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-                                    <Monitor size={22} style={{ color: "hsl(var(--accent-primary))" }} /> Register New Device
+                                    <Link2 size={22} style={{ color: "hsl(var(--accent-primary))" }} /> Add Device
                                 </h2>
-                                <button className="btn-icon-soft" onClick={closeRegister}>
+                                <button className="btn-icon-soft" onClick={closePairing}>
                                     <X size={24} />
                                 </button>
                             </div>
-                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 20 }}>
-                                Create a placeholder for a new player. Live telemetry will populate once the device agent connects.
-                            </p>
-                            <DeviceFormFields form={registerForm} setForm={setRegisterForm} autoFocus />
-                            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 24 }}>
-                                <button className="btn-outline" onClick={closeRegister} disabled={pendingAction === "register"}>
-                                    Cancel
-                                </button>
-                                <button
-                                    className="btn-primary"
-                                    onClick={() => void submitRegister()}
-                                    disabled={pendingAction === "register"}
-                                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                                >
-                                    <Plus size={16} />
-                                    {pendingAction === "register" ? "Registering..." : "Register Device"}
-                                </button>
-                            </div>
+
+                            {!showManualRegister ? (
+                                <>
+                                    <div
+                                        style={{
+                                            textAlign: "center",
+                                            padding: "12px 0 20px",
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                width: 64,
+                                                height: 64,
+                                                borderRadius: 16,
+                                                background: "hsla(var(--accent-primary), 0.1)",
+                                                border: "1px solid hsla(var(--accent-primary), 0.2)",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                margin: "0 auto 16px",
+                                            }}
+                                        >
+                                            <Monitor size={32} style={{ color: "hsl(var(--accent-primary))" }} />
+                                        </div>
+                                        <p style={{ fontSize: "0.95rem", fontWeight: 600, color: "hsl(var(--text-primary))", marginBottom: 6 }}>
+                                            Enter the 6-digit code displayed on your screen
+                                        </p>
+                                        <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", maxWidth: 380, margin: "0 auto" }}>
+                                            Power on the Android player — it will show a pairing code. Enter it below to link the device to your organization.
+                                        </p>
+                                    </div>
+
+                                    <div style={{ marginBottom: 16 }}>
+                                        <label
+                                            style={{
+                                                display: "block",
+                                                fontSize: "0.7rem",
+                                                color: "hsl(var(--text-muted))",
+                                                fontWeight: 700,
+                                                textTransform: "uppercase",
+                                                marginBottom: 6,
+                                            }}
+                                        >
+                                            Pairing Code *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            maxLength={6}
+                                            autoFocus
+                                            value={pairingCode}
+                                            onChange={(e) => setPairingCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))}
+                                            placeholder="A3X9PZ"
+                                            style={{
+                                                width: "100%",
+                                                padding: "14px 16px",
+                                                borderRadius: 12,
+                                                background: "hsla(var(--bg-base), 0.5)",
+                                                border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                                color: "hsl(var(--text-primary))",
+                                                fontSize: "1.5rem",
+                                                fontWeight: 800,
+                                                textAlign: "center",
+                                                letterSpacing: "0.35em",
+                                                fontFamily: "monospace",
+                                                outline: "none",
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div style={{ marginBottom: 20 }}>
+                                        <label
+                                            style={{
+                                                display: "block",
+                                                fontSize: "0.7rem",
+                                                color: "hsl(var(--text-muted))",
+                                                fontWeight: 700,
+                                                textTransform: "uppercase",
+                                                marginBottom: 6,
+                                            }}
+                                        >
+                                            Display Name *
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={pairingName}
+                                            onChange={(e) => setPairingName(e.target.value)}
+                                            placeholder="Lobby Screen 01"
+                                            style={{
+                                                width: "100%",
+                                                padding: "10px 12px",
+                                                borderRadius: 8,
+                                                background: "hsla(var(--bg-base), 0.5)",
+                                                border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                                color: "hsl(var(--text-primary))",
+                                                fontSize: "0.9rem",
+                                                outline: "none",
+                                            }}
+                                        />
+                                    </div>
+
+                                    <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
+                                        <button className="btn-outline" onClick={closePairing} disabled={pendingAction === "pair"}>
+                                            Cancel
+                                        </button>
+                                        <button
+                                            className="btn-primary"
+                                            onClick={() => void submitPairing()}
+                                            disabled={pendingAction === "pair" || pairingCode.length !== 6}
+                                            style={{ display: "flex", alignItems: "center", gap: 8 }}
+                                        >
+                                            <Link2 size={16} />
+                                            {pendingAction === "pair" ? "Pairing..." : "Pair Device"}
+                                        </button>
+                                    </div>
+
+                                    <div
+                                        style={{
+                                            marginTop: 20,
+                                            paddingTop: 16,
+                                            borderTop: "1px solid hsla(var(--border-subtle), 0.2)",
+                                            textAlign: "center",
+                                        }}
+                                    >
+                                        <button
+                                            onClick={() => setShowManualRegister(true)}
+                                            style={{
+                                                background: "none",
+                                                border: "none",
+                                                color: "hsl(var(--text-muted))",
+                                                fontSize: "0.78rem",
+                                                cursor: "pointer",
+                                                textDecoration: "underline",
+                                                textUnderlineOffset: 3,
+                                            }}
+                                        >
+                                            Advanced: Manual Registration
+                                        </button>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 20 }}>
+                                        Create a placeholder for a new player. Live telemetry will populate once the device agent connects.
+                                    </p>
+                                    <DeviceFormFields form={registerForm} setForm={setRegisterForm} autoFocus />
+                                    <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 24 }}>
+                                        <button
+                                            className="btn-outline"
+                                            onClick={() => setShowManualRegister(false)}
+                                            disabled={pendingAction === "register"}
+                                        >
+                                            ← Back to Pairing
+                                        </button>
+                                        <button
+                                            className="btn-primary"
+                                            onClick={() => void submitRegister()}
+                                            disabled={pendingAction === "register"}
+                                            style={{ display: "flex", alignItems: "center", gap: 8 }}
+                                        >
+                                            <Plus size={16} />
+                                            {pendingAction === "register" ? "Registering..." : "Register Device"}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </motion.div>
                     </motion.div>
                 )}

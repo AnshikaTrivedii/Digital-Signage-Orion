@@ -276,24 +276,31 @@ model ScheduleEvent {
 
 model Device {
   id             String       @id @default(cuid())
-  organizationId String
+  organizationId String?
   name           String
-  status         DeviceStatus @default(ONLINE)
-  location       String
-  ip             String
-  resolution     String
-  uptime         String
+  status         DeviceStatus @default(OFFLINE)
+  location       String       @default("Pending")
+  ip             String       @default("Pending")
+  resolution     String       @default("1920x1080")
+  uptime         String       @default("0s")
   cpu            Int          @default(0)
   ram            Int          @default(0)
   temp           Int          @default(0)
-  lastSync       String
-  os             String
+  lastSync       String       @default("Awaiting first sync")
+  os             String       @default("Unknown")
   currentContent String?
   currentPlaylistId String?
+
+  // Pairing fields
+  pairingCode    String?      @unique
+  deviceToken    String?      @unique
+  hardwareId     String?      @unique
+  isPaired       Boolean      @default(false)
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   currentPlaylist Playlist?   @relation(fields: [currentPlaylistId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt])

@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import {
   CampaignStatus,
   DeviceStatus,
@@ -655,7 +656,7 @@ export class ClientDataService {
   async listDevices(actor: RequestActor) {
     const organizationId = this.getOrgId(actor);
     const devices = await this.prisma.device.findMany({
-      where: { organizationId },
+      where: { organizationId, isPaired: true },
       include: { currentPlaylist: { select: { name: true } } },
       orderBy: { createdAt: 'asc' },
     });
@@ -834,6 +835,66 @@ export class ClientDataService {
     });
 
     return this.serializeDevice(updated);
+  }
+
+  /**
+   * Pair a draft device using a 6-digit pairing code.
+   * Called from the CMS dashboard by an authenticated user.
+   */
+  async pairDevice(actor: RequestActor, body: { pairingCode: string; name: string }) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const code = body.pairingCode?.trim().toUpperCase();
+    if (!code || code.length !== 6) {
+      throw new BadRequestException('Pairing code must be exactly 6 characters');
+    }
+
+    const name = body.name?.trim();
+    if (!name) {
+      throw new BadRequestException('Device name is required');
+    }
+
+    // Find the draft device by pairing code
+    const device = await this.prisma.device.findUnique({
+      where: { pairingCode: code },
+    });
+
+    if (!device) {
+      throw new NotFoundException('No device found with this pairing code. Make sure the code matches what is displayed on the screen.');
+    }
+
+    if (device.isPaired) {
+      throw new BadRequestException('This device has already been paired');
+    }
+
+    // Check name uniqueness within org
+    const nameClash = await this.prisma.device.findFirst({
+      where: { organizationId, name, id: { not: device.id } },
+    });
+    if (nameClash) {
+      throw new BadRequestException('A device with this name already exists in your organization');
+    }
+
+    // Generate a secure device token
+    const deviceToken = randomBytes(32).toString('hex');
+
+    // Update the device: assign org, set name, pair it, clear the code
+    const paired = await this.prisma.device.update({
+      where: { id: device.id },
+      data: {
+        organizationId,
+        name,
+        isPaired: true,
+        deviceToken,
+        pairingCode: null, // Clear so it can't be reused
+        status: DeviceStatus.ONLINE,
+        lastSync: new Date().toISOString(),
+      },
+      include: { currentPlaylist: { select: { name: true } } },
+    });
+
+    return this.serializeDevice(paired);
   }
 
   private serializeDevice(device: {

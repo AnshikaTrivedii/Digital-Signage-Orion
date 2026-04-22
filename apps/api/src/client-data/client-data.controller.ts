@@ -16,6 +16,7 @@ import { CurrentActor } from '../common/decorators/current-actor.decorator';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { ClientDataService } from './client-data.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
+import { PairDeviceDto } from './dto/pair-device.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { CreateScheduleEventDto } from './dto/create-schedule-event.dto';
 import { UpdateScheduleEventDto } from './dto/update-schedule-event.dto';
@@ -160,6 +161,11 @@ export class ClientDataController {
   @Post('devices')
   createDevice(@CurrentActor() actor: RequestActor, @Body() body: CreateDeviceDto) {
     return this.clientDataService.createDevice(actor, body);
+  }
+
+  @Post('devices/pair')
+  pairDevice(@CurrentActor() actor: RequestActor, @Body() body: PairDeviceDto) {
+    return this.clientDataService.pairDevice(actor, body);
   }
 
   @Patch('devices/:deviceId')
