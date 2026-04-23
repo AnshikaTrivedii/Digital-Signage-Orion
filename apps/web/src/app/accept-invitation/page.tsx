@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { CheckCircle2, KeyRound, Lock, Mail, UserRound } from "lucide-react";
@@ -23,6 +23,14 @@ function resolveDefaultRoute(session: {
 }
 
 export default function AcceptInvitationPage() {
+    return (
+        <Suspense fallback={null}>
+            <AcceptInvitationInner />
+        </Suspense>
+    );
+}
+
+function AcceptInvitationInner() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const invitationToken = searchParams.get("token") ?? "";
