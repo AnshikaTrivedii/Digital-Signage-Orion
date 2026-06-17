@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Query } from '@nestjs/common';
 import { InitPairingDto } from './dto/init-pairing.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
 import { SubmitPopLogsDto } from './dto/pop-log.dto';
+import { PairingStatusQueryDto } from './dto/pairing-status-query.dto';
 import { PlayerService } from './player.service';
 
 /**
@@ -24,11 +25,16 @@ export class PlayerController {
 
   /**
    * Polled by the Android player every 5 seconds.
-   * Returns isPaired=true with deviceToken once a CMS user pairs it.
+   * Requires pairingSecret from init-pairing to retrieve deviceToken after CMS pair.
    */
   @Get('pairing-status/:hardwareId')
-  getPairingStatus(@Param('hardwareId') hardwareId: string) {
-    return this.playerService.getPairingStatus(hardwareId);
+  getPairingStatus(
+    @Param('hardwareId') hardwareId: string,
+    @Query() query: PairingStatusQueryDto,
+    @Headers('x-pairing-secret') headerSecret?: string,
+  ) {
+    const pairingSecret = query.pairingSecret ?? headerSecret;
+    return this.playerService.getPairingStatus(hardwareId, pairingSecret);
   }
 
   /**

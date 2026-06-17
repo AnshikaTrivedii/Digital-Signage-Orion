@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
     Activity, Eye, Download, Search, ArrowUpRight, Monitor, FileText,
@@ -94,7 +94,7 @@ const formatDuration = (seconds: number | null) => {
 
 export default function ReportsPage() {
     const { activeOrganizationId } = useAuth();
-    const [dateRange, setDateRange] = useState<Range>("7d");
+    const [dateRange, setDateRange] = useState<Range>("30d");
     const [customStart, setCustomStart] = useState("");
     const [customEnd, setCustomEnd] = useState("");
     const [logSearch, setLogSearch] = useState("");
@@ -107,10 +107,16 @@ export default function ReportsPage() {
     const [isExporting, setIsExporting] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
-    const buildQuery = useCallback(() => {
+    const filterKey = useMemo(
+        () => JSON.stringify({ dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter }),
+        [dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter],
+    );
+    const prevFilterKey = useRef(filterKey);
+
+    const buildQuery = useCallback((pageNumber: number) => {
         const params = new URLSearchParams();
         params.set("range", dateRange);
-        params.set("page", String(page));
+        params.set("page", String(pageNumber));
         params.set("limit", "100");
         if (logSearch.trim()) params.set("search", logSearch.trim());
         if (statusFilter !== "all") params.set("status", statusFilter);
@@ -120,16 +126,16 @@ export default function ReportsPage() {
             if (customEnd) params.set("endDate", new Date(`${customEnd}T23:59:59`).toISOString());
         }
         return params.toString();
-    }, [dateRange, page, logSearch, statusFilter, deviceFilter, customStart, customEnd]);
+    }, [dateRange, logSearch, statusFilter, deviceFilter, customStart, customEnd]);
 
     const loadReport = useCallback(
-        async (options: { silent?: boolean } = {}) => {
+        async (pageNumber: number, options: { silent?: boolean } = {}) => {
             if (!activeOrganizationId) return;
             if (!options.silent) setIsLoading(true);
             setLoadError(null);
             try {
                 const response = await apiRequest<ReportResponse>(
-                    `/api/client-data/reports?${buildQuery()}`,
+                    `/api/client-data/reports?${buildQuery(pageNumber)}`,
                     { headers: { "x-organization-id": activeOrganizationId } },
                 );
                 setReportData(response);
@@ -143,17 +149,20 @@ export default function ReportsPage() {
     );
 
     useEffect(() => {
-        void loadReport();
-    }, [loadReport]);
-
-    useEffect(() => {
-        setPage(1);
-    }, [dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter]);
+        if (prevFilterKey.current !== filterKey) {
+            prevFilterKey.current = filterKey;
+            if (page !== 1) {
+                setPage(1);
+                return;
+            }
+        }
+        void loadReport(page);
+    }, [filterKey, page, loadReport]);
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
         try {
-            await loadReport({ silent: true });
+            await loadReport(page, { silent: true });
             toast.success("Report refreshed");
         } finally {
             setIsRefreshing(false);
@@ -173,7 +182,7 @@ export default function ReportsPage() {
             const organizationId = typeof window !== "undefined"
                 ? window.localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY) ?? activeOrganizationId
                 : activeOrganizationId;
-            const exportQuery = buildQuery().replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "");
+            const exportQuery = buildQuery(page).replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "");
             const response = await fetch(
                 `${API_BASE}/api/client-data/reports/export?${exportQuery}`,
                 {
@@ -296,7 +305,7 @@ export default function ReportsPage() {
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>Unable to load reports</p>
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{loadError}</p>
                     </div>
-                    <button className="btn-outline" onClick={() => loadReport()}>Retry</button>
+                    <button className="btn-outline" onClick={() => void loadReport(page)}>Retry</button>
                 </div>
             )}
 

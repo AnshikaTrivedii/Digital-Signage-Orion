@@ -294,6 +294,7 @@ model Device {
 
   // Pairing fields
   pairingCode    String?      @unique
+  pairingSecret  String?
   deviceToken    String?      @unique
   hardwareId     String?      @unique
   isPaired       Boolean      @default(false)

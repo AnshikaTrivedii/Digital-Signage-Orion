@@ -4,6 +4,7 @@ import { InvitationStatus, MembershipStatus, OrganizationRole, OrganizationStatu
 import * as bcrypt from 'bcryptjs';
 import { randomBytes } from 'crypto';
 import { AuditService } from '../audit/audit.service';
+import { getJwtSecret } from '../common/config/jwt-secret';
 import { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { AcceptInvitationDto } from './dto/accept-invitation.dto';
@@ -216,7 +217,7 @@ export class AuthService {
 
     try {
       payload = await this.jwtService.verifyAsync<{ sub: string }>(token, {
-        secret: process.env.JWT_SECRET ?? 'orion-dev-secret',
+        secret: getJwtSecret(),
       });
     } catch {
       throw new UnauthorizedException('Invalid token');
@@ -312,7 +313,7 @@ export class AuthService {
     const accessToken = await this.jwtService.signAsync(
       { sub: userId },
       {
-        secret: process.env.JWT_SECRET ?? 'orion-dev-secret',
+        secret: getJwtSecret(),
         expiresIn: '12h',
       },
     );

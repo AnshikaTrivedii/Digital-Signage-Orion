@@ -186,6 +186,16 @@ export class ClientDataService {
     const campaign = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
     const asset = await this.prisma.asset.findFirst({ where: { id: assetId, organizationId } });
     if (!campaign || !asset) throw new NotFoundException('Campaign or Asset not found');
+    if (asset.status !== AssetStatus.READY) {
+      throw new BadRequestException('Only ready assets can be added to a campaign');
+    }
+
+    const existing = await this.prisma.campaignAsset.findUnique({
+      where: { campaignId_assetId: { campaignId, assetId } },
+    });
+    if (existing) {
+      throw new BadRequestException('This asset is already in the campaign');
+    }
 
     const defaultDuration = asset.defaultDurationSeconds ?? 10;
     const normalizedDuration = this.normalizeDurationSeconds(durationSeconds ?? defaultDuration);
@@ -919,18 +929,26 @@ export class ClientDataService {
     // Generate a secure device token
     const deviceToken = randomBytes(32).toString('hex');
 
-    // Update the device: assign org, set name, pair it, clear the code
-    const paired = await this.prisma.device.update({
-      where: { id: device.id },
+    // Atomic pair — prevents double-pair race
+    const updateResult = await this.prisma.device.updateMany({
+      where: { id: device.id, isPaired: false },
       data: {
         organizationId,
         name,
         isPaired: true,
         deviceToken,
-        pairingCode: null, // Clear so it can't be reused
+        pairingCode: null,
         status: DeviceStatus.ONLINE,
         lastSync: new Date().toISOString(),
       },
+    });
+
+    if (updateResult.count === 0) {
+      throw new BadRequestException('This device has already been paired');
+    }
+
+    const paired = await this.prisma.device.findUniqueOrThrow({
+      where: { id: device.id },
       include: { currentPlaylist: { select: { name: true } } },
     });
 
@@ -1099,39 +1117,70 @@ export class ClientDataService {
     const range = query.range ?? '7d';
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(500, Math.max(1, query.limit ?? 100));
-    const { where, rangeStart, rangeEnd } = this.buildPopLogWhere(organizationId, query);
+    const { where, rangeStart, rangeEnd } = await this.buildPopLogWhere(organizationId, query);
 
-    const [devices, organization, totalLogs, logs, aggregateLogs] = await Promise.all([
+    const verifiedWhere: Prisma.ProofOfPlayLogWhereInput = {
+      ...where,
+      status: ProofOfPlayStatus.VERIFIED,
+    };
+    const failedWhere: Prisma.ProofOfPlayLogWhereInput = {
+      ...where,
+      status: ProofOfPlayStatus.FAILED,
+    };
+
+    const AGGREGATE_CAP = 20_000;
+
+    const [
+      devices,
+      organization,
+      totalLogs,
+      verifiedCount,
+      failedCount,
+      durationAgg,
+      logs,
+    ] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { name: 'asc' } }),
       this.prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
       this.prisma.proofOfPlayLog.count({ where }),
+      this.prisma.proofOfPlayLog.count({ where: verifiedWhere }),
+      this.prisma.proofOfPlayLog.count({ where: failedWhere }),
+      this.prisma.proofOfPlayLog.aggregate({
+        where: { ...where, durationSeconds: { not: null, gt: 0 } },
+        _avg: { durationSeconds: true },
+      }),
       this.prisma.proofOfPlayLog.findMany({
         where,
         orderBy: { startTime: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
-      this.prisma.proofOfPlayLog.findMany({
-        where,
-        orderBy: { startTime: 'desc' },
-        select: {
-          id: true,
-          device: true,
-          deviceId: true,
-          assetName: true,
-          content: true,
-          playlistName: true,
-          campaignName: true,
-          status: true,
-          startTime: true,
-          endTime: true,
-          durationSeconds: true,
-        },
-      }),
     ]);
 
-    const verifiedCount = aggregateLogs.filter((log) => log.status === ProofOfPlayStatus.VERIFIED).length;
-    const chartData = this.buildReportChartData(aggregateLogs, range, rangeStart, rangeEnd);
+    const aggregateLogs =
+      totalLogs > 0 && totalLogs <= AGGREGATE_CAP
+        ? await this.prisma.proofOfPlayLog.findMany({
+            where,
+            orderBy: { startTime: 'desc' },
+            select: {
+              id: true,
+              device: true,
+              deviceId: true,
+              assetName: true,
+              content: true,
+              playlistName: true,
+              campaignName: true,
+              status: true,
+              startTime: true,
+              endTime: true,
+              durationSeconds: true,
+            },
+          })
+        : [];
+
+    const chartData =
+      totalLogs <= AGGREGATE_CAP
+        ? this.buildReportChartData(aggregateLogs, range, rangeStart, rangeEnd)
+        : [];
     const deviceByName = new Map(devices.map((device) => [device.name, device]));
     const deviceAgg = new Map<string, {
       id: string | null;
@@ -1202,9 +1251,10 @@ export class ClientDataService {
             : 0,
       }));
 
-    const durationSamples = aggregateLogs
-      .map((log) => log.durationSeconds)
-      .filter((value): value is number => typeof value === 'number' && value > 0);
+    const avgEngagement =
+      durationAgg._avg.durationSeconds != null
+        ? Math.round(durationAgg._avg.durationSeconds)
+        : 0;
 
     return {
       range,
@@ -1213,17 +1263,14 @@ export class ClientDataService {
       organizationName: organization?.name ?? 'Organization',
       devices: devices.map((device) => ({ id: device.id, name: device.name })),
       kpis: {
-        billedImpressions: aggregateLogs.length,
-        avgEngagement:
-          durationSamples.length > 0
-            ? Math.round(durationSamples.reduce((sum, value) => sum + value, 0) / durationSamples.length)
-            : 0,
+        billedImpressions: totalLogs,
+        avgEngagement,
         playbackFidelity:
-          Math.round((verifiedCount / Math.max(aggregateLogs.length, 1)) * 10000) / 100,
+          Math.round((verifiedCount / Math.max(totalLogs, 1)) * 10000) / 100,
         activeNodes: devices.filter((device) => device.status === DeviceStatus.ONLINE).length,
         totalNodes: devices.length,
         verifiedCount,
-        failedCount: aggregateLogs.length - verifiedCount,
+        failedCount,
       },
       chartData,
       deviceBreakdown,
@@ -1234,6 +1281,7 @@ export class ClientDataService {
         page,
         limit,
         totalPages: Math.max(1, Math.ceil(totalLogs / limit)),
+        aggregatesTruncated: totalLogs > AGGREGATE_CAP,
       },
     };
   }
@@ -1250,7 +1298,7 @@ export class ClientDataService {
     } = {},
   ) {
     const organizationId = this.getOrgId(actor);
-    const { where } = this.buildPopLogWhere(organizationId, query);
+    const { where } = await this.buildPopLogWhere(organizationId, query);
     const [organization, logs] = await Promise.all([
       this.prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
       this.prisma.proofOfPlayLog.findMany({
@@ -1291,7 +1339,7 @@ export class ClientDataService {
     return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
-  private buildPopLogWhere(
+  private async buildPopLogWhere(
     organizationId: string,
     query: {
       range?: string;
@@ -1307,36 +1355,54 @@ export class ClientDataService {
       query.startDate,
       query.endDate,
     );
-    const where: Prisma.ProofOfPlayLogWhereInput = { organizationId };
+    const andClauses: Prisma.ProofOfPlayLogWhereInput[] = [{ organizationId }];
 
     if (rangeStart || rangeEnd) {
-      where.startTime = {};
-      if (rangeStart) where.startTime.gte = rangeStart;
-      if (rangeEnd) where.startTime.lte = rangeEnd;
+      andClauses.push({
+        startTime: {
+          ...(rangeStart ? { gte: rangeStart } : {}),
+          ...(rangeEnd ? { lte: rangeEnd } : {}),
+        },
+      });
     }
 
     if (query.deviceId) {
-      where.deviceId = query.deviceId;
+      const device = await this.prisma.device.findFirst({
+        where: { id: query.deviceId, organizationId },
+        select: { id: true, name: true },
+      });
+      if (!device) {
+        andClauses.push({ id: '__no_match__' });
+      } else {
+        andClauses.push({
+          OR: [
+            { deviceId: device.id },
+            { deviceId: null, device: device.name },
+          ],
+        });
+      }
     }
 
     if (query.status === 'verified') {
-      where.status = ProofOfPlayStatus.VERIFIED;
+      andClauses.push({ status: ProofOfPlayStatus.VERIFIED });
     } else if (query.status === 'failed') {
-      where.status = ProofOfPlayStatus.FAILED;
+      andClauses.push({ status: ProofOfPlayStatus.FAILED });
     }
 
     if (query.search?.trim()) {
       const term = query.search.trim();
-      where.OR = [
-        { device: { contains: term, mode: 'insensitive' } },
-        { assetName: { contains: term, mode: 'insensitive' } },
-        { content: { contains: term, mode: 'insensitive' } },
-        { playlistName: { contains: term, mode: 'insensitive' } },
-        { campaignName: { contains: term, mode: 'insensitive' } },
-      ];
+      andClauses.push({
+        OR: [
+          { device: { contains: term, mode: 'insensitive' } },
+          { assetName: { contains: term, mode: 'insensitive' } },
+          { content: { contains: term, mode: 'insensitive' } },
+          { playlistName: { contains: term, mode: 'insensitive' } },
+          { campaignName: { contains: term, mode: 'insensitive' } },
+        ],
+      });
     }
 
-    return { where, rangeStart, rangeEnd };
+    return { where: { AND: andClauses }, rangeStart, rangeEnd };
   }
 
   private resolveReportDateRange(range: string, startDate?: string, endDate?: string) {

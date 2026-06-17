@@ -26,11 +26,25 @@ export class PlayerService {
     return code;
   }
 
+  private generatePairingSecret(): string {
+    return randomBytes(32).toString('hex');
+  }
+
   /**
    * Generate a secure device token (64-char hex string).
    */
   private generateDeviceToken(): string {
     return randomBytes(32).toString('hex');
+  }
+
+  private async ensurePairingSecret(deviceId: string, existingSecret: string | null): Promise<string> {
+    if (existingSecret) return existingSecret;
+    const pairingSecret = this.generatePairingSecret();
+    await this.prisma.device.update({
+      where: { id: deviceId },
+      data: { pairingSecret },
+    });
+    return pairingSecret;
   }
 
   /**
@@ -56,39 +70,51 @@ export class PlayerService {
           hardwareId: trimmedId,
           isPaired: true,
           pairingCode: null,
+          pairingSecret: null,
         };
       }
 
       // Already has a pending pairing code — return it
       if (existing.pairingCode) {
+        const pairingSecret = await this.ensurePairingSecret(existing.id, existing.pairingSecret);
         return {
           hardwareId: trimmedId,
           isPaired: false,
           pairingCode: existing.pairingCode,
+          pairingSecret,
         };
       }
 
-      // Regenerate code (previous one was consumed but not paired - shouldn't happen normally)
+      // Regenerate code (e.g. previous code consumed without completing pair)
       const pairingCode = await this.getUniquePairingCode();
+      const pairingSecret = this.generatePairingSecret();
       await this.prisma.device.update({
         where: { id: existing.id },
-        data: { pairingCode },
+        data: {
+          pairingCode,
+          pairingSecret,
+          isPaired: false,
+          deviceToken: null,
+        },
       });
 
       return {
         hardwareId: trimmedId,
         isPaired: false,
         pairingCode,
+        pairingSecret,
       };
     }
 
     // Create a new draft device
     const pairingCode = await this.getUniquePairingCode();
+    const pairingSecret = this.generatePairingSecret();
     await this.prisma.device.create({
       data: {
         hardwareId: trimmedId,
         name: `Device-${trimmedId.slice(0, 8)}`,
         pairingCode,
+        pairingSecret,
         isPaired: false,
         status: DeviceStatus.OFFLINE,
       },
@@ -100,6 +126,7 @@ export class PlayerService {
       hardwareId: trimmedId,
       isPaired: false,
       pairingCode,
+      pairingSecret,
     };
   }
 
@@ -119,14 +146,28 @@ export class PlayerService {
 
   /**
    * Polled by the Android player to check if pairing is complete.
+   * Requires pairingSecret from init-pairing to prevent token theft.
    */
-  async getPairingStatus(hardwareId: string) {
+  async getPairingStatus(hardwareId: string, pairingSecret: string | undefined) {
+    const trimmedId = hardwareId?.trim();
+    if (!trimmedId) {
+      throw new BadRequestException('hardwareId is required');
+    }
+
     const device = await this.prisma.device.findUnique({
-      where: { hardwareId },
+      where: { hardwareId: trimmedId },
     });
 
     if (!device) {
       throw new NotFoundException('Unknown device. Call init-pairing first.');
+    }
+
+    if (!pairingSecret?.trim()) {
+      throw new UnauthorizedException('pairingSecret is required');
+    }
+
+    if (!device.pairingSecret || device.pairingSecret !== pairingSecret.trim()) {
+      throw new UnauthorizedException('Invalid pairing secret');
     }
 
     if (device.isPaired && device.deviceToken && device.organizationId) {
@@ -225,7 +266,7 @@ export class PlayerService {
       },
     });
 
-    if (!playlist) {
+    if (!playlist || playlist.organizationId !== device.organizationId) {
       return { playlist: null, assets: [] };
     }
 
