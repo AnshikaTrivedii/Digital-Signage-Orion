@@ -803,6 +803,13 @@ export class ClientDataService {
       include: { currentPlaylist: { select: { name: true } } },
     });
 
+    if (data.name && data.name !== device.name) {
+      await this.prisma.proofOfPlayLog.updateMany({
+        where: { organizationId, deviceId },
+        data: { device: data.name },
+      });
+    }
+
     return this.serializeDevice(updated);
   }
 
@@ -1256,12 +1263,49 @@ export class ClientDataService {
         ? Math.round(durationAgg._avg.durationSeconds)
         : 0;
 
+    const deviceNameSet = new Set(devices.map((device) => device.name));
+    const deviceIdSet = new Set(devices.map((device) => device.id));
+    const reportingDevices = await this.prisma.proofOfPlayLog.groupBy({
+      by: ['device', 'deviceId'],
+      where,
+    });
+    const reportingDeviceKeys = new Set(
+      reportingDevices.map((entry) => entry.deviceId ?? `name:${entry.device}`),
+    );
+    const activeDevicesWithoutPop = devices
+      .filter((device) => device.isPaired)
+      .filter(
+        (device) =>
+          !reportingDeviceKeys.has(device.id) && !reportingDeviceKeys.has(`name:${device.name}`),
+      )
+      .map((device) => ({ id: device.id, name: device.name, status: this.toLowerStatus(device.status) }));
+
+    const historicalLogDevices = reportingDevices
+      .filter((entry) => !entry.deviceId || !deviceIdSet.has(entry.deviceId))
+      .filter((entry) => !deviceNameSet.has(entry.device))
+      .map((entry) => ({
+        id: entry.deviceId,
+        name: entry.device,
+        isHistorical: true as const,
+      }));
+
+    const reportDeviceOptions = [
+      ...devices.map((device) => ({ id: device.id, name: device.name, isHistorical: false as const })),
+      ...historicalLogDevices
+        .filter((entry) => !devices.some((device) => device.id === entry.id))
+        .map((entry) => ({
+          id: entry.id ?? `historical:${entry.name}`,
+          name: entry.name,
+          isHistorical: true as const,
+        })),
+    ];
+
     return {
       range,
       rangeStart,
       rangeEnd,
       organizationName: organization?.name ?? 'Organization',
-      devices: devices.map((device) => ({ id: device.id, name: device.name })),
+      devices: reportDeviceOptions,
       kpis: {
         billedImpressions: totalLogs,
         avgEngagement,
@@ -1275,13 +1319,15 @@ export class ClientDataService {
       chartData,
       deviceBreakdown,
       topContent,
-      proofOfPlay: logs.map((log) => this.serializePopLog(log)),
+      proofOfPlay: logs.map((log) => this.serializePopLog(log, deviceNameSet, deviceIdSet)),
       proofOfPlayMeta: {
         total: totalLogs,
         page,
         limit,
         totalPages: Math.max(1, Math.ceil(totalLogs / limit)),
         aggregatesTruncated: totalLogs > AGGREGATE_CAP,
+        distinctDevicesInRange: reportingDevices.length,
+        activeDevicesWithoutPop,
       },
     };
   }
@@ -1372,7 +1418,13 @@ export class ClientDataService {
         select: { id: true, name: true },
       });
       if (!device) {
-        andClauses.push({ id: '__no_match__' });
+        // Allow filtering historical logs stored before device deletion (synthetic id)
+        if (query.deviceId.startsWith('historical:')) {
+          const historicalName = query.deviceId.slice('historical:'.length);
+          andClauses.push({ device: historicalName });
+        } else {
+          andClauses.push({ id: '__no_match__' });
+        }
       } else {
         andClauses.push({
           OR: [
@@ -1522,7 +1574,8 @@ export class ClientDataService {
     }));
   }
 
-  private serializePopLog(log: {
+  private serializePopLog(
+    log: {
     id: string;
     device: string;
     deviceId?: string | null;
@@ -1535,12 +1588,19 @@ export class ClientDataService {
     durationSeconds?: number | null;
     timestamp?: Date;
     status: ProofOfPlayStatus;
-  }) {
+  },
+    activeDeviceNames: Set<string> = new Set(),
+    activeDeviceIds: Set<string> = new Set(),
+  ) {
     const assetName = log.assetName || log.content;
+    const deviceIsActive =
+      (log.deviceId != null && activeDeviceIds.has(log.deviceId)) ||
+      activeDeviceNames.has(log.device);
     return {
       id: log.id,
       device: log.device,
       deviceId: log.deviceId ?? null,
+      deviceIsActive,
       playlistName: log.playlistName ?? null,
       campaignName: log.campaignName ?? null,
       assetName,

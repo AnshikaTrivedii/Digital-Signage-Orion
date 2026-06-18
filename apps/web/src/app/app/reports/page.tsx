@@ -17,6 +17,7 @@ type PopLog = {
     id: string;
     device: string;
     deviceId: string | null;
+    deviceIsActive?: boolean;
     playlistName: string | null;
     campaignName: string | null;
     assetName: string;
@@ -33,7 +34,7 @@ type ReportResponse = {
     rangeStart: string | null;
     rangeEnd: string;
     organizationName: string;
-    devices: { id: string; name: string }[];
+    devices: { id: string; name: string; isHistorical?: boolean }[];
     kpis: {
         billedImpressions: number;
         avgEngagement: number;
@@ -60,6 +61,9 @@ type ReportResponse = {
         page: number;
         limit: number;
         totalPages: number;
+        distinctDevicesInRange?: number;
+        activeDevicesWithoutPop?: { id: string; name: string; status: string }[];
+        aggregatesTruncated?: boolean;
     };
 };
 
@@ -309,6 +313,18 @@ export default function ReportsPage() {
                 </div>
             )}
 
+            {(meta?.activeDevicesWithoutPop?.length ?? 0) > 0 && (
+                <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-warning), 0.35)" }}>
+                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Active devices with no proof-of-play in this date range</p>
+                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
+                        These paired devices are online but have not submitted playback logs. Ensure the Android player calls POST /api/player/pop-logs or sends currentContent in heartbeats.
+                    </p>
+                    <p style={{ fontSize: "0.8rem" }}>
+                        {(meta?.activeDevicesWithoutPop ?? []).map((device) => device.name).join(" • ")}
+                    </p>
+                </div>
+            )}
+
             <div className="grid-stats" style={{ marginBottom: 32 }}>
                 {kpiCards.map((kpi, idx) => {
                     const Icon = kpi.icon;
@@ -381,7 +397,9 @@ export default function ReportsPage() {
                             style={{ padding: "8px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem" }}>
                             <option value="">All devices</option>
                             {(reportData?.devices ?? []).map((device) => (
-                                <option key={device.id} value={device.id}>{device.name}</option>
+                                <option key={device.id} value={device.id}>
+                                    {device.isHistorical ? `${device.name} (removed)` : device.name}
+                                </option>
                             ))}
                         </select>
                         <div style={{ display: "flex", background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
@@ -426,7 +444,12 @@ export default function ReportsPage() {
                                 const verified = statusFromLog(log.status) === "verified";
                                 return (
                                     <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>{log.device}</td>
+                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>
+                                            {log.device}
+                                            {log.deviceIsActive === false ? (
+                                                <span style={{ marginLeft: 8, fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>(removed)</span>
+                                            ) : null}
+                                        </td>
                                         <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.playlistName ?? "—"}</td>
                                         <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.campaignName ?? "—"}</td>
                                         <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.assetName}</td>

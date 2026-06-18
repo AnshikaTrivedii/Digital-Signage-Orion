@@ -234,7 +234,49 @@ export class PlayerService {
       },
     });
 
+    if (data.currentContent?.trim() && device.organizationId) {
+      await this.recordHeartbeatPopSample(device.id, device.organizationId, device.name, data.currentContent.trim());
+    }
+
     return { status: 'ok' };
+  }
+
+  /**
+   * Fallback PoP when the player has not flushed pop-logs yet.
+   * Creates at most one sample per asset every 5 minutes per device.
+   */
+  private async recordHeartbeatPopSample(
+    deviceId: string,
+    organizationId: string,
+    deviceName: string,
+    assetName: string,
+  ) {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const recent = await this.prisma.proofOfPlayLog.findFirst({
+      where: {
+        deviceId,
+        assetName,
+        startTime: { gte: fiveMinutesAgo },
+      },
+      select: { id: true },
+    });
+    if (recent) return;
+
+    const now = new Date();
+    await this.prisma.proofOfPlayLog.create({
+      data: {
+        organizationId,
+        deviceId,
+        device: deviceName,
+        content: assetName,
+        assetName,
+        status: ProofOfPlayStatus.VERIFIED,
+        timestamp: now,
+        startTime: now,
+        durationSeconds: 60,
+        endTime: new Date(now.getTime() + 60_000),
+      },
+    });
   }
 
   /**
