@@ -30,6 +30,7 @@
     "@nestjs/cli": "^11.0.10",
     "@nestjs/schematics": "^11.0.4",
     "@nestjs/testing": "^11.1.6",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.15.17",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",

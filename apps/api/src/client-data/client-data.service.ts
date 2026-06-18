@@ -17,6 +17,7 @@ import {
   TickerStyle,
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
+import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 
@@ -1135,8 +1136,48 @@ export class ClientDataService {
       }),
     ]);
 
-    const verifiedCount = aggregateLogs.filter((log) => log.status === ProofOfPlayStatus.VERIFIED).length;
-    const chartData = this.buildReportChartData(aggregateLogs, range, rangeStart, rangeEnd);
+    const contextIndex = await new PopLogContextIndex(this.prisma).load(organizationId);
+    const devicePlaylistById = new Map(devices.map((device) => [device.id, device.currentPlaylistId]));
+    const enrichLog = <
+      T extends {
+        assetName: string;
+        content: string;
+        deviceId?: string | null;
+        playlistName?: string | null;
+        campaignName?: string | null;
+        startTime: Date;
+        endTime?: Date | null;
+        durationSeconds?: number | null;
+        status: ProofOfPlayStatus;
+      },
+    >(
+      log: T,
+    ) => {
+      const assetName = log.assetName || log.content;
+      const playbackContext = contextIndex.resolve(
+        assetName,
+        log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
+      );
+      const enriched = enrichPopLogFields(
+        {
+          assetName,
+          playlistName: log.playlistName,
+          campaignName: log.campaignName,
+          startTime: log.startTime,
+          endTime: log.endTime,
+          durationSeconds: log.durationSeconds,
+        },
+        playbackContext,
+      );
+      return { ...log, ...enriched };
+    };
+
+    const enrichedAggregateLogs = aggregateLogs.map(enrichLog);
+    const enrichedLogs = logs.map(enrichLog);
+    const verifiedCount = enrichedAggregateLogs.filter(
+      (log) => log.status === ProofOfPlayStatus.VERIFIED,
+    ).length;
+    const chartData = this.buildReportChartData(enrichedAggregateLogs, range, rangeStart, rangeEnd);
     const deviceByName = new Map(devices.map((device) => [device.name, device]));
     const deviceAgg = new Map<string, {
       id: string | null;
@@ -1148,7 +1189,7 @@ export class ClientDataService {
       lastPlay: Date | null;
     }>();
 
-    for (const log of aggregateLogs) {
+    for (const log of enrichedAggregateLogs) {
       const matched = log.deviceId ? devices.find((device) => device.id === log.deviceId) : deviceByName.get(log.device);
       const key = matched?.id ?? log.device;
       const current = deviceAgg.get(key) ?? {
@@ -1183,7 +1224,7 @@ export class ClientDataService {
       }));
 
     const contentAgg = new Map<string, { content: string; impressions: number; verified: number }>();
-    for (const log of aggregateLogs) {
+    for (const log of enrichedAggregateLogs) {
       const label = log.assetName || log.content;
       const current = contentAgg.get(label) ?? {
         content: label,
@@ -1207,7 +1248,7 @@ export class ClientDataService {
             : 0,
       }));
 
-    const durationSamples = aggregateLogs
+    const durationSamples = enrichedAggregateLogs
       .map((log) => log.durationSeconds)
       .filter((value): value is number => typeof value === 'number' && value > 0);
 
@@ -1218,22 +1259,22 @@ export class ClientDataService {
       organizationName: organization?.name ?? 'Organization',
       devices: devices.map((device) => ({ id: device.id, name: device.name })),
       kpis: {
-        billedImpressions: aggregateLogs.length,
+        billedImpressions: enrichedAggregateLogs.length,
         avgEngagement:
           durationSamples.length > 0
             ? Math.round(durationSamples.reduce((sum, value) => sum + value, 0) / durationSamples.length)
             : 0,
         playbackFidelity:
-          Math.round((verifiedCount / Math.max(aggregateLogs.length, 1)) * 10000) / 100,
+          Math.round((verifiedCount / Math.max(enrichedAggregateLogs.length, 1)) * 10000) / 100,
         activeNodes: devices.filter((device) => device.status === DeviceStatus.ONLINE).length,
         totalNodes: devices.length,
         verifiedCount,
-        failedCount: aggregateLogs.length - verifiedCount,
+        failedCount: enrichedAggregateLogs.length - verifiedCount,
       },
       chartData,
       deviceBreakdown,
       topContent,
-      proofOfPlay: logs.map((log) => this.serializePopLog(log)),
+      proofOfPlay: enrichedLogs.map((log) => this.serializePopLog(log)),
       proofOfPlayMeta: {
         total: totalLogs,
         page,
@@ -1258,13 +1299,17 @@ export class ClientDataService {
   ) {
     const organizationId = this.getOrgId(actor);
     const { where } = this.buildPopLogWhere(organizationId, query);
-    const [organization, logs] = await Promise.all([
+    const [organization, logs, devices] = await Promise.all([
       this.prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
       this.prisma.proofOfPlayLog.findMany({
         where,
         orderBy: { startTime: 'desc' },
       }),
+      this.prisma.device.findMany({ where: { organizationId }, select: { id: true, currentPlaylistId: true } }),
     ]);
+
+    const contextIndex = await new PopLogContextIndex(this.prisma).load(organizationId);
+    const devicePlaylistById = new Map(devices.map((device) => [device.id, device.currentPlaylistId]));
 
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Proof of Play');
@@ -1282,15 +1327,31 @@ export class ClientDataService {
     sheet.getRow(1).font = { bold: true };
 
     for (const log of logs) {
+      const assetName = log.assetName || log.content;
+      const playbackContext = contextIndex.resolve(
+        assetName,
+        log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
+      );
+      const enriched = enrichPopLogFields(
+        {
+          assetName,
+          playlistName: log.playlistName,
+          campaignName: log.campaignName,
+          startTime: log.startTime,
+          endTime: log.endTime,
+          durationSeconds: log.durationSeconds,
+        },
+        playbackContext,
+      );
       sheet.addRow({
         organization: organization?.name ?? 'Organization',
         device: log.device,
-        playlistName: log.playlistName ?? '',
-        campaignName: log.campaignName ?? '',
-        assetName: log.assetName || log.content,
+        playlistName: enriched.playlistName ?? '',
+        campaignName: enriched.campaignName ?? '',
+        assetName,
         startTime: log.startTime.toISOString(),
-        endTime: log.endTime ? log.endTime.toISOString() : '',
-        duration: log.durationSeconds ?? '',
+        endTime: enriched.endTime ? enriched.endTime.toISOString() : '',
+        duration: enriched.durationSeconds ?? '',
         status: this.toTitleStatus(log.status),
       });
     }

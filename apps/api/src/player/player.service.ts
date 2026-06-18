@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { DeviceStatus, ProofOfPlayStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 
@@ -303,6 +304,8 @@ export class PlayerService {
       return { received: 0, skipped: 0 };
     }
 
+    const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId!);
+
     const rows = logs.flatMap((log) => {
       if (!log.assetName?.trim() && !log.content?.trim()) {
         this.logger.warn(`Skipping PoP log from ${device.name}: missing assetName/content`);
@@ -317,24 +320,18 @@ export class PlayerService {
         return [];
       }
 
-      let durationSeconds =
-        typeof log.durationSeconds === 'number' && log.durationSeconds > 0
-          ? Math.floor(log.durationSeconds)
-          : null;
-      let endTime = log.endTime ? new Date(log.endTime) : null;
-      if (endTime && Number.isNaN(endTime.getTime())) {
-        endTime = null;
-      }
-
-      if (!durationSeconds && endTime) {
-        durationSeconds = Math.max(
-          1,
-          Math.round((endTime.getTime() - startTime.getTime()) / 1000),
-        );
-      }
-      if (!endTime && durationSeconds) {
-        endTime = new Date(startTime.getTime() + durationSeconds * 1000);
-      }
+      const playbackContext = contextIndex.resolve(assetName, device.currentPlaylistId);
+      const enriched = enrichPopLogFields(
+        {
+          assetName,
+          playlistName: log.playlistName,
+          campaignName: log.campaignName,
+          startTime,
+          endTime: log.endTime ? new Date(log.endTime) : null,
+          durationSeconds: log.durationSeconds,
+        },
+        playbackContext,
+      );
 
       const normalizedStatus =
         String(log.status).trim().toUpperCase() === 'VERIFIED'
@@ -348,13 +345,13 @@ export class PlayerService {
           device: device.name,
           content: assetName,
           assetName,
-          playlistName: log.playlistName?.trim() || null,
-          campaignName: log.campaignName?.trim() || null,
+          playlistName: enriched.playlistName,
+          campaignName: enriched.campaignName,
           status: normalizedStatus,
           timestamp: startTime,
           startTime,
-          endTime,
-          durationSeconds,
+          endTime: enriched.endTime,
+          durationSeconds: enriched.durationSeconds,
         },
       ];
     });
