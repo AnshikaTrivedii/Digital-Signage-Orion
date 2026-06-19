@@ -36,9 +36,9 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Campaigns`, `
 
 3.  **Secure Pairing & Provisioning Flow:**
     *   On the very first launch, generate a **UUID** (`hardwareId`) and persist it.
-    *   Call `POST /api/player/init-pairing` with the `hardwareId`. The backend returns a 6-character alphanumeric `pairingCode`.
+    *   Call `POST /api/player/init-pairing` with the `hardwareId`. The backend returns a 6-character alphanumeric `pairingCode` and a `pairingSecret` (store both securely).
     *   Display the pairing code prominently on screen: _"Go to your Orion CMS dashboard, click **Add Device**, and enter code: **[CODE]**"_.
-    *   **Background Polling:** Call `GET /api/player/pairing-status/{hardwareId}` every 5 seconds. When `isPaired` becomes `true`, the response includes a `deviceToken`.
+    *   **Background Polling:** Call `GET /api/player/pairing-status/{hardwareId}?pairingSecret={pairingSecret}` every 5 seconds (or send `X-Pairing-Secret` header). When `isPaired` becomes `true`, the response includes a `deviceToken`.
     *   Securely store the `deviceToken` and `organizationId` using **EncryptedSharedPreferences**.
     *   Transition to the Main Playback screen.
 
@@ -91,17 +91,20 @@ Called by the Android app on first boot. Creates a draft Device record and retur
 {
   "hardwareId": "550e8400-e29b-41d4-a716-446655440000",
   "isPaired": false,
-  "pairingCode": "A3X9PZ"
+  "pairingCode": "A3X9PZ",
+  "pairingSecret": "a1b2c3d4e5f6..."
 }
 ```
 
-**Idempotent:** If the same `hardwareId` calls again, it returns the existing code (won't create a duplicate). If already paired, returns `isPaired: true`.
+**Idempotent:** If the same `hardwareId` calls again, it returns the existing code and secret (won't create a duplicate). If already paired, returns `isPaired: true` without secrets.
 
 ---
 
 #### `GET /api/player/pairing-status/:hardwareId`
 
 Polled by the Android app every 5 seconds until pairing completes.
+
+**Query param (required):** `pairingSecret` — from `init-pairing` response. Alternatively send header `X-Pairing-Secret`.
 
 **Response (Unpaired):**
 ```json
@@ -123,7 +126,7 @@ Polled by the Android app every 5 seconds until pairing completes.
 }
 ```
 
-> **Important:** Once `isPaired` is `true`, store the `deviceToken` securely. All subsequent API calls use it for auth.
+> **Important:** The `pairingSecret` prevents unauthorized token retrieval. Store both `deviceToken` and `pairingSecret` securely. All post-pair API calls use `deviceToken` in the `Authorization` header.
 
 ---
 

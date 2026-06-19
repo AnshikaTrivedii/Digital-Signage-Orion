@@ -4,8 +4,10 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { resolve } from 'path';
 import { AppModule } from './app.module';
+import { getJwtSecret } from './common/config/jwt-secret';
 
 async function bootstrap() {
+  getJwtSecret();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     cors: true,
   });

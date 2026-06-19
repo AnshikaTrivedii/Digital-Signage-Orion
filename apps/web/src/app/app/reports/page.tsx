@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
     Activity, Eye, Download, Search, ArrowUpRight, Monitor, FileText,
@@ -17,6 +17,7 @@ type PopLog = {
     id: string;
     device: string;
     deviceId: string | null;
+    deviceIsActive?: boolean;
     playlistName: string | null;
     campaignName: string | null;
     assetName: string;
@@ -33,7 +34,7 @@ type ReportResponse = {
     rangeStart: string | null;
     rangeEnd: string;
     organizationName: string;
-    devices: { id: string; name: string }[];
+    devices: { id: string; name: string; isHistorical?: boolean }[];
     kpis: {
         billedImpressions: number;
         avgEngagement: number;
@@ -60,6 +61,9 @@ type ReportResponse = {
         page: number;
         limit: number;
         totalPages: number;
+        distinctDevicesInRange?: number;
+        activeDevicesWithoutPop?: { id: string; name: string; status: string }[];
+        aggregatesTruncated?: boolean;
     };
     lastLogAt: string | null;
     lastLogDevice: string | null;
@@ -109,10 +113,16 @@ export default function ReportsPage() {
     const [isExporting, setIsExporting] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
-    const buildQuery = useCallback(() => {
+    const filterKey = useMemo(
+        () => JSON.stringify({ dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter }),
+        [dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter],
+    );
+    const prevFilterKey = useRef(filterKey);
+
+    const buildQuery = useCallback((pageNumber: number) => {
         const params = new URLSearchParams();
         params.set("range", dateRange);
-        params.set("page", String(page));
+        params.set("page", String(pageNumber));
         params.set("limit", "100");
         if (logSearch.trim()) params.set("search", logSearch.trim());
         if (statusFilter !== "all") params.set("status", statusFilter);
@@ -122,16 +132,16 @@ export default function ReportsPage() {
             if (customEnd) params.set("endDate", new Date(`${customEnd}T23:59:59`).toISOString());
         }
         return params.toString();
-    }, [dateRange, page, logSearch, statusFilter, deviceFilter, customStart, customEnd]);
+    }, [dateRange, logSearch, statusFilter, deviceFilter, customStart, customEnd]);
 
     const loadReport = useCallback(
-        async (options: { silent?: boolean } = {}) => {
+        async (pageNumber: number, options: { silent?: boolean } = {}) => {
             if (!activeOrganizationId) return;
             if (!options.silent) setIsLoading(true);
             setLoadError(null);
             try {
                 const response = await apiRequest<ReportResponse>(
-                    `/api/client-data/reports?${buildQuery()}`,
+                    `/api/client-data/reports?${buildQuery(pageNumber)}`,
                     { headers: { "x-organization-id": activeOrganizationId } },
                 );
                 setReportData(response);
@@ -145,17 +155,20 @@ export default function ReportsPage() {
     );
 
     useEffect(() => {
-        void loadReport();
-    }, [loadReport]);
-
-    useEffect(() => {
-        setPage(1);
-    }, [dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter]);
+        if (prevFilterKey.current !== filterKey) {
+            prevFilterKey.current = filterKey;
+            if (page !== 1) {
+                setPage(1);
+                return;
+            }
+        }
+        void loadReport(page);
+    }, [filterKey, page, loadReport]);
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
         try {
-            await loadReport({ silent: true });
+            await loadReport(page, { silent: true });
             toast.success("Report refreshed");
         } finally {
             setIsRefreshing(false);
@@ -175,7 +188,7 @@ export default function ReportsPage() {
             const organizationId = typeof window !== "undefined"
                 ? window.localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY) ?? activeOrganizationId
                 : activeOrganizationId;
-            const exportQuery = buildQuery().replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "");
+            const exportQuery = buildQuery(page).replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "");
             const response = await fetch(
                 `${API_BASE}/api/client-data/reports/export?${exportQuery}`,
                 {
@@ -307,7 +320,19 @@ export default function ReportsPage() {
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>Unable to load reports</p>
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{loadError}</p>
                     </div>
-                    <button className="btn-outline" onClick={() => loadReport()}>Retry</button>
+                    <button className="btn-outline" onClick={() => void loadReport(page)}>Retry</button>
+                </div>
+            )}
+
+            {(meta?.activeDevicesWithoutPop?.length ?? 0) > 0 && (
+                <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-warning), 0.35)" }}>
+                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Active devices with no proof-of-play in this date range</p>
+                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
+                        These paired devices are online but have not submitted playback logs. Ensure the Android player calls POST /api/player/pop-logs or sends currentContent in heartbeats.
+                    </p>
+                    <p style={{ fontSize: "0.8rem" }}>
+                        {(meta?.activeDevicesWithoutPop ?? []).map((device) => device.name).join(" • ")}
+                    </p>
                 </div>
             )}
 
@@ -398,7 +423,9 @@ export default function ReportsPage() {
                             style={{ padding: "8px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem" }}>
                             <option value="">All devices</option>
                             {(reportData?.devices ?? []).map((device) => (
-                                <option key={device.id} value={device.id}>{device.name}</option>
+                                <option key={device.id} value={device.id}>
+                                    {device.isHistorical ? `${device.name} (removed)` : device.name}
+                                </option>
                             ))}
                         </select>
                         <div style={{ display: "flex", background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
@@ -443,7 +470,12 @@ export default function ReportsPage() {
                                 const verified = statusFromLog(log.status) === "verified";
                                 return (
                                     <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>{log.device}</td>
+                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>
+                                            {log.device}
+                                            {log.deviceIsActive === false ? (
+                                                <span style={{ marginLeft: 8, fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>(removed)</span>
+                                            ) : null}
+                                        </td>
                                         <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.playlistName ?? "—"}</td>
                                         <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.campaignName ?? "—"}</td>
                                         <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.assetName}</td>

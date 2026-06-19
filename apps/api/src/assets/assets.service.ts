@@ -36,6 +36,7 @@ export class AssetsService {
 
   async createUrlAsset(actor: RequestActor, organizationId: string, dto: CreateUrlAssetDto) {
     this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
 
     const name = dto.name.trim();
     const url = dto.url.trim();
@@ -80,6 +81,7 @@ export class AssetsService {
 
   async requestUpload(actor: RequestActor, organizationId: string, dto: RequestUploadDto) {
     this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
 
     const assetType = ALLOWED_MIME_TYPES[dto.mimeType];
     if (!assetType) {
@@ -151,6 +153,7 @@ export class AssetsService {
 
   async confirmUpload(actor: RequestActor, organizationId: string, assetId: string) {
     this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
 
     const asset = await this.prisma.asset.findFirst({
       where: { id: assetId, organizationId },
@@ -290,6 +293,7 @@ export class AssetsService {
 
   async deleteAsset(actor: RequestActor, organizationId: string, assetId: string) {
     this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
 
     const asset = await this.prisma.asset.findFirst({
       where: { id: assetId, organizationId },
@@ -325,6 +329,7 @@ export class AssetsService {
 
   async updateTags(actor: RequestActor, organizationId: string, assetId: string, dto: UpdateAssetTagsDto) {
     this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
 
     const asset = await this.prisma.asset.findFirst({
       where: { id: assetId, organizationId },
@@ -353,6 +358,13 @@ export class AssetsService {
     if (asset.type === AssetType.URL) return null;
     if (asset.status !== AssetStatus.READY || !asset.s3Key) return null;
     return this.s3.generateDownloadUrl(asset.s3Key);
+  }
+
+  private assertCanEdit(actor: RequestActor) {
+    if (!actor.organization) return;
+    if (actor.organization.role === 'ANALYST_VIEWER') {
+      throw new ForbiddenException('Read-only access');
+    }
   }
 
   private ensureOrganizationAccess(actor: RequestActor, organizationId: string) {
