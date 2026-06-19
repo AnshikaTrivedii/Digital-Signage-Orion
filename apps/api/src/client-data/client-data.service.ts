@@ -20,6 +20,7 @@ import type { RequestActor } from '../common/interfaces/request-with-actor.inter
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import { PlaylistSyncService } from '../sync/playlist-sync.service';
 
 const campaignPalette = ['#4ade80', '#00e5ff', '#a78bfa', '#f472b6', '#fb923c', '#60a5fa'];
 
@@ -43,6 +44,7 @@ export class ClientDataService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly playlistSync: PlaylistSyncService,
   ) {}
 
   async dashboard(actor: RequestActor) {
@@ -222,6 +224,8 @@ export class ClientDataService {
       data: { assetCount: { increment: 1 } },
     });
 
+    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
+
     return { success: true, campaignAssetId: ca.id, durationSeconds: ca.durationSeconds };
   }
 
@@ -249,6 +253,8 @@ export class ClientDataService {
       data: { durationSeconds: normalizedDuration },
       include: { asset: true },
     });
+
+    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
 
     return {
       id: updated.asset.id,
@@ -286,6 +292,8 @@ export class ClientDataService {
       data: { assetCount: { decrement: 1 } },
     });
 
+    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
+
     return { success: true };
   }
 
@@ -303,6 +311,8 @@ export class ClientDataService {
         data: { position: index },
       });
     }
+
+    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
 
     return { success: true };
   }
@@ -385,6 +395,9 @@ export class ClientDataService {
         data: { position: index },
       });
     }
+
+    await this.playlistSync.bumpPlaylist(playlistId);
+
     return { success: true };
   }
 
@@ -472,7 +485,10 @@ export class ClientDataService {
 
       await tx.playlist.update({
         where: { id: playlistId },
-        data: { screens: deviceIds.length },
+        data: {
+          screens: deviceIds.length,
+          syncVersion: { increment: 1 },
+        },
       });
     });
 

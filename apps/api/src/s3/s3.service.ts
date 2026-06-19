@@ -107,13 +107,16 @@ export class S3Service {
   }
 
   /** Check if a file exists in S3 and return its metadata */
-  async headObject(key: string): Promise<{ contentLength: number; contentType: string } | null> {
+  async headObject(
+    key: string,
+  ): Promise<{ contentLength: number; contentType: string; etag: string | null } | null> {
     if (this.useLocalStorage) {
       try {
         const fileStat = await stat(this.localPath(key));
         return {
           contentLength: fileStat.size,
           contentType: 'application/octet-stream',
+          etag: `${fileStat.size}-${fileStat.mtimeMs}`,
         };
       } catch {
         return null;
@@ -126,9 +129,11 @@ export class S3Service {
         Key: key,
       });
       const response = await this.client.send(command);
+      const rawEtag = response.ETag ?? null;
       return {
         contentLength: response.ContentLength ?? 0,
         contentType: response.ContentType ?? 'application/octet-stream',
+        etag: rawEtag ? rawEtag.replace(/"/g, '') : null,
       };
     } catch (error: unknown) {
       const code = (error as { name?: string })?.name;

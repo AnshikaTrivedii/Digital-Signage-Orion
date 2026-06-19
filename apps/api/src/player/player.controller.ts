@@ -3,6 +3,7 @@ import { InitPairingDto } from './dto/init-pairing.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
 import { SubmitPopLogsDto } from './dto/pop-log.dto';
 import { PairingStatusQueryDto } from './dto/pairing-status-query.dto';
+import { SyncQueryDto } from './dto/sync-query.dto';
 import { PlayerService } from './player.service';
 
 const playerValidationPipe = new ValidationPipe({
@@ -61,8 +62,11 @@ export class PlayerController {
    * Device authenticates via its device token in the Authorization header.
    */
   @Get('sync')
-  sync(@Headers('authorization') authHeader: string | undefined) {
-    return this.playerService.syncPlaylist(authHeader);
+  sync(
+    @Headers('authorization') authHeader: string | undefined,
+    @Query() query: SyncQueryDto,
+  ) {
+    return this.playerService.syncPlaylist(authHeader, query);
   }
 
   /**

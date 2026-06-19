@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import { PlaylistSyncService } from '../sync/playlist-sync.service';
 import { CreateUrlAssetDto } from './dto/create-url-asset.dto';
 import { RequestUploadDto } from './dto/request-upload.dto';
 import { UpdateAssetTagsDto } from './dto/update-asset-tags.dto';
@@ -32,6 +33,7 @@ export class AssetsService {
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
     private readonly auditService: AuditService,
+    private readonly playlistSync: PlaylistSyncService,
   ) {}
 
   async createUrlAsset(actor: RequestActor, organizationId: string, dto: CreateUrlAssetDto) {
@@ -193,8 +195,12 @@ export class AssetsService {
       data: {
         status: AssetStatus.READY,
         fileSize: head.contentLength || asset.fileSize,
+        contentHash: head.etag ?? null,
+        contentVersion: { increment: 1 },
       },
     });
+
+    await this.playlistSync.bumpPlaylistsForAsset(assetId);
 
     await this.auditService.log({
       actorUserId: actor.userId,
@@ -312,6 +318,9 @@ export class AssetsService {
       }
     }
 
+    // Bump playlists while campaign links still exist
+    await this.playlistSync.bumpPlaylistsForAsset(assetId);
+
     await this.prisma.asset.delete({ where: { id: assetId } });
 
     await this.auditService.log({
@@ -396,6 +405,8 @@ export class AssetsService {
       height: asset.height ?? null,
       durationMs: asset.durationMs ?? null,
       tags: asset.tags ?? [],
+      contentVersion: asset.contentVersion ?? 1,
+      contentHash: asset.contentHash ?? null,
       uploadedBy: asset.uploadedBy ?? null,
       createdAt: asset.createdAt,
       updatedAt: asset.updatedAt,

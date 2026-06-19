@@ -1,9 +1,13 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { DeviceStatus, ProofOfPlayStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import type { SyncQueryDto } from './dto/sync-query.dto';
+
+/** Presigned URL lifetime for player sync downloads (7 days). */
+const SYNC_DOWNLOAD_URL_TTL_SECONDS = 86400 * 7;
 
 @Injectable()
 export class PlayerService {
@@ -281,13 +285,28 @@ export class PlayerService {
   }
 
   /**
-   * Return the active playlist manifest with asset download URLs for a device.
+   * Return the active playlist manifest with incremental sync support.
+   * When playlistVersion matches the server version, returns unchanged=true with no asset payloads.
    */
-  async syncPlaylist(authHeader: string | undefined) {
+  async syncPlaylist(authHeader: string | undefined, query: SyncQueryDto = {}) {
     const device = await this.resolveDeviceByToken(authHeader);
+    const knownAssetIds = this.parseCommaSeparatedIds(query.knownAssetIds);
+    const clientAssetVersions = this.parseAssetVersionMap(query.assetVersions);
 
     if (!device.currentPlaylistId) {
-      return { playlist: null, assets: [] };
+      const removedAssetIds = knownAssetIds;
+      await this.prisma.device.update({
+        where: { id: device.id },
+        data: { lastSync: new Date().toISOString(), lastAckedPlaylistVersion: null },
+      });
+      return {
+        unchanged: false,
+        playlistVersion: null,
+        playlist: null,
+        assets: [],
+        currentAssetIds: [],
+        removedAssetIds,
+      };
     }
 
     const playlist = await this.prisma.playlist.findUnique({
@@ -309,18 +328,98 @@ export class PlayerService {
       },
     });
 
-    if (!playlist || playlist.organizationId !== device.organizationId) {
-      return { playlist: null, assets: [] };
+    if (!playlist) {
+      const removedAssetIds = knownAssetIds;
+      await this.prisma.device.update({
+        where: { id: device.id },
+        data: { lastSync: new Date().toISOString(), lastAckedPlaylistVersion: null },
+      });
+      return {
+        unchanged: false,
+        playlistVersion: null,
+        playlist: null,
+        assets: [],
+        currentAssetIds: [],
+        removedAssetIds,
+      };
     }
 
-    // Flatten all assets from all campaigns in the playlist
-    const assets: {
+    if (playlist.organizationId !== device.organizationId) {
+      throw new ForbiddenException('Playlist does not belong to this device organization');
+    }
+
+    const manifest = await this.buildPlaylistManifest(playlist, clientAssetVersions);
+    const currentAssetIds = manifest.map((entry) => entry.id);
+    const removedAssetIds = knownAssetIds.filter((id) => !currentAssetIds.includes(id));
+
+    const playlistUnchanged =
+      query.playlistVersion !== undefined && query.playlistVersion === playlist.syncVersion;
+
+    await this.prisma.device.update({
+      where: { id: device.id },
+      data: {
+        lastSync: new Date().toISOString(),
+        lastAckedPlaylistVersion: playlist.syncVersion,
+      },
+    });
+
+    if (playlistUnchanged) {
+      return {
+        unchanged: true,
+        playlistVersion: playlist.syncVersion,
+        playlist: { id: playlist.id, name: playlist.name },
+        assets: [],
+        currentAssetIds,
+        removedAssetIds,
+      };
+    }
+
+    return {
+      unchanged: false,
+      playlistVersion: playlist.syncVersion,
+      playlist: { id: playlist.id, name: playlist.name },
+      assets: manifest,
+      currentAssetIds,
+      removedAssetIds,
+    };
+  }
+
+  private async buildPlaylistManifest(
+    playlist: {
+      campaignLinks: {
+        campaign: {
+          campaignAssets: {
+            durationSeconds: number;
+            asset: {
+              id: string;
+              name: string;
+              type: string;
+              mimeType: string;
+              status: string;
+              s3Key: string | null;
+              url: string | null;
+              fileSize: number;
+              contentVersion: number;
+              contentHash: string | null;
+              updatedAt: Date;
+            };
+          }[];
+        };
+      }[];
+    },
+    clientAssetVersions: Map<string, number>,
+  ) {
+    const manifest: {
       id: string;
       name: string;
       type: string;
       mimeType: string;
       durationSeconds: number;
       position: number;
+      assetVersion: number;
+      updatedAt: string;
+      contentHash: string | null;
+      requiresDownload: boolean;
       downloadUrl: string | null;
       url: string | null;
       fileSize: number;
@@ -329,35 +428,60 @@ export class PlayerService {
     let globalPosition = 0;
     for (const link of playlist.campaignLinks) {
       for (const campaignAsset of link.campaign.campaignAssets) {
-        const isUrlAsset = campaignAsset.asset.type === 'URL';
-        const downloadUrl =
+        const asset = campaignAsset.asset;
+        const isUrlAsset = asset.type === 'URL';
+        const clientVersion = clientAssetVersions.get(asset.id);
+        const requiresDownload =
           !isUrlAsset &&
-          campaignAsset.asset.status === 'READY' &&
-          campaignAsset.asset.s3Key
-            ? await this.s3.generateDownloadUrl(campaignAsset.asset.s3Key, 86400) // 24h expiry for caching
+          asset.status === 'READY' &&
+          !!asset.s3Key &&
+          (clientVersion === undefined || clientVersion < asset.contentVersion);
+
+        const downloadUrl =
+          requiresDownload && asset.s3Key
+            ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
             : null;
 
-        assets.push({
-          id: campaignAsset.asset.id,
-          name: campaignAsset.asset.name,
-          type: campaignAsset.asset.type,
-          mimeType: campaignAsset.asset.mimeType,
+        manifest.push({
+          id: asset.id,
+          name: asset.name,
+          type: asset.type,
+          mimeType: asset.mimeType,
           durationSeconds: campaignAsset.durationSeconds,
           position: globalPosition++,
+          assetVersion: asset.contentVersion,
+          updatedAt: asset.updatedAt.toISOString(),
+          contentHash: asset.contentHash,
+          requiresDownload,
           downloadUrl,
-          url: campaignAsset.asset.url ?? null,
-          fileSize: campaignAsset.asset.fileSize,
+          url: asset.url ?? null,
+          fileSize: asset.fileSize,
         });
       }
     }
 
-    return {
-      playlist: {
-        id: playlist.id,
-        name: playlist.name,
-      },
-      assets,
-    };
+    return manifest;
+  }
+
+  private parseCommaSeparatedIds(value?: string): string[] {
+    if (!value?.trim()) return [];
+    return [...new Set(value.split(',').map((part) => part.trim()).filter(Boolean))];
+  }
+
+  private parseAssetVersionMap(value?: string): Map<string, number> {
+    const versions = new Map<string, number>();
+    if (!value?.trim()) return versions;
+
+    for (const part of value.split(',')) {
+      const [assetId, versionText] = part.trim().split(':');
+      if (!assetId || !versionText) continue;
+      const version = Number.parseInt(versionText, 10);
+      if (!Number.isNaN(version)) {
+        versions.set(assetId, version);
+      }
+    }
+
+    return versions;
   }
 
   /**
@@ -400,6 +524,12 @@ export class PlayerService {
       const startTime = rawStart ? new Date(rawStart) : new Date();
       if (Number.isNaN(startTime.getTime())) {
         this.logger.warn(`Skipping PoP log from ${device.name}: invalid start time for ${assetName}`);
+        return [];
+      }
+
+      const maxFutureMs = 24 * 60 * 60 * 1000;
+      if (startTime.getTime() > Date.now() + maxFutureMs) {
+        this.logger.warn(`Skipping PoP log from ${device.name}: start time too far in the future for ${assetName}`);
         return [];
       }
 

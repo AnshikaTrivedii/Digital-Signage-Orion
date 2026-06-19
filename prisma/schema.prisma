@@ -211,6 +211,7 @@ model Playlist {
   status         PlaylistStatus @default(DRAFT)
   screens        Int            @default(0)
   color          String         @default("#4ade80")
+  syncVersion    Int            @default(1)
   lastPlayedAt   DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -291,6 +292,7 @@ model Device {
   os             String       @default("Unknown")
   currentContent String?
   currentPlaylistId String?
+  lastAckedPlaylistVersion Int?
 
   // Pairing fields
   pairingCode    String?      @unique
@@ -441,6 +443,8 @@ model Asset {
   durationMs             Int?
   uploadedById           String
   tags                   String[]      @default([])
+  contentVersion         Int           @default(1)
+  contentHash            String?
   createdAt              DateTime      @default(now())
   updatedAt              DateTime      @updatedAt
 

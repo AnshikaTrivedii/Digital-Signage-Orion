@@ -168,23 +168,55 @@ Send device health telemetry. Call every ~60 seconds.
 
 #### `GET /api/player/sync`
 
-Fetch the active playlist assigned to this device, including pre-signed S3 download URLs (valid for 24 hours).
+Fetch the active playlist assigned to this device. Supports **incremental sync** so the player can skip full re-downloads when nothing changed.
+
+**Query parameters (all optional):**
+
+| Parameter | Description |
+|-----------|-------------|
+| `playlistVersion` | Last `playlistVersion` the player successfully cached |
+| `knownAssetIds` | Comma-separated asset IDs currently on disk (used to detect removals) |
+| `assetVersions` | Comma-separated `assetId:contentVersion` pairs for delta downloads |
+
+**Example:** `GET /api/player/sync?playlistVersion=3&knownAssetIds=abc,def&assetVersions=abc:1,def:2`
+
+Pre-signed S3 download URLs are valid for **7 days** (long enough for offline download windows between syncs).
 
 **Response (No playlist assigned):**
 ```json
 {
+  "unchanged": false,
+  "playlistVersion": null,
   "playlist": null,
-  "assets": []
+  "assets": [],
+  "currentAssetIds": [],
+  "removedAssetIds": ["abc", "def"]
 }
 ```
 
-**Response (With playlist):**
+**Response (Unchanged — playlist version matches):**
 ```json
 {
+  "unchanged": true,
+  "playlistVersion": 3,
+  "playlist": { "id": "clxyz123", "name": "Lobby Playlist" },
+  "assets": [],
+  "currentAssetIds": ["abc", "def", "ghi"],
+  "removedAssetIds": []
+}
+```
+
+**Response (Updated playlist):**
+```json
+{
+  "unchanged": false,
+  "playlistVersion": 4,
   "playlist": {
     "id": "clxyz123",
     "name": "Lobby Playlist"
   },
+  "currentAssetIds": ["abc", "def", "ghi"],
+  "removedAssetIds": ["old-asset-id"],
   "assets": [
     {
       "id": "clxyz456",
@@ -193,6 +225,10 @@ Fetch the active playlist assigned to this device, including pre-signed S3 downl
       "mimeType": "image/jpeg",
       "durationSeconds": 10,
       "position": 0,
+      "assetVersion": 2,
+      "updatedAt": "2026-06-18T12:00:00.000Z",
+      "contentHash": "d41d8cd98f00b204e9800998ecf8427e",
+      "requiresDownload": true,
       "downloadUrl": "https://s3.ap-south-1.amazonaws.com/orion-assets/...",
       "url": null,
       "fileSize": 245670
@@ -204,7 +240,11 @@ Fetch the active playlist assigned to this device, including pre-signed S3 downl
       "mimeType": "video/mp4",
       "durationSeconds": 30,
       "position": 1,
-      "downloadUrl": "https://s3.ap-south-1.amazonaws.com/orion-assets/...",
+      "assetVersion": 1,
+      "updatedAt": "2026-06-10T08:00:00.000Z",
+      "contentHash": "abc123",
+      "requiresDownload": false,
+      "downloadUrl": null,
       "url": null,
       "fileSize": 15234567
     },
@@ -215,6 +255,10 @@ Fetch the active playlist assigned to this device, including pre-signed S3 downl
       "mimeType": "text/uri-list",
       "durationSeconds": 15,
       "position": 2,
+      "assetVersion": 1,
+      "updatedAt": "2026-06-01T00:00:00.000Z",
+      "contentHash": null,
+      "requiresDownload": false,
       "downloadUrl": null,
       "url": "https://weather.com",
       "fileSize": 0
@@ -222,6 +266,14 @@ Fetch the active playlist assigned to this device, including pre-signed S3 downl
   ]
 }
 ```
+
+**Offline sync flow:**
+1. Persist `playlistVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.
+2. On each sync poll, send `playlistVersion`, `knownAssetIds`, and `assetVersions`.
+3. If `unchanged: true`, keep playing from local cache — no downloads needed.
+4. If `removedAssetIds` is non-empty, delete those local files **only after** a successful sync response.
+5. Download only assets where `requiresDownload: true`.
+6. Playback never requires live internet — only sync, heartbeat, and PoP upload use the network.
 
 **Asset types:** `IMAGE`, `VIDEO`, `HTML`, `DOCUMENT`, `URL`
 
@@ -269,6 +321,8 @@ Submit queued proof-of-play analytics. Call every ~5 minutes, or when the offlin
 - `startTime` (preferred) or legacy `timestamp`
 - `endTime`, `durationSeconds`: optional; server derives missing values when possible
 - `status`: `"VERIFIED"` (played successfully) or `"FAILED"` (playback error)
+
+**Delayed / offline logs:** The server accepts logs with historical `startTime` values (e.g. generated days ago while offline). There is no maximum age — only timestamps more than 24 hours in the future are rejected. Reports include offline-generated and re-synced PoP logs using the original playback timestamps.
 
 **Response (200):**
 ```json
@@ -331,8 +385,10 @@ This assigns the device to the user's organization, generates the `deviceToken`,
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  Every 5 minutes:                                                   │
-│  GET /player/sync ──────────────►  Returns playlist + asset URLs    │
-│  Download new/changed assets       (pre-signed S3 URLs, 24h expiry) │
+│  GET /player/sync?playlistVersion=N&knownAssetIds=...               │
+│                               ──►  Incremental manifest + deltas  │
+│  Download only requiresDownload    (pre-signed S3 URLs, 7d expiry)  │
+│  Delete removedAssetIds locally    after successful sync            │
 │  Play in loop (position order)                                      │
 │                                                                     │
 │  Every 60 seconds:                                                  │
@@ -380,7 +436,10 @@ interface OrionPlayerApi {
 
     @GET("player/sync")
     suspend fun syncPlaylist(
-        @Header("Authorization") token: String
+        @Header("Authorization") token: String,
+        @Query("playlistVersion") playlistVersion: Int? = null,
+        @Query("knownAssetIds") knownAssetIds: String? = null,
+        @Query("assetVersions") assetVersions: String? = null,
     ): SyncResponse
 
     @POST("player/pop-logs")
@@ -415,8 +474,12 @@ data class HeartbeatRequest(
 data class HeartbeatResponse(val status: String)
 
 data class SyncResponse(
+    val unchanged: Boolean,
+    val playlistVersion: Int?,
     val playlist: PlaylistInfo?,
-    val assets: List<AssetInfo>
+    val assets: List<AssetInfo>,
+    val currentAssetIds: List<String>,
+    val removedAssetIds: List<String>,
 )
 data class PlaylistInfo(val id: String, val name: String)
 data class AssetInfo(
@@ -426,6 +489,10 @@ data class AssetInfo(
     val mimeType: String,
     val durationSeconds: Int,
     val position: Int,
+    val assetVersion: Int,
+    val updatedAt: String,   // ISO 8601
+    val contentHash: String?,
+    val requiresDownload: Boolean,
     val downloadUrl: String?,
     val url: String?,        // populated for type URL; use WebView, no S3 download
     val fileSize: Int
