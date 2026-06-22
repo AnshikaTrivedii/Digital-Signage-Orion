@@ -12,6 +12,7 @@ import {
   SchedulePriority,
   ScheduleStatus,
   TickerPriority,
+  TickerPosition,
   TickerSpeed,
   TickerStatus,
   TickerStyle,
@@ -1053,6 +1054,8 @@ export class ClientDataService {
       style?: string;
       status?: string;
       color?: string;
+      backgroundColor?: string;
+      position?: string;
     },
   ) {
     this.assertCanEdit(actor);
@@ -1067,6 +1070,8 @@ export class ClientDataService {
         speed: this.toTickerSpeed(body.speed),
         style: this.toTickerStyle(body.style),
         color: this.sanitizeTickerColor(body.color),
+        backgroundColor: this.sanitizeTickerColor(body.backgroundColor ?? '#1a1f2e'),
+        position: this.toTickerPosition(body.position),
         status: this.toTickerStatus(body.status, TickerStatus.ACTIVE),
         priority: this.toTickerPriority(body.priority),
       },
@@ -1085,6 +1090,8 @@ export class ClientDataService {
       style?: string;
       status?: string;
       color?: string;
+      backgroundColor?: string;
+      position?: string;
     },
   ) {
     this.assertCanEdit(actor);
@@ -1101,6 +1108,8 @@ export class ClientDataService {
       style?: TickerStyle;
       status?: TickerStatus;
       color?: string;
+      backgroundColor?: string;
+      position?: TickerPosition;
     } = {};
 
     if (typeof body.text === 'string') {
@@ -1113,6 +1122,10 @@ export class ClientDataService {
     if (body.style !== undefined) data.style = this.toTickerStyle(body.style);
     if (body.status !== undefined) data.status = this.toTickerStatus(body.status, existing.status);
     if (body.color !== undefined) data.color = this.sanitizeTickerColor(body.color);
+    if (body.backgroundColor !== undefined) {
+      data.backgroundColor = this.sanitizeTickerColor(body.backgroundColor);
+    }
+    if (body.position !== undefined) data.position = this.toTickerPosition(body.position);
 
     const updated = await this.prisma.ticker.update({
       where: { id: tickerId },
@@ -1798,6 +1811,12 @@ export class ClientDataService {
     return fallback;
   }
 
+  private toTickerPosition(position?: string | null) {
+    const normalized = (position ?? '').toLowerCase();
+    if (normalized === 'top') return TickerPosition.TOP;
+    return TickerPosition.BOTTOM;
+  }
+
   private sanitizeTickerColor(color?: string | null) {
     if (!color) return '#00e5ff';
     return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#00e5ff';
@@ -1809,6 +1828,8 @@ export class ClientDataService {
     speed: TickerSpeed;
     style: TickerStyle;
     color: string;
+    backgroundColor: string;
+    position: TickerPosition;
     status: TickerStatus;
     priority: TickerPriority;
     screens: number;
@@ -1821,6 +1842,8 @@ export class ClientDataService {
       speed: this.toTitleStatus(ticker.speed),
       style: this.toTitleStatus(ticker.style),
       color: ticker.color,
+      backgroundColor: ticker.backgroundColor,
+      position: this.toTitleStatus(ticker.position),
       status: this.toTitleStatus(ticker.status),
       priority: this.toTitleStatus(ticker.priority),
       screens: ticker.screens,

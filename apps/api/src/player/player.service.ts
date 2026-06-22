@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { DeviceStatus, ProofOfPlayStatus } from '@prisma/client';
+import { DeviceStatus, ProofOfPlayStatus, TickerStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
@@ -292,6 +292,7 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     const knownAssetIds = this.parseCommaSeparatedIds(query.knownAssetIds);
     const clientAssetVersions = this.parseAssetVersionMap(query.assetVersions);
+    const tickers = await this.fetchActiveTickers(device.organizationId);
 
     if (!device.currentPlaylistId) {
       const removedAssetIds = knownAssetIds;
@@ -306,6 +307,7 @@ export class PlayerService {
         assets: [],
         currentAssetIds: [],
         removedAssetIds,
+        tickers,
       };
     }
 
@@ -341,6 +343,7 @@ export class PlayerService {
         assets: [],
         currentAssetIds: [],
         removedAssetIds,
+        tickers,
       };
     }
 
@@ -371,6 +374,7 @@ export class PlayerService {
         assets: [],
         currentAssetIds,
         removedAssetIds,
+        tickers,
       };
     }
 
@@ -381,7 +385,24 @@ export class PlayerService {
       assets: manifest,
       currentAssetIds,
       removedAssetIds,
+      tickers,
     };
+  }
+
+  private async fetchActiveTickers(organizationId: string) {
+    const tickers = await this.prisma.ticker.findMany({
+      where: { organizationId, status: TickerStatus.ACTIVE },
+      orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }],
+    });
+
+    return tickers.map((ticker) => ({
+      text: ticker.text,
+      speed: ticker.speed,
+      color: ticker.color,
+      backgroundColor: ticker.backgroundColor,
+      position: ticker.position,
+      priority: ticker.priority,
+    }));
   }
 
   private async buildPlaylistManifest(

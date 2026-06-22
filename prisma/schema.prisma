@@ -114,6 +114,11 @@ enum TickerPriority {
   URGENT
 }
 
+enum TickerPosition {
+  TOP
+  BOTTOM
+}
+
 enum ScheduleStatus {
   SCHEDULED
   ACTIVE
@@ -313,21 +318,24 @@ model Device {
 }
 
 model Ticker {
-  id             String         @id @default(cuid())
-  organizationId String
-  text           String
-  speed          TickerSpeed    @default(NORMAL)
-  style          TickerStyle    @default(NEON)
-  color          String         @default("#00e5ff")
-  status         TickerStatus   @default(DRAFT)
-  priority       TickerPriority @default(NORMAL)
-  screens        Int            @default(0)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  id              String         @id @default(cuid())
+  organizationId  String
+  text            String
+  speed           TickerSpeed    @default(NORMAL)
+  style           TickerStyle    @default(NEON)
+  color           String         @default("#00e5ff")
+  backgroundColor String         @default("#1a1f2e")
+  position        TickerPosition @default(BOTTOM)
+  status          TickerStatus   @default(DRAFT)
+  priority        TickerPriority @default(NORMAL)
+  screens         Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, createdAt])
+  @@index([organizationId, status])
 }
 
 model ProofOfPlayLog {

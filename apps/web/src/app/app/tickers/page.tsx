@@ -13,6 +13,7 @@ import { useAuth } from "@/components/AuthProvider";
 
 type Speed = "Slow" | "Normal" | "Fast";
 type Priority = "Low" | "Normal" | "Urgent";
+type Position = "Top" | "Bottom";
 type Style = "Classic" | "Neon" | "Gradient" | "Minimal";
 type Status = "Active" | "Paused" | "Draft";
 
@@ -22,6 +23,8 @@ interface Ticker {
     speed: Speed;
     style: Style;
     color: string;
+    backgroundColor: string;
+    position: Position;
     status: Status;
     priority: Priority;
     screens: number;
@@ -33,27 +36,33 @@ interface EditorState {
     text: string;
     speed: Speed;
     priority: Priority;
+    position: Position;
     style: Style;
     status: Status;
     color: string;
+    backgroundColor: string;
 }
 
 const EMPTY_EDITOR: EditorState = {
     text: "",
     speed: "Normal",
     priority: "Normal",
+    position: "Bottom",
     style: "Neon",
     status: "Active",
-    color: "#00e5ff",
+    color: "#ffffff",
+    backgroundColor: "#1a1f2e",
 };
 
 const SPEEDS: Speed[] = ["Slow", "Normal", "Fast"];
 const PRIORITIES: Priority[] = ["Low", "Normal", "Urgent"];
+const POSITIONS: Position[] = ["Top", "Bottom"];
 const STYLES: Style[] = ["Classic", "Neon", "Gradient", "Minimal"];
 const STATUSES: Status[] = ["Active", "Paused", "Draft"];
 
 const parseSpeed = (value: string): Speed => (value === "Slow" || value === "Fast" ? value : "Normal");
 const parsePriority = (value: string): Priority => (value === "Urgent" || value === "Low" ? value : "Normal");
+const parsePosition = (value: string): Position => (value === "Top" ? "Top" : "Bottom");
 const parseStyle = (value: string): Style =>
     value === "Classic" || value === "Gradient" || value === "Minimal" ? value : "Neon";
 const parseStatus = (value: string): Status =>
@@ -82,8 +91,73 @@ const describeError = (error: unknown, fallback: string) => {
 
 const normalizeTicker = (ticker: Ticker): Ticker => ({
     ...ticker,
+    backgroundColor: ticker.backgroundColor ?? "#1a1f2e",
+    position: ticker.position ?? "Bottom",
     createdAt: ticker.createdAt ? new Date(ticker.createdAt).toLocaleString() : "",
 });
+
+type TickerPreviewSource = Pick<Ticker, "text" | "speed" | "priority" | "style" | "color" | "backgroundColor" | "position" | "status">;
+
+const TickerPreviewStrip = ({ ticker, height = 44 }: { ticker: TickerPreviewSource; height?: number }) => (
+    <div
+        style={{
+            borderRadius: 10,
+            background: ticker.backgroundColor,
+            border: `1px solid ${ticker.color}33`,
+            overflow: "hidden",
+            height,
+            display: "flex",
+            alignItems: "center",
+        }}
+    >
+        <div
+            style={{
+                background: ticker.color,
+                color: ticker.backgroundColor,
+                fontWeight: 800,
+                padding: "0 14px",
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                fontSize: "0.72rem",
+                letterSpacing: "0.08em",
+                whiteSpace: "nowrap",
+            }}
+        >
+            {ticker.priority === "Urgent" ? "URGENT" : ticker.position.toUpperCase()}
+        </div>
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center" }}>
+            <motion.div
+                animate={{ x: ["100%", "-100%"] }}
+                transition={{
+                    repeat: Infinity,
+                    ease: "linear",
+                    duration: speedDuration(ticker.speed),
+                }}
+                style={{
+                    whiteSpace: "nowrap",
+                    fontSize: height > 48 ? "1.05rem" : "0.95rem",
+                    paddingLeft: 20,
+                    ...stylePreview({
+                        id: "preview",
+                        text: ticker.text,
+                        speed: ticker.speed,
+                        priority: ticker.priority,
+                        style: ticker.style,
+                        color: ticker.color,
+                        backgroundColor: ticker.backgroundColor,
+                        position: ticker.position,
+                        status: ticker.status,
+                        screens: 0,
+                        createdAt: "",
+                    }),
+                }}
+            >
+                {ticker.text || "Your ticker preview will appear here..."}
+            </motion.div>
+        </div>
+    </div>
+);
 
 const stylePreview = (t: Ticker): React.CSSProperties => {
     switch (t.style) {
@@ -177,9 +251,11 @@ export default function TickersPage() {
             text: ticker.text,
             speed: ticker.speed,
             priority: ticker.priority,
+            position: ticker.position,
             style: ticker.style,
             status: ticker.status,
             color: ticker.color,
+            backgroundColor: ticker.backgroundColor,
         });
         setEditorError(null);
         setShowEditor(true);
@@ -631,6 +707,9 @@ export default function TickersPage() {
                                                 <Zap size={12} /> Speed: {t.speed}
                                             </span>
                                             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                                Position: {t.position}
+                                            </span>
+                                            <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                                 <Monitor size={12} /> {t.screens} Screens
                                             </span>
                                             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -682,7 +761,7 @@ export default function TickersPage() {
                                 letterSpacing: "0.1em",
                             }}
                         >
-                            Live Preview • {previewTicker.style}
+                            Live Preview • {previewTicker.position} • {previewTicker.style}
                         </p>
                         <div
                             style={{
@@ -692,45 +771,21 @@ export default function TickersPage() {
                                 border: `2px solid ${previewTicker.color}30`,
                                 borderRadius: 12,
                                 overflow: "hidden",
+                                minHeight: 280,
+                                display: "flex",
+                                flexDirection: "column",
                             }}
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div style={{ display: "flex", height: 56 }}>
-                                <div
-                                    style={{
-                                        background: previewTicker.color,
-                                        color: "#000",
-                                        fontWeight: 800,
-                                        padding: "0 24px",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        fontSize: "0.9rem",
-                                        letterSpacing: "0.05em",
-                                        whiteSpace: "nowrap",
-                                    }}
-                                >
-                                    {previewTicker.priority === "Urgent" ? "URGENT" : "LIVE"}
-                                </div>
-                                <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center" }}>
-                                    <motion.div
-                                        animate={{ x: ["100%", "-100%"] }}
-                                        transition={{
-                                            repeat: Infinity,
-                                            ease: "linear",
-                                            duration: speedDuration(previewTicker.speed),
-                                        }}
-                                        style={{
-                                            display: "flex",
-                                            whiteSpace: "nowrap",
-                                            fontSize: "1.1rem",
-                                            paddingLeft: 20,
-                                            ...stylePreview(previewTicker),
-                                        }}
-                                    >
-                                        <span>{previewTicker.text}</span>
-                                    </motion.div>
-                                </div>
+                            {previewTicker.position === "Top" ? (
+                                <TickerPreviewStrip ticker={previewTicker} height={56} />
+                            ) : null}
+                            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--text-muted))", fontSize: "0.85rem", minHeight: 200 }}>
+                                Screen content area
                             </div>
+                            {previewTicker.position === "Bottom" ? (
+                                <TickerPreviewStrip ticker={previewTicker} height={56} />
+                            ) : null}
                         </div>
                         <p
                             style={{
@@ -739,7 +794,7 @@ export default function TickersPage() {
                                 color: "hsl(var(--text-muted))",
                             }}
                         >
-                            {previewTicker.speed} speed • {previewTicker.status}
+                            {previewTicker.speed} speed • {previewTicker.status} • Text {previewTicker.color} • Background {previewTicker.backgroundColor}
                         </p>
                     </motion.div>
                 )}
@@ -792,62 +847,19 @@ export default function TickersPage() {
                                 </button>
                             </div>
 
-                            {/* Live preview strip inside editor */}
-                            <div
-                                style={{
-                                    borderRadius: 10,
-                                    background: "#0a0e1a",
-                                    border: `1px solid ${editorForm.color}33`,
-                                    marginBottom: 20,
-                                    overflow: "hidden",
-                                    height: 44,
-                                    display: "flex",
-                                    alignItems: "center",
-                                }}
-                            >
-                                <div
-                                    style={{
-                                        background: editorForm.color,
-                                        color: "#000",
-                                        fontWeight: 800,
-                                        padding: "0 14px",
-                                        height: "100%",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        fontSize: "0.72rem",
-                                        letterSpacing: "0.08em",
+                            <div style={{ marginBottom: 20 }}>
+                                <TickerPreviewStrip
+                                    ticker={{
+                                        text: editorForm.text,
+                                        speed: editorForm.speed,
+                                        priority: editorForm.priority,
+                                        style: editorForm.style,
+                                        status: editorForm.status,
+                                        color: editorForm.color,
+                                        backgroundColor: editorForm.backgroundColor,
+                                        position: editorForm.position,
                                     }}
-                                >
-                                    {editorForm.priority === "Urgent" ? "URGENT" : "LIVE"}
-                                </div>
-                                <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center" }}>
-                                    <motion.div
-                                        animate={{ x: ["100%", "-100%"] }}
-                                        transition={{
-                                            repeat: Infinity,
-                                            ease: "linear",
-                                            duration: speedDuration(editorForm.speed),
-                                        }}
-                                        style={{
-                                            whiteSpace: "nowrap",
-                                            fontSize: "0.95rem",
-                                            paddingLeft: 20,
-                                            ...stylePreview({
-                                                id: "preview",
-                                                text: editorForm.text || "Your ticker preview will appear here...",
-                                                speed: editorForm.speed,
-                                                priority: editorForm.priority,
-                                                style: editorForm.style,
-                                                status: editorForm.status,
-                                                color: editorForm.color,
-                                                screens: 0,
-                                                createdAt: "",
-                                            }),
-                                        }}
-                                    >
-                                        {editorForm.text || "Your ticker preview will appear here..."}
-                                    </motion.div>
-                                </div>
+                                />
                             </div>
 
                             <div style={{ marginBottom: 20 }}>
@@ -861,7 +873,7 @@ export default function TickersPage() {
                                         marginBottom: 8,
                                     }}
                                 >
-                                    Message Text
+                                    Ticker Text
                                 </label>
                                 <textarea
                                     value={editorForm.text}
@@ -986,6 +998,43 @@ export default function TickersPage() {
                                             marginBottom: 8,
                                         }}
                                     >
+                                        Position
+                                    </label>
+                                    <select
+                                        value={editorForm.position}
+                                        onChange={(e) =>
+                                            setEditorForm((prev) => ({
+                                                ...prev,
+                                                position: parsePosition(e.target.value),
+                                            }))
+                                        }
+                                        style={{
+                                            width: "100%",
+                                            padding: 10,
+                                            borderRadius: 8,
+                                            background: "hsla(var(--bg-base), 0.5)",
+                                            border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                            color: "hsl(var(--text-primary))",
+                                        }}
+                                    >
+                                        {POSITIONS.map((position) => (
+                                            <option key={position} value={position}>
+                                                {position}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label
+                                        style={{
+                                            display: "block",
+                                            fontSize: "0.7rem",
+                                            color: "hsl(var(--text-muted))",
+                                            fontWeight: 700,
+                                            textTransform: "uppercase",
+                                            marginBottom: 8,
+                                        }}
+                                    >
                                         Style
                                     </label>
                                     <select
@@ -1051,54 +1100,106 @@ export default function TickersPage() {
                                 </div>
                             </div>
 
-                            <div style={{ marginBottom: 24 }}>
-                                <label
-                                    style={{
-                                        display: "block",
-                                        fontSize: "0.7rem",
-                                        color: "hsl(var(--text-muted))",
-                                        fontWeight: 700,
-                                        textTransform: "uppercase",
-                                        marginBottom: 8,
-                                    }}
-                                >
-                                    Accent Color
-                                </label>
-                                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                                    <input
-                                        type="color"
-                                        value={editorForm.color}
-                                        onChange={(e) =>
-                                            setEditorForm((prev) => ({ ...prev, color: e.target.value }))
-                                        }
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                                <div>
+                                    <label
                                         style={{
-                                            width: 56,
-                                            height: 38,
-                                            border: "none",
-                                            borderRadius: 8,
-                                            cursor: "pointer",
-                                            background: "transparent",
+                                            display: "block",
+                                            fontSize: "0.7rem",
+                                            color: "hsl(var(--text-muted))",
+                                            fontWeight: 700,
+                                            textTransform: "uppercase",
+                                            marginBottom: 8,
                                         }}
-                                    />
-                                    <input
-                                        type="text"
-                                        value={editorForm.color}
-                                        onChange={(e) => {
-                                            const value = e.target.value;
-                                            setEditorForm((prev) => ({ ...prev, color: value }));
-                                        }}
-                                        placeholder="#00e5ff"
+                                    >
+                                        Text Color
+                                    </label>
+                                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                        <input
+                                            type="color"
+                                            value={editorForm.color}
+                                            onChange={(e) =>
+                                                setEditorForm((prev) => ({ ...prev, color: e.target.value }))
+                                            }
+                                            style={{
+                                                width: 56,
+                                                height: 38,
+                                                border: "none",
+                                                borderRadius: 8,
+                                                cursor: "pointer",
+                                                background: "transparent",
+                                            }}
+                                        />
+                                        <input
+                                            type="text"
+                                            value={editorForm.color}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                setEditorForm((prev) => ({ ...prev, color: value }));
+                                            }}
+                                            placeholder="#ffffff"
+                                            style={{
+                                                flex: 1,
+                                                padding: 10,
+                                                borderRadius: 8,
+                                                background: "hsla(var(--bg-base), 0.5)",
+                                                border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                                color: "hsl(var(--text-primary))",
+                                                fontSize: "0.9rem",
+                                                fontFamily: "monospace",
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label
                                         style={{
-                                            flex: 1,
-                                            padding: 10,
-                                            borderRadius: 8,
-                                            background: "hsla(var(--bg-base), 0.5)",
-                                            border: "1px solid hsla(var(--border-subtle), 0.5)",
-                                            color: "hsl(var(--text-primary))",
-                                            fontSize: "0.9rem",
-                                            fontFamily: "monospace",
+                                            display: "block",
+                                            fontSize: "0.7rem",
+                                            color: "hsl(var(--text-muted))",
+                                            fontWeight: 700,
+                                            textTransform: "uppercase",
+                                            marginBottom: 8,
                                         }}
-                                    />
+                                    >
+                                        Background Color
+                                    </label>
+                                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                        <input
+                                            type="color"
+                                            value={editorForm.backgroundColor}
+                                            onChange={(e) =>
+                                                setEditorForm((prev) => ({ ...prev, backgroundColor: e.target.value }))
+                                            }
+                                            style={{
+                                                width: 56,
+                                                height: 38,
+                                                border: "none",
+                                                borderRadius: 8,
+                                                cursor: "pointer",
+                                                background: "transparent",
+                                            }}
+                                        />
+                                        <input
+                                            type="text"
+                                            value={editorForm.backgroundColor}
+                                            onChange={(e) => {
+                                                const value = e.target.value;
+                                                setEditorForm((prev) => ({ ...prev, backgroundColor: value }));
+                                            }}
+                                            placeholder="#1a1f2e"
+                                            style={{
+                                                flex: 1,
+                                                padding: 10,
+                                                borderRadius: 8,
+                                                background: "hsla(var(--bg-base), 0.5)",
+                                                border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                                color: "hsl(var(--text-primary))",
+                                                fontSize: "0.9rem",
+                                                fontFamily: "monospace",
+                                            }}
+                                        />
+                                    </div>
                                 </div>
                             </div>
 

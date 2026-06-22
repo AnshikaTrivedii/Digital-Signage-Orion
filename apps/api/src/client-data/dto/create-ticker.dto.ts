@@ -2,6 +2,7 @@ import { IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'cl
 
 export const TICKER_SPEEDS = ['Slow', 'Normal', 'Fast'] as const;
 export const TICKER_PRIORITIES = ['Low', 'Normal', 'Urgent'] as const;
+export const TICKER_POSITIONS = ['Top', 'Bottom'] as const;
 export const TICKER_STYLES = ['Classic', 'Neon', 'Gradient', 'Minimal'] as const;
 export const TICKER_STATUSES = ['Active', 'Paused', 'Draft'] as const;
 
@@ -30,4 +31,12 @@ export class CreateTickerDto {
   @IsOptional()
   @IsHexColor()
   color?: string;
+
+  @IsOptional()
+  @IsHexColor()
+  backgroundColor?: string;
+
+  @IsOptional()
+  @IsIn(TICKER_POSITIONS as unknown as string[])
+  position?: (typeof TICKER_POSITIONS)[number];
 }

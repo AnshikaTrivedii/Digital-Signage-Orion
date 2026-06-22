@@ -1,5 +1,6 @@
 import { IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import {
+  TICKER_POSITIONS,
   TICKER_PRIORITIES,
   TICKER_SPEEDS,
   TICKER_STATUSES,
@@ -32,4 +33,12 @@ export class UpdateTickerDto {
   @IsOptional()
   @IsHexColor()
   color?: string;
+
+  @IsOptional()
+  @IsHexColor()
+  backgroundColor?: string;
+
+  @IsOptional()
+  @IsIn(TICKER_POSITIONS as unknown as string[])
+  position?: (typeof TICKER_POSITIONS)[number];
 }
