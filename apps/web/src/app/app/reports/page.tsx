@@ -1,10 +1,10 @@
 "use client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
     Activity, Eye, Download, Search, ArrowUpRight, Monitor, FileText,
     RefreshCw, AlertTriangle, CheckCircle, XCircle, TrendingUp, Clock,
-    ChevronLeft, ChevronRight,
+    ChevronLeft, ChevronRight, ChevronDown, ChevronRight as ChevronRightIcon,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ApiError, API_BASE, apiRequest } from "@/lib/api";
@@ -98,6 +98,72 @@ const formatDuration = (seconds: number | null) => {
     return `${minutes}m ${remainder}s`;
 };
 
+type DeviceLogGroup = {
+    key: string;
+    deviceName: string;
+    deviceIsActive?: boolean;
+    logs: PopLog[];
+};
+
+const deviceGroupKey = (log: PopLog) => log.deviceId ?? `name:${log.device}`;
+
+const groupLogsByDevice = (logs: PopLog[]): DeviceLogGroup[] => {
+    const groups = new Map<string, DeviceLogGroup>();
+    for (const log of logs) {
+        const key = deviceGroupKey(log);
+        const existing = groups.get(key);
+        if (existing) {
+            existing.logs.push(log);
+        } else {
+            groups.set(key, {
+                key,
+                deviceName: log.device,
+                deviceIsActive: log.deviceIsActive,
+                logs: [log],
+            });
+        }
+    }
+    return Array.from(groups.values());
+};
+
+const thStyle = {
+    textAlign: "left" as const,
+    padding: "12px 16px",
+    fontSize: "0.7rem",
+    color: "hsl(var(--text-muted))",
+    fontWeight: 700,
+    textTransform: "uppercase" as const,
+    borderBottom: "1px solid hsla(var(--border-subtle), 0.3)",
+};
+
+const tdStyle = { padding: "12px 16px", fontSize: "0.85rem" };
+
+const renderLogStatus = (log: PopLog) => {
+    const verified = statusFromLog(log.status) === "verified";
+    return (
+        <span style={{
+            fontSize: "0.7rem", fontWeight: 700, padding: "4px 12px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 6,
+            background: verified ? "hsla(var(--status-success), 0.1)" : "hsla(var(--status-danger), 0.1)",
+            color: verified ? "hsl(var(--status-success))" : "hsl(var(--status-danger))",
+        }}>
+            {verified ? <CheckCircle size={12} /> : <XCircle size={12} />}
+            {log.status}
+        </span>
+    );
+};
+
+const renderLogRowCells = (log: PopLog) => (
+    <>
+        <td style={tdStyle}>{log.playlistName ?? "—"}</td>
+        <td style={tdStyle}>{log.campaignName ?? "—"}</td>
+        <td style={tdStyle}>{log.assetName}</td>
+        <td style={{ ...tdStyle, fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.startTime)}</td>
+        <td style={{ ...tdStyle, fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.endTime)}</td>
+        <td style={tdStyle}>{formatDuration(log.durationSeconds)}</td>
+        <td style={tdStyle}>{renderLogStatus(log)}</td>
+    </>
+);
+
 export default function ReportsPage() {
     const { activeOrganizationId } = useAuth();
     const [dateRange, setDateRange] = useState<Range>("today");
@@ -112,6 +178,7 @@ export default function ReportsPage() {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [isExporting, setIsExporting] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
     const filterKey = useMemo(
         () => JSON.stringify({ dateRange, customStart, customEnd, logSearch, statusFilter, deviceFilter }),
@@ -223,6 +290,22 @@ export default function ReportsPage() {
     const maxImpressions = Math.max(...chartData.map((d) => d.impressions), 1);
     const filteredLogs = reportData?.proofOfPlay ?? [];
     const meta = reportData?.proofOfPlayMeta;
+    const isGroupedView = !deviceFilter;
+    const tableColumnCount = 7;
+    const tableHeaders = ["Playlist Name", "Campaign Name", "Asset Name", "Start Time", "End Time", "Duration", "Status"];
+    const selectedDeviceName = deviceFilter
+        ? (reportData?.devices ?? []).find((device) => device.id === deviceFilter)?.name
+        : null;
+    const deviceGroups = useMemo(() => groupLogsByDevice(filteredLogs), [filteredLogs]);
+
+    const toggleGroup = (key: string) => {
+        setCollapsedGroups((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
 
     const kpiCards = useMemo(() => [
         {
@@ -416,12 +499,14 @@ export default function ReportsPage() {
                         </h2>
                         <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
                             Showing page {meta?.page ?? 1} of {meta?.totalPages ?? 1} • {meta?.total ?? 0} total records
+                            {selectedDeviceName ? ` • Filtered to ${selectedDeviceName}` : " • Grouped by device"}
                         </p>
                     </div>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                         <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}
-                            style={{ padding: "8px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem" }}>
-                            <option value="">All devices</option>
+                            aria-label="Filter by device"
+                            style={{ padding: "8px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem", minWidth: 160 }}>
+                            <option value="">All Devices</option>
                             {(reportData?.devices ?? []).map((device) => (
                                 <option key={device.id} value={device.id}>
                                     {device.isHistorical ? `${device.name} (removed)` : device.name}
@@ -446,55 +531,68 @@ export default function ReportsPage() {
                 </div>
 
                 <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1100 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
                         <thead>
                             <tr>
-                                {["Device Name", "Playlist Name", "Campaign Name", "Asset Name", "Start Time", "End Time", "Duration", "Status"].map(h => (
-                                    <th key={h} style={{ textAlign: "left", padding: "12px 16px", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", borderBottom: "1px solid hsla(var(--border-subtle), 0.3)" }}>{h}</th>
+                                {tableHeaders.map(h => (
+                                    <th key={h} style={thStyle}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
                             {isLoading && !reportData ? (
-                                <tr><td colSpan={8} style={{ padding: 20, color: "hsl(var(--text-muted))" }}>Loading report data...</td></tr>
+                                <tr><td colSpan={tableColumnCount} style={{ padding: 20, color: "hsl(var(--text-muted))" }}>Loading report data...</td></tr>
                             ) : null}
                             {!isLoading && !hasData && (
                                 <tr>
-                                    <td colSpan={8} style={{ padding: 40, textAlign: "center", color: "hsl(var(--text-muted))" }}>
+                                    <td colSpan={tableColumnCount} style={{ padding: 40, textAlign: "center", color: "hsl(var(--text-muted))" }}>
                                         <Clock size={32} style={{ opacity: 0.25, marginBottom: 8 }} />
                                         <p>No proof-of-play records yet</p>
                                     </td>
                                 </tr>
                             )}
-                            {filteredLogs.map((log) => {
-                                const verified = statusFromLog(log.status) === "verified";
+                            {isGroupedView ? deviceGroups.map((group) => {
+                                const expanded = !collapsedGroups.has(group.key);
+                                const recordLabel = group.logs.length === 1 ? "Record" : "Records";
                                 return (
-                                    <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem", fontWeight: 600 }}>
-                                            {log.device}
-                                            {log.deviceIsActive === false ? (
-                                                <span style={{ marginLeft: 8, fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>(removed)</span>
-                                            ) : null}
-                                        </td>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.playlistName ?? "—"}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.campaignName ?? "—"}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{log.assetName}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.startTime)}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.endTime)}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: "0.85rem" }}>{formatDuration(log.durationSeconds)}</td>
-                                        <td style={{ padding: "12px 16px" }}>
-                                            <span style={{
-                                                fontSize: "0.7rem", fontWeight: 700, padding: "4px 12px", borderRadius: 20, display: "inline-flex", alignItems: "center", gap: 6,
-                                                background: verified ? "hsla(var(--status-success), 0.1)" : "hsla(var(--status-danger), 0.1)",
-                                                color: verified ? "hsl(var(--status-success))" : "hsl(var(--status-danger))",
-                                            }}>
-                                                {verified ? <CheckCircle size={12} /> : <XCircle size={12} />}
-                                                {log.status}
-                                            </span>
-                                        </td>
-                                    </tr>
+                                    <Fragment key={group.key}>
+                                        <tr
+                                            onClick={() => toggleGroup(group.key)}
+                                            style={{
+                                                borderBottom: "1px solid hsla(var(--border-subtle), 0.15)",
+                                                background: "hsla(var(--bg-base), 0.45)",
+                                                cursor: "pointer",
+                                            }}
+                                        >
+                                            <td colSpan={tableColumnCount} style={{ padding: "14px 16px" }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                                                    {expanded ? (
+                                                        <ChevronDown size={16} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
+                                                    ) : (
+                                                        <ChevronRightIcon size={16} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
+                                                    )}
+                                                    <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{group.deviceName}</span>
+                                                    {group.deviceIsActive === false ? (
+                                                        <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>(removed)</span>
+                                                    ) : null}
+                                                    <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 600 }}>
+                                                        ({group.logs.length} {recordLabel})
+                                                    </span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {expanded ? group.logs.map((log) => (
+                                            <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
+                                                {renderLogRowCells(log)}
+                                            </tr>
+                                        )) : null}
+                                    </Fragment>
                                 );
-                            })}
+                            }) : filteredLogs.map((log) => (
+                                <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
+                                    {renderLogRowCells(log)}
+                                </tr>
+                            ))}
                         </tbody>
                     </table>
                 </div>
