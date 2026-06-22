@@ -4,7 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { motion, Reorder, useDragControls } from "framer-motion";
 import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Video, FileText, Globe } from "lucide-react";
 import { toast } from "react-hot-toast";
-import { apiRequest, apiDelete } from "@/lib/api";
+import { apiRequest, apiDelete, ApiError } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 
@@ -285,7 +285,8 @@ export default function CampaignBuilderPage() {
             savedOrderRef.current = orderedAssets.map((asset) => asset.id);
             toast.success("Asset order saved");
         } catch (error) {
-            toast.error("Failed to save asset order");
+            const message = error instanceof ApiError ? error.message : "Failed to save asset order";
+            toast.error(message);
             await loadData();
         } finally {
             setIsSavingOrder(false);

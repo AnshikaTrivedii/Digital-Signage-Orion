@@ -66,6 +66,15 @@ export class ClientDataController {
     return this.clientDataService.addCampaignAsset(actor, campaignId, body.assetId, body.durationSeconds);
   }
 
+  @Patch('campaigns/:campaignId/assets/reorder')
+  reorderCampaignAssets(
+    @CurrentActor() actor: RequestActor,
+    @Param('campaignId') campaignId: string,
+    @Body() body: ReorderCampaignAssetsDto,
+  ) {
+    return this.clientDataService.reorderCampaignAssets(actor, campaignId, body);
+  }
+
   @Patch('campaigns/:campaignId/assets/:assetId')
   updateCampaignAssetDuration(
     @CurrentActor() actor: RequestActor,
@@ -88,15 +97,6 @@ export class ClientDataController {
     @Param('assetId') assetId: string,
   ) {
     return this.clientDataService.removeCampaignAsset(actor, campaignId, assetId);
-  }
-
-  @Patch('campaigns/:campaignId/assets/reorder')
-  reorderCampaignAssets(
-    @CurrentActor() actor: RequestActor,
-    @Param('campaignId') campaignId: string,
-    @Body() body: ReorderCampaignAssetsDto,
-  ) {
-    return this.clientDataService.reorderCampaignAssets(actor, campaignId, body);
   }
 
   @Get('playlists')
