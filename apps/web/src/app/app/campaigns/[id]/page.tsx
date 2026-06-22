@@ -1,7 +1,7 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, Reorder, useDragControls } from "framer-motion";
 import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Video, FileText, Globe } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { apiRequest, apiDelete } from "@/lib/api";
@@ -28,6 +28,130 @@ interface CampaignAsset {
     url?: string | null;
 }
 
+type CampaignAssetRowProps = {
+    asset: CampaignAsset;
+    index: number;
+    canEdit: boolean;
+    savingDurationAssetId: string | null;
+    onDurationChange: (assetId: string, value: string) => void;
+    onDurationSave: (asset: CampaignAsset) => void;
+    onRemove: (assetId: string) => void;
+    onDragEnd: () => void;
+    getIcon: (type: string) => ReactNode;
+};
+
+function CampaignAssetRow({
+    asset,
+    index,
+    canEdit,
+    savingDurationAssetId,
+    onDurationChange,
+    onDurationSave,
+    onRemove,
+    onDragEnd,
+    getIcon,
+}: CampaignAssetRowProps) {
+    const dragControls = useDragControls();
+
+    return (
+        <Reorder.Item
+            value={asset}
+            dragListener={false}
+            dragControls={dragControls}
+            onDragEnd={onDragEnd}
+            className="glass-card"
+            style={{
+                padding: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 16,
+                borderLeft: "4px solid hsl(var(--accent-primary))",
+                listStyle: "none",
+            }}
+        >
+            <button
+                type="button"
+                className="btn-icon-soft"
+                disabled={!canEdit}
+                onPointerDown={(event) => {
+                    if (!canEdit) return;
+                    dragControls.start(event);
+                }}
+                aria-label={`Drag to reorder ${asset.name}`}
+                style={{
+                    padding: 6,
+                    cursor: canEdit ? "grab" : "not-allowed",
+                    opacity: canEdit ? 1 : 0.45,
+                    touchAction: "none",
+                }}
+            >
+                <GripVertical size={18} />
+            </button>
+
+            <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "hsla(var(--text-primary), 0.3)", width: 24 }}>
+                {index + 1}
+            </div>
+
+            <div style={{ width: 80, height: 50, borderRadius: 8, background: "hsla(var(--bg-base), 0.8)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {asset.downloadUrl ? (
+                    asset.type === "VIDEO" ? (
+                        <video src={asset.downloadUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={asset.downloadUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    )
+                ) : getIcon(asset.type)}
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+                <h4 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{asset.name}</h4>
+                <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>Type: {asset.type}</p>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
+                <Clock size={14} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
+                <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={asset.durationSeconds}
+                    disabled={!canEdit || savingDurationAssetId === asset.id}
+                    onChange={(event) => onDurationChange(asset.id, event.target.value)}
+                    onBlur={() => onDurationSave(asset)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                            event.currentTarget.blur();
+                        }
+                    }}
+                    aria-label={`Duration for ${asset.name}`}
+                    style={{
+                        width: 72,
+                        padding: "8px 10px",
+                        borderRadius: 10,
+                        border: "1px solid hsla(var(--border-subtle), 0.8)",
+                        background: "hsla(var(--bg-base), 0.8)",
+                        color: "hsl(var(--text-primary))",
+                        fontSize: "0.85rem",
+                        fontWeight: 600,
+                        outline: "none",
+                    }}
+                />
+                <span style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>sec</span>
+            </div>
+
+            <button
+                type="button"
+                className="btn-icon-soft"
+                disabled={!canEdit}
+                onClick={() => onRemove(asset.id)}
+                style={{ color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}
+            >
+                <Trash2 size={18} />
+            </button>
+        </Reorder.Item>
+    );
+}
+
 export default function CampaignBuilderPage() {
     const params = useParams();
     const router = useRouter();
@@ -39,6 +163,9 @@ export default function CampaignBuilderPage() {
     const [campaignAssets, setCampaignAssets] = useState<CampaignAsset[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [savingDurationAssetId, setSavingDurationAssetId] = useState<string | null>(null);
+    const [isSavingOrder, setIsSavingOrder] = useState(false);
+    const pendingOrderRef = useRef<CampaignAsset[] | null>(null);
+    const savedOrderRef = useRef<string[]>([]);
 
     const loadData = useCallback(async () => {
         if (!activeOrganizationId || !campaignId) return;
@@ -52,7 +179,10 @@ export default function CampaignBuilderPage() {
             const timelineRes = await apiRequest<CampaignAsset[]>(`/api/client-data/campaigns/${campaignId}/assets`, {
                 headers: { "x-organization-id": activeOrganizationId }
             });
-            setCampaignAssets(timelineRes);
+            setCampaignAssets([...timelineRes].sort((a, b) => a.position - b.position));
+            savedOrderRef.current = [...timelineRes]
+                .sort((a, b) => a.position - b.position)
+                .map((asset) => asset.id);
         } catch (error) {
             toast.error("Failed to load campaign data");
             console.error(error);
@@ -141,31 +271,43 @@ export default function CampaignBuilderPage() {
         }
     };
 
-    const handleMove = async (index: number, direction: 'up' | 'down') => {
-        if (!canEdit) return;
-        const newArray = [...campaignAssets];
-        if (direction === 'up' && index > 0) {
-            [newArray[index - 1], newArray[index]] = [newArray[index], newArray[index - 1]];
-        } else if (direction === 'down' && index < newArray.length - 1) {
-            [newArray[index + 1], newArray[index]] = [newArray[index], newArray[index + 1]];
-        } else {
-            return;
-        }
+    const saveAssetOrder = async (orderedAssets: CampaignAsset[]) => {
+        if (!canEdit || !activeOrganizationId) return;
 
-        // Optimistic UI update
-        setCampaignAssets(newArray);
-
-        // Sync with server
+        setIsSavingOrder(true);
         try {
             await apiRequest(`/api/client-data/campaigns/${campaignId}/assets/reorder`, {
                 method: "PATCH",
-                headers: { "x-organization-id": activeOrganizationId! },
-                body: JSON.stringify({ assetIds: newArray.map(a => a.id) })
+                headers: { "x-organization-id": activeOrganizationId },
+                body: JSON.stringify({ assetIds: orderedAssets.map((asset) => asset.id) }),
             });
+            await loadData();
+            savedOrderRef.current = orderedAssets.map((asset) => asset.id);
+            toast.success("Asset order saved");
         } catch (error) {
-            toast.error("Failed to sync reorder");
-            void loadData(); // revert
+            toast.error("Failed to save asset order");
+            await loadData();
+        } finally {
+            setIsSavingOrder(false);
+            pendingOrderRef.current = null;
         }
+    };
+
+    const handleReorder = (nextOrder: CampaignAsset[]) => {
+        if (!canEdit || isSavingOrder) return;
+        const normalized = nextOrder.map((asset, index) => ({ ...asset, position: index }));
+        setCampaignAssets(normalized);
+        pendingOrderRef.current = normalized;
+    };
+
+    const handleReorderEnd = () => {
+        if (!pendingOrderRef.current || isSavingOrder) return;
+        const nextIds = pendingOrderRef.current.map((asset) => asset.id);
+        if (nextIds.join("|") === savedOrderRef.current.join("|")) {
+            pendingOrderRef.current = null;
+            return;
+        }
+        void saveAssetOrder(pendingOrderRef.current);
     };
 
     const getIcon = (type: string) => {
@@ -244,8 +386,13 @@ export default function CampaignBuilderPage() {
 
                 {/* Timeline Builder */}
                 <div style={{ padding: 20, background: "hsla(var(--bg-base), 0.3)", borderRadius: 16, border: "1px dashed hsla(var(--border-subtle), 0.8)", minHeight: "calc(100vh - 180px)" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, gap: 12, flexWrap: "wrap" }}>
                         <h2 style={{ fontSize: "1.2rem", fontWeight: 700 }}>Timeline Sequence</h2>
+                        {campaignAssets.length > 0 && (
+                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
+                                {isSavingOrder ? "Saving order..." : canEdit ? "Drag the handle to reorder assets" : "Read-only timeline"}
+                            </p>
+                        )}
                     </div>
 
                     {campaignAssets.length === 0 ? (
@@ -261,7 +408,7 @@ export default function CampaignBuilderPage() {
                             <div
                                 style={{
                                     display: "grid",
-                                    gridTemplateColumns: "48px 28px 80px 1fr 120px 40px",
+                                    gridTemplateColumns: "40px 28px 80px 1fr 120px 40px",
                                     gap: 16,
                                     padding: "0 12px 8px",
                                     fontSize: "0.7rem",
@@ -278,73 +425,27 @@ export default function CampaignBuilderPage() {
                                 <span>Duration</span>
                                 <span />
                             </div>
-                            <AnimatePresence>
+                            <Reorder.Group
+                                axis="y"
+                                values={campaignAssets}
+                                onReorder={handleReorder}
+                                style={{ display: "flex", flexDirection: "column", gap: 12, margin: 0, padding: 0 }}
+                            >
                                 {campaignAssets.map((ca, index) => (
-                                    <motion.div key={ca.campaignAssetId} layout initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95 }}
-                                        className="glass-card" style={{ padding: 12, display: "flex", alignItems: "center", gap: 16, borderLeft: "4px solid hsl(var(--accent-primary))" }}>
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                            <button className="btn-icon-soft" disabled={index === 0 || !canEdit} onClick={() => handleMove(index, 'up')} style={{ padding: 2, opacity: index === 0 ? 0.3 : 1 }}><GripVertical size={14} /></button>
-                                            <button className="btn-icon-soft" disabled={index === campaignAssets.length - 1 || !canEdit} onClick={() => handleMove(index, 'down')} style={{ padding: 2, opacity: index === campaignAssets.length - 1 ? 0.3 : 1 }}><GripVertical size={14} /></button>
-                                        </div>
-                                        
-                                        <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "hsla(var(--text-primary), 0.3)", width: 24 }}>
-                                            {index + 1}
-                                        </div>
-
-                                        <div style={{ width: 80, height: 50, borderRadius: 8, background: "hsla(var(--bg-base), 0.8)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                            {ca.downloadUrl ? (
-                                                ca.type === "VIDEO" ? (
-                                                    <video src={ca.downloadUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                                ) : (
-                                                    // eslint-disable-next-line @next/next/no-img-element
-                                                    <img src={ca.downloadUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                                )
-                                            ) : getIcon(ca.type)}
-                                        </div>
-
-                                        <div style={{ flex: 1 }}>
-                                            <h4 style={{ fontSize: "0.95rem", fontWeight: 700, marginBottom: 4 }}>{ca.name}</h4>
-                                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>Type: {ca.type}</p>
-                                        </div>
-
-                                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120 }}>
-                                            <Clock size={14} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
-                                            <input
-                                                type="number"
-                                                min={1}
-                                                step={1}
-                                                value={ca.durationSeconds}
-                                                disabled={!canEdit || savingDurationAssetId === ca.id}
-                                                onChange={(event) => handleDurationChange(ca.id, event.target.value)}
-                                                onBlur={() => void handleDurationSave(ca)}
-                                                onKeyDown={(event) => {
-                                                    if (event.key === "Enter") {
-                                                        event.currentTarget.blur();
-                                                    }
-                                                }}
-                                                aria-label={`Duration for ${ca.name}`}
-                                                style={{
-                                                    width: 72,
-                                                    padding: "8px 10px",
-                                                    borderRadius: 10,
-                                                    border: "1px solid hsla(var(--border-subtle), 0.8)",
-                                                    background: "hsla(var(--bg-base), 0.8)",
-                                                    color: "hsl(var(--text-primary))",
-                                                    fontSize: "0.85rem",
-                                                    fontWeight: 600,
-                                                    outline: "none",
-                                                }}
-                                            />
-                                            <span style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>sec</span>
-                                        </div>
-
-                                        <button className="btn-icon-soft" disabled={!canEdit} onClick={() => handleRemoveAsset(ca.id)}
-                                            style={{ color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}>
-                                            <Trash2 size={18} />
-                                        </button>
-                                    </motion.div>
+                                    <CampaignAssetRow
+                                        key={ca.campaignAssetId}
+                                        asset={ca}
+                                        index={index}
+                                        canEdit={canEdit && !isSavingOrder}
+                                        savingDurationAssetId={savingDurationAssetId}
+                                        onDurationChange={handleDurationChange}
+                                        onDurationSave={handleDurationSave}
+                                        onRemove={handleRemoveAsset}
+                                        onDragEnd={handleReorderEnd}
+                                        getIcon={getIcon}
+                                    />
                                 ))}
-                            </AnimatePresence>
+                            </Reorder.Group>
                         </div>
                     )}
                 </div>

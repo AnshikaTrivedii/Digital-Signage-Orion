@@ -18,6 +18,7 @@ import { ClientDataService } from './client-data.service';
 import { CreateDeviceDto } from './dto/create-device.dto';
 import { AddCampaignAssetDto } from './dto/add-campaign-asset.dto';
 import { PairDeviceDto } from './dto/pair-device.dto';
+import { ReorderCampaignAssetsDto } from './dto/reorder-campaign-assets.dto';
 import { UpdateCampaignAssetDurationDto } from './dto/update-campaign-asset-duration.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { CreateScheduleEventDto } from './dto/create-schedule-event.dto';
@@ -93,7 +94,7 @@ export class ClientDataController {
   reorderCampaignAssets(
     @CurrentActor() actor: RequestActor,
     @Param('campaignId') campaignId: string,
-    @Body() body: { assetIds: string[] },
+    @Body() body: ReorderCampaignAssetsDto,
   ) {
     return this.clientDataService.reorderCampaignAssets(actor, campaignId, body);
   }

@@ -304,13 +304,35 @@ export class ClientDataService {
     const campaign = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
     if (!campaign) throw new NotFoundException('Campaign not found');
 
-    for (const [index, assetId] of body.assetIds.entries()) {
-      // Find the specific campaignAsset by campaign and asset
-      await this.prisma.campaignAsset.update({
-        where: { campaignId_assetId: { campaignId, assetId } },
-        data: { position: index },
-      });
+    const existingAssets = await this.prisma.campaignAsset.findMany({
+      where: { campaignId },
+      select: { assetId: true },
+    });
+    const existingAssetIds = new Set(existingAssets.map((entry) => entry.assetId));
+
+    if (body.assetIds.length !== existingAssetIds.size) {
+      throw new BadRequestException('assetIds must include every campaign asset exactly once');
     }
+
+    const seen = new Set<string>();
+    for (const assetId of body.assetIds) {
+      if (!existingAssetIds.has(assetId)) {
+        throw new BadRequestException('Invalid asset id in reorder payload');
+      }
+      if (seen.has(assetId)) {
+        throw new BadRequestException('assetIds must not contain duplicates');
+      }
+      seen.add(assetId);
+    }
+
+    await this.prisma.$transaction(
+      body.assetIds.map((assetId, index) =>
+        this.prisma.campaignAsset.update({
+          where: { campaignId_assetId: { campaignId, assetId } },
+          data: { position: index },
+        }),
+      ),
+    );
 
     await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
 
