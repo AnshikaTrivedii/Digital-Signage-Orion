@@ -1,10 +1,13 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { DeviceStatus, ProofOfPlayStatus, TickerStatus } from '@prisma/client';
+import { Device, DeviceStatus, ProofOfPlayStatus, TickerStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import type { SyncQueryDto } from './dto/sync-query.dto';
+
+/** Device resolved from a valid paired token — organizationId is guaranteed. */
+type PairedDevice = Device & { organizationId: string };
 
 /** Presigned URL lifetime for player sync downloads (7 days). */
 const SYNC_DOWNLOAD_URL_TTL_SECONDS = 86400 * 7;
@@ -194,8 +197,9 @@ export class PlayerService {
 
   /**
    * Resolve a device from its device token (used by heartbeat, sync, pop-logs).
+   * Draft/unpaired devices are rejected — only paired devices with an organization may call player APIs.
    */
-  private async resolveDeviceByToken(authHeader: string | undefined) {
+  private async resolveDeviceByToken(authHeader: string | undefined): Promise<PairedDevice> {
     if (!authHeader?.startsWith('Bearer ')) {
       throw new UnauthorizedException('Missing device token');
     }
@@ -209,7 +213,7 @@ export class PlayerService {
       throw new UnauthorizedException('Invalid or unpaired device token');
     }
 
-    return device;
+    return { ...device, organizationId: device.organizationId };
   }
 
   /**
@@ -239,7 +243,7 @@ export class PlayerService {
       },
     });
 
-    if (data.currentContent?.trim() && device.organizationId) {
+    if (data.currentContent?.trim()) {
       await this.recordHeartbeatPopSample(device.id, device.organizationId, device.name, data.currentContent.trim());
     }
 
@@ -524,15 +528,11 @@ export class PlayerService {
   ) {
     const device = await this.resolveDeviceByToken(authHeader);
 
-    if (!device.organizationId) {
-      throw new BadRequestException('Device is not associated with an organization');
-    }
-
     if (!logs?.length) {
       return { received: 0, skipped: 0 };
     }
 
-    const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId!);
+    const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
 
     const rows = logs.flatMap((log) => {
       if (!log.assetName?.trim() && !log.content?.trim()) {
@@ -574,7 +574,7 @@ export class PlayerService {
 
       return [
         {
-          organizationId: device.organizationId!,
+          organizationId: device.organizationId,
           deviceId: device.id,
           device: device.name,
           content: assetName,
