@@ -14,8 +14,15 @@ import { useAuth } from "@/components/AuthProvider";
 type Speed = "Slow" | "Normal" | "Fast";
 type Priority = "Low" | "Normal" | "Urgent";
 type Position = "Top" | "Bottom";
+type BroadcastScope = "All Devices" | "Selected Devices";
 type Style = "Classic" | "Neon" | "Gradient" | "Minimal";
 type Status = "Active" | "Paused" | "Draft";
+
+interface DeviceOption {
+    id: string;
+    name: string;
+    location?: string;
+}
 
 interface Ticker {
     id: string;
@@ -25,9 +32,12 @@ interface Ticker {
     color: string;
     backgroundColor: string;
     position: Position;
+    broadcastScope: BroadcastScope;
     status: Status;
     priority: Priority;
     screens: number;
+    deviceIds: string[];
+    deviceNames: string[];
     createdAt: string;
     updatedAt?: string;
 }
@@ -37,6 +47,8 @@ interface EditorState {
     speed: Speed;
     priority: Priority;
     position: Position;
+    broadcastScope: BroadcastScope;
+    deviceIds: string[];
     style: Style;
     status: Status;
     color: string;
@@ -48,6 +60,8 @@ const EMPTY_EDITOR: EditorState = {
     speed: "Normal",
     priority: "Normal",
     position: "Bottom",
+    broadcastScope: "All Devices",
+    deviceIds: [],
     style: "Neon",
     status: "Active",
     color: "#ffffff",
@@ -57,12 +71,15 @@ const EMPTY_EDITOR: EditorState = {
 const SPEEDS: Speed[] = ["Slow", "Normal", "Fast"];
 const PRIORITIES: Priority[] = ["Low", "Normal", "Urgent"];
 const POSITIONS: Position[] = ["Top", "Bottom"];
+const BROADCAST_SCOPES: BroadcastScope[] = ["All Devices", "Selected Devices"];
 const STYLES: Style[] = ["Classic", "Neon", "Gradient", "Minimal"];
 const STATUSES: Status[] = ["Active", "Paused", "Draft"];
 
 const parseSpeed = (value: string): Speed => (value === "Slow" || value === "Fast" ? value : "Normal");
 const parsePriority = (value: string): Priority => (value === "Urgent" || value === "Low" ? value : "Normal");
 const parsePosition = (value: string): Position => (value === "Top" ? "Top" : "Bottom");
+const parseBroadcastScope = (value: string): BroadcastScope =>
+    value === "Selected Devices" ? "Selected Devices" : "All Devices";
 const parseStyle = (value: string): Style =>
     value === "Classic" || value === "Gradient" || value === "Minimal" ? value : "Neon";
 const parseStatus = (value: string): Status =>
@@ -93,8 +110,17 @@ const normalizeTicker = (ticker: Ticker): Ticker => ({
     ...ticker,
     backgroundColor: ticker.backgroundColor ?? "#1a1f2e",
     position: ticker.position ?? "Bottom",
+    broadcastScope: ticker.broadcastScope ?? "All Devices",
+    deviceIds: ticker.deviceIds ?? [],
+    deviceNames: ticker.deviceNames ?? [],
     createdAt: ticker.createdAt ? new Date(ticker.createdAt).toLocaleString() : "",
 });
+
+const formatScopeListing = (ticker: Pick<Ticker, "broadcastScope" | "deviceNames">) => {
+    if (ticker.broadcastScope === "All Devices") return "All Devices";
+    if (ticker.deviceNames.length === 0) return "Selected devices (none assigned)";
+    return ticker.deviceNames.join(", ");
+};
 
 type TickerPreviewSource = Pick<Ticker, "text" | "speed" | "priority" | "style" | "color" | "backgroundColor" | "position" | "status">;
 
@@ -139,17 +165,8 @@ const TickerPreviewStrip = ({ ticker, height = 44 }: { ticker: TickerPreviewSour
                     fontSize: height > 48 ? "1.05rem" : "0.95rem",
                     paddingLeft: 20,
                     ...stylePreview({
-                        id: "preview",
-                        text: ticker.text,
-                        speed: ticker.speed,
-                        priority: ticker.priority,
                         style: ticker.style,
                         color: ticker.color,
-                        backgroundColor: ticker.backgroundColor,
-                        position: ticker.position,
-                        status: ticker.status,
-                        screens: 0,
-                        createdAt: "",
                     }),
                 }}
             >
@@ -159,7 +176,7 @@ const TickerPreviewStrip = ({ ticker, height = 44 }: { ticker: TickerPreviewSour
     </div>
 );
 
-const stylePreview = (t: Ticker): React.CSSProperties => {
+const stylePreview = (t: Pick<Ticker, "style" | "color">): React.CSSProperties => {
     switch (t.style) {
         case "Neon":
             return {
@@ -202,6 +219,9 @@ export default function TickersPage() {
     const [previewTicker, setPreviewTicker] = useState<Ticker | null>(null);
     const [pendingId, setPendingId] = useState<string | null>(null);
     const [pendingAction, setPendingAction] = useState<"toggle" | "delete" | null>(null);
+    const [devices, setDevices] = useState<DeviceOption[]>([]);
+    const [deviceSearch, setDeviceSearch] = useState("");
+    const [isLoadingDevices, setIsLoadingDevices] = useState(false);
 
     const loadTickers = useCallback(async () => {
         if (!activeOrganizationId) return;
@@ -223,6 +243,37 @@ export default function TickersPage() {
         void loadTickers();
     }, [loadTickers]);
 
+    const loadDevices = useCallback(async () => {
+        if (!activeOrganizationId) return;
+        setIsLoadingDevices(true);
+        try {
+            const response = await apiRequest<DeviceOption[]>("/api/client-data/devices", {
+                headers: { "x-organization-id": activeOrganizationId },
+            });
+            setDevices(response);
+        } catch (error) {
+            toast.error(describeError(error, "Failed to load devices"));
+        } finally {
+            setIsLoadingDevices(false);
+        }
+    }, [activeOrganizationId]);
+
+    useEffect(() => {
+        if (showEditor) {
+            void loadDevices();
+            setDeviceSearch("");
+        }
+    }, [showEditor, loadDevices]);
+
+    const filteredDevices = useMemo(() => {
+        const query = deviceSearch.trim().toLowerCase();
+        if (!query) return devices;
+        return devices.filter((device) =>
+            device.name.toLowerCase().includes(query) ||
+            (device.location ?? "").toLowerCase().includes(query),
+        );
+    }, [devices, deviceSearch]);
+
     const filtered = useMemo(() => {
         const query = search.trim().toLowerCase();
         return tickers.filter((t) => {
@@ -231,7 +282,8 @@ export default function TickersPage() {
             return (
                 t.text.toLowerCase().includes(query) ||
                 t.priority.toLowerCase().includes(query) ||
-                t.style.toLowerCase().includes(query)
+                t.style.toLowerCase().includes(query) ||
+                formatScopeListing(t).toLowerCase().includes(query)
             );
         });
     }, [tickers, search, statusFilter]);
@@ -252,6 +304,8 @@ export default function TickersPage() {
             speed: ticker.speed,
             priority: ticker.priority,
             position: ticker.position,
+            broadcastScope: ticker.broadcastScope,
+            deviceIds: ticker.deviceIds,
             style: ticker.style,
             status: ticker.status,
             color: ticker.color,
@@ -274,6 +328,10 @@ export default function TickersPage() {
         const text = editorForm.text.trim();
         if (!text) {
             setEditorError("Ticker text is required");
+            return;
+        }
+        if (editorForm.broadcastScope === "Selected Devices" && editorForm.deviceIds.length === 0) {
+            setEditorError("Select at least one device for a targeted broadcast");
             return;
         }
 
@@ -364,6 +422,15 @@ export default function TickersPage() {
             setPendingId(null);
             setPendingAction(null);
         }
+    };
+
+    const toggleDeviceSelection = (deviceId: string) => {
+        setEditorForm((prev) => ({
+            ...prev,
+            deviceIds: prev.deviceIds.includes(deviceId)
+                ? prev.deviceIds.filter((id) => id !== deviceId)
+                : [...prev.deviceIds, deviceId],
+        }));
     };
 
     const totalReach = tickers.reduce((sum, t) => sum + t.screens, 0);
@@ -684,16 +751,27 @@ export default function TickersPage() {
                                                 </button>
                                             </div>
                                         </div>
-                                        <p
-                                            style={{
-                                                fontSize: "1.05rem",
-                                                marginBottom: 12,
-                                                lineHeight: 1.5,
-                                                ...stylePreview(t),
-                                            }}
-                                        >
-                                            {t.text}
-                                        </p>
+                                        <div style={{ marginBottom: 12 }}>
+                                            <h3
+                                                style={{
+                                                    fontSize: "1.05rem",
+                                                    fontWeight: 700,
+                                                    marginBottom: 6,
+                                                    lineHeight: 1.4,
+                                                    ...stylePreview(t),
+                                                }}
+                                            >
+                                                {t.text}
+                                            </h3>
+                                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 4 }}>
+                                                <span style={{ fontWeight: 600, color: "hsl(var(--text-muted))" }}>Scope: </span>
+                                                {formatScopeListing(t)}
+                                            </p>
+                                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
+                                                <span style={{ fontWeight: 600 }}>Status: </span>
+                                                {t.status}
+                                            </p>
+                                        </div>
                                         <div
                                             style={{
                                                 display: "flex",
@@ -710,7 +788,7 @@ export default function TickersPage() {
                                                 Position: {t.position}
                                             </span>
                                             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                                <Monitor size={12} /> {t.screens} Screens
+                                                <Monitor size={12} /> {t.screens} screen{t.screens === 1 ? "" : "s"}
                                             </span>
                                             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                                 <Clock size={12} /> {t.createdAt}
@@ -1099,6 +1177,151 @@ export default function TickersPage() {
                                     </select>
                                 </div>
                             </div>
+
+                            <div style={{ marginBottom: 16 }}>
+                                <label
+                                    style={{
+                                        display: "block",
+                                        fontSize: "0.7rem",
+                                        color: "hsl(var(--text-muted))",
+                                        fontWeight: 700,
+                                        textTransform: "uppercase",
+                                        marginBottom: 10,
+                                    }}
+                                >
+                                    Broadcast Scope
+                                </label>
+                                <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                                    {BROADCAST_SCOPES.map((scope) => (
+                                        <label
+                                            key={scope}
+                                            style={{
+                                                display: "flex",
+                                                alignItems: "center",
+                                                gap: 8,
+                                                fontSize: "0.9rem",
+                                                cursor: "pointer",
+                                            }}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name="broadcastScope"
+                                                checked={editorForm.broadcastScope === scope}
+                                                onChange={() =>
+                                                    setEditorForm((prev) => ({
+                                                        ...prev,
+                                                        broadcastScope: parseBroadcastScope(scope),
+                                                        deviceIds: scope === "All Devices" ? [] : prev.deviceIds,
+                                                    }))
+                                                }
+                                            />
+                                            {scope}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {editorForm.broadcastScope === "Selected Devices" && (
+                                <div style={{ marginBottom: 16 }}>
+                                    <label
+                                        style={{
+                                            display: "block",
+                                            fontSize: "0.7rem",
+                                            color: "hsl(var(--text-muted))",
+                                            fontWeight: 700,
+                                            textTransform: "uppercase",
+                                            marginBottom: 8,
+                                        }}
+                                    >
+                                        Target Devices
+                                    </label>
+                                    <div style={{ position: "relative", marginBottom: 10 }}>
+                                        <Search
+                                            size={16}
+                                            style={{
+                                                position: "absolute",
+                                                left: 12,
+                                                top: "50%",
+                                                transform: "translateY(-50%)",
+                                                color: "hsl(var(--text-muted))",
+                                            }}
+                                        />
+                                        <input
+                                            type="text"
+                                            placeholder="Search devices..."
+                                            value={deviceSearch}
+                                            onChange={(e) => setDeviceSearch(e.target.value)}
+                                            style={{
+                                                width: "100%",
+                                                padding: "10px 14px 10px 38px",
+                                                borderRadius: 10,
+                                                background: "hsla(var(--bg-base), 0.5)",
+                                                border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                                color: "hsl(var(--text-primary))",
+                                                fontSize: "0.85rem",
+                                                outline: "none",
+                                            }}
+                                        />
+                                    </div>
+                                    <div
+                                        style={{
+                                            maxHeight: 220,
+                                            overflowY: "auto",
+                                            borderRadius: 10,
+                                            border: "1px solid hsla(var(--border-subtle), 0.5)",
+                                            background: "hsla(var(--bg-base), 0.35)",
+                                            padding: 8,
+                                        }}
+                                    >
+                                        {isLoadingDevices ? (
+                                            <p style={{ padding: 12, fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
+                                                Loading devices...
+                                            </p>
+                                        ) : filteredDevices.length === 0 ? (
+                                            <p style={{ padding: 12, fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
+                                                {devices.length === 0 ? "No paired devices available." : "No devices match your search."}
+                                            </p>
+                                        ) : (
+                                            filteredDevices.map((device) => {
+                                                const selected = editorForm.deviceIds.includes(device.id);
+                                                return (
+                                                    <label
+                                                        key={device.id}
+                                                        style={{
+                                                            display: "flex",
+                                                            alignItems: "center",
+                                                            gap: 10,
+                                                            padding: "10px 12px",
+                                                            borderRadius: 8,
+                                                            cursor: "pointer",
+                                                            background: selected
+                                                                ? "hsla(var(--accent-primary), 0.12)"
+                                                                : "transparent",
+                                                        }}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selected}
+                                                            onChange={() => toggleDeviceSelection(device.id)}
+                                                        />
+                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                            <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{device.name}</p>
+                                                            {device.location ? (
+                                                                <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
+                                                                    {device.location}
+                                                                </p>
+                                                            ) : null}
+                                                        </div>
+                                                    </label>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                    <p style={{ marginTop: 8, fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
+                                        {editorForm.deviceIds.length} device{editorForm.deviceIds.length === 1 ? "" : "s"} selected
+                                    </p>
+                                </div>
+                            )}
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                                 <div>

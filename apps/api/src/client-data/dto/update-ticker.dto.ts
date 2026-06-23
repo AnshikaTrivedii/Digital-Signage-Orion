@@ -1,5 +1,6 @@
-import { IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import {
+  TICKER_BROADCAST_SCOPES,
   TICKER_POSITIONS,
   TICKER_PRIORITIES,
   TICKER_SPEEDS,
@@ -41,4 +42,13 @@ export class UpdateTickerDto {
   @IsOptional()
   @IsIn(TICKER_POSITIONS as unknown as string[])
   position?: (typeof TICKER_POSITIONS)[number];
+
+  @IsOptional()
+  @IsIn(TICKER_BROADCAST_SCOPES as unknown as string[])
+  broadcastScope?: (typeof TICKER_BROADCAST_SCOPES)[number];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  deviceIds?: string[];
 }

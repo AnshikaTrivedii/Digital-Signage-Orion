@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { Device, DeviceStatus, ProofOfPlayStatus, TickerStatus } from '@prisma/client';
+import { Device, DeviceStatus, ProofOfPlayStatus, TickerBroadcastScope, TickerStatus } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
@@ -296,7 +296,7 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     const knownAssetIds = this.parseCommaSeparatedIds(query.knownAssetIds);
     const clientAssetVersions = this.parseAssetVersionMap(query.assetVersions);
-    const tickers = await this.fetchActiveTickers(device.organizationId);
+    const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
 
     if (!device.currentPlaylistId) {
       const removedAssetIds = knownAssetIds;
@@ -393,9 +393,19 @@ export class PlayerService {
     };
   }
 
-  private async fetchActiveTickers(organizationId: string) {
+  private async fetchActiveTickers(organizationId: string, deviceId: string) {
     const tickers = await this.prisma.ticker.findMany({
-      where: { organizationId, status: TickerStatus.ACTIVE },
+      where: {
+        organizationId,
+        status: TickerStatus.ACTIVE,
+        OR: [
+          { broadcastScope: TickerBroadcastScope.ALL_DEVICES },
+          {
+            broadcastScope: TickerBroadcastScope.SELECTED_DEVICES,
+            deviceTargets: { some: { deviceId } },
+          },
+        ],
+      },
       orderBy: [{ priority: 'desc' }, { updatedAt: 'desc' }],
     });
 

@@ -12,6 +12,7 @@ import {
   SchedulePriority,
   ScheduleStatus,
   TickerPriority,
+  TickerBroadcastScope,
   TickerPosition,
   TickerSpeed,
   TickerStatus,
@@ -1040,6 +1041,11 @@ export class ClientDataService {
     const tickers = await this.prisma.ticker.findMany({
       where: { organizationId },
       orderBy: { updatedAt: 'desc' },
+      include: {
+        deviceTargets: {
+          include: { device: { select: { id: true, name: true } } },
+        },
+      },
     });
 
     return tickers.map((ticker) => this.serializeTicker(ticker));
@@ -1056,6 +1062,8 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: string;
+      broadcastScope?: string;
+      deviceIds?: string[];
     },
   ) {
     this.assertCanEdit(actor);
@@ -1063,18 +1071,45 @@ export class ClientDataService {
     const text = body.text?.trim();
     if (!text) throw new BadRequestException('Ticker text is required');
 
-    const ticker = await this.prisma.ticker.create({
-      data: {
-        organizationId,
-        text,
-        speed: this.toTickerSpeed(body.speed),
-        style: this.toTickerStyle(body.style),
-        color: this.sanitizeTickerColor(body.color),
-        backgroundColor: this.sanitizeTickerColor(body.backgroundColor ?? '#1a1f2e'),
-        position: this.toTickerPosition(body.position),
-        status: this.toTickerStatus(body.status, TickerStatus.ACTIVE),
-        priority: this.toTickerPriority(body.priority),
-      },
+    const broadcastScope = this.toTickerBroadcastScope(body.broadcastScope);
+    const selectedDeviceIds = await this.resolveTickerDeviceIds(
+      organizationId,
+      broadcastScope,
+      body.deviceIds,
+    );
+    const screens = await this.countTickerReach(organizationId, broadcastScope, selectedDeviceIds);
+
+    const ticker = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.ticker.create({
+        data: {
+          organizationId,
+          text,
+          speed: this.toTickerSpeed(body.speed),
+          style: this.toTickerStyle(body.style),
+          color: this.sanitizeTickerColor(body.color),
+          backgroundColor: this.sanitizeTickerColor(body.backgroundColor ?? '#1a1f2e'),
+          position: this.toTickerPosition(body.position),
+          broadcastScope,
+          status: this.toTickerStatus(body.status, TickerStatus.ACTIVE),
+          priority: this.toTickerPriority(body.priority),
+          screens,
+        },
+      });
+
+      if (broadcastScope === TickerBroadcastScope.SELECTED_DEVICES) {
+        await tx.tickerDevice.createMany({
+          data: selectedDeviceIds.map((deviceId) => ({ tickerId: created.id, deviceId })),
+        });
+      }
+
+      return tx.ticker.findUniqueOrThrow({
+        where: { id: created.id },
+        include: {
+          deviceTargets: {
+            include: { device: { select: { id: true, name: true } } },
+          },
+        },
+      });
     });
 
     return this.serializeTicker(ticker);
@@ -1092,12 +1127,19 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: string;
+      broadcastScope?: string;
+      deviceIds?: string[];
     },
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
     const existing = await this.prisma.ticker.findFirst({
       where: { id: tickerId, organizationId },
+      include: {
+        deviceTargets: {
+          include: { device: { select: { id: true, name: true } } },
+        },
+      },
     });
     if (!existing) throw new NotFoundException('Ticker not found');
 
@@ -1110,6 +1152,8 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: TickerPosition;
+      broadcastScope?: TickerBroadcastScope;
+      screens?: number;
     } = {};
 
     if (typeof body.text === 'string') {
@@ -1127,9 +1171,49 @@ export class ClientDataService {
     }
     if (body.position !== undefined) data.position = this.toTickerPosition(body.position);
 
-    const updated = await this.prisma.ticker.update({
-      where: { id: tickerId },
-      data,
+    const nextBroadcastScope =
+      body.broadcastScope !== undefined
+        ? this.toTickerBroadcastScope(body.broadcastScope)
+        : existing.broadcastScope;
+    const shouldSyncDevices =
+      body.broadcastScope !== undefined || body.deviceIds !== undefined;
+
+    let selectedDeviceIds = existing.deviceTargets.map((target) => target.deviceId);
+    if (shouldSyncDevices) {
+      selectedDeviceIds = await this.resolveTickerDeviceIds(
+        organizationId,
+        nextBroadcastScope,
+        body.deviceIds ?? (nextBroadcastScope === TickerBroadcastScope.SELECTED_DEVICES
+          ? existing.deviceTargets.map((target) => target.deviceId)
+          : undefined),
+      );
+      data.broadcastScope = nextBroadcastScope;
+      data.screens = await this.countTickerReach(organizationId, nextBroadcastScope, selectedDeviceIds);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const saved = await tx.ticker.update({
+        where: { id: tickerId },
+        data,
+      });
+
+      if (shouldSyncDevices) {
+        await tx.tickerDevice.deleteMany({ where: { tickerId } });
+        if (nextBroadcastScope === TickerBroadcastScope.SELECTED_DEVICES) {
+          await tx.tickerDevice.createMany({
+            data: selectedDeviceIds.map((deviceId) => ({ tickerId, deviceId })),
+          });
+        }
+      }
+
+      return tx.ticker.findUniqueOrThrow({
+        where: { id: saved.id },
+        include: {
+          deviceTargets: {
+            include: { device: { select: { id: true, name: true } } },
+          },
+        },
+      });
     });
 
     return this.serializeTicker(updated);
@@ -1145,6 +1229,11 @@ export class ClientDataService {
     const updated = await this.prisma.ticker.update({
       where: { id: tickerId },
       data: { status: nextStatus },
+      include: {
+        deviceTargets: {
+          include: { device: { select: { id: true, name: true } } },
+        },
+      },
     });
 
     return this.serializeTicker(updated);
@@ -1811,6 +1900,56 @@ export class ClientDataService {
     return fallback;
   }
 
+  private toTickerBroadcastScope(scope?: string | null) {
+    const normalized = (scope ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (normalized === 'selected devices') return TickerBroadcastScope.SELECTED_DEVICES;
+    return TickerBroadcastScope.ALL_DEVICES;
+  }
+
+  private async resolveTickerDeviceIds(
+    organizationId: string,
+    broadcastScope: TickerBroadcastScope,
+    deviceIds?: string[],
+  ) {
+    if (broadcastScope === TickerBroadcastScope.ALL_DEVICES) {
+      return [] as string[];
+    }
+
+    const uniqueIds = Array.from(new Set((deviceIds ?? []).filter(Boolean)));
+    if (uniqueIds.length === 0) {
+      throw new BadRequestException('Select at least one device for a targeted ticker broadcast');
+    }
+
+    const validDevices = await this.prisma.device.findMany({
+      where: {
+        organizationId,
+        isPaired: true,
+        id: { in: uniqueIds },
+      },
+      select: { id: true },
+    });
+
+    if (validDevices.length !== uniqueIds.length) {
+      throw new BadRequestException('One or more selected devices are invalid for this organization');
+    }
+
+    return validDevices.map((device) => device.id);
+  }
+
+  private async countTickerReach(
+    organizationId: string,
+    broadcastScope: TickerBroadcastScope,
+    selectedDeviceIds: string[],
+  ) {
+    if (broadcastScope === TickerBroadcastScope.SELECTED_DEVICES) {
+      return selectedDeviceIds.length;
+    }
+
+    return this.prisma.device.count({
+      where: { organizationId, isPaired: true },
+    });
+  }
+
   private toTickerPosition(position?: string | null) {
     const normalized = (position ?? '').toLowerCase();
     if (normalized === 'top') return TickerPosition.TOP;
@@ -1830,12 +1969,15 @@ export class ClientDataService {
     color: string;
     backgroundColor: string;
     position: TickerPosition;
+    broadcastScope: TickerBroadcastScope;
     status: TickerStatus;
     priority: TickerPriority;
     screens: number;
     createdAt: Date;
     updatedAt: Date;
+    deviceTargets?: { device: { id: string; name: string } }[];
   }) {
+    const deviceTargets = ticker.deviceTargets ?? [];
     return {
       id: ticker.id,
       text: ticker.text,
@@ -1844,9 +1986,12 @@ export class ClientDataService {
       color: ticker.color,
       backgroundColor: ticker.backgroundColor,
       position: this.toTitleStatus(ticker.position),
+      broadcastScope: this.toTitleStatus(ticker.broadcastScope),
       status: this.toTitleStatus(ticker.status),
       priority: this.toTitleStatus(ticker.priority),
       screens: ticker.screens,
+      deviceIds: deviceTargets.map((target) => target.device.id),
+      deviceNames: deviceTargets.map((target) => target.device.name),
       createdAt: ticker.createdAt,
       updatedAt: ticker.updatedAt,
     };

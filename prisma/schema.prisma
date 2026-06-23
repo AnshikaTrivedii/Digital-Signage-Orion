@@ -119,6 +119,11 @@ enum TickerPosition {
   BOTTOM
 }
 
+enum TickerBroadcastScope {
+  ALL_DEVICES
+  SELECTED_DEVICES
+}
+
 enum ScheduleStatus {
   SCHEDULED
   ACTIVE
@@ -312,30 +317,45 @@ model Device {
   organization    Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   currentPlaylist Playlist?        @relation(fields: [currentPlaylistId], references: [id], onDelete: SetNull)
   proofOfPlayLogs ProofOfPlayLog[]
+  tickerTargets   TickerDevice[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, currentPlaylistId])
 }
 
 model Ticker {
-  id              String         @id @default(cuid())
+  id              String               @id @default(cuid())
   organizationId  String
   text            String
-  speed           TickerSpeed    @default(NORMAL)
-  style           TickerStyle    @default(NEON)
-  color           String         @default("#00e5ff")
-  backgroundColor String         @default("#1a1f2e")
-  position        TickerPosition @default(BOTTOM)
-  status          TickerStatus   @default(DRAFT)
-  priority        TickerPriority @default(NORMAL)
-  screens         Int            @default(0)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  speed           TickerSpeed          @default(NORMAL)
+  style           TickerStyle          @default(NEON)
+  color           String               @default("#00e5ff")
+  backgroundColor String               @default("#1a1f2e")
+  position        TickerPosition       @default(BOTTOM)
+  broadcastScope  TickerBroadcastScope @default(ALL_DEVICES)
+  status          TickerStatus         @default(DRAFT)
+  priority        TickerPriority       @default(NORMAL)
+  screens         Int                  @default(0)
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
-  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceTargets   TickerDevice[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, status])
+}
+
+model TickerDevice {
+  tickerId  String
+  deviceId  String
+  createdAt DateTime @default(now())
+
+  ticker    Ticker   @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@id([tickerId, deviceId])
+  @@index([deviceId])
 }
 
 model ProofOfPlayLog {
