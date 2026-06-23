@@ -62,15 +62,22 @@ export class S3Service {
   }
 
   buildLocalUploadUrl(organizationId: string, assetId: string): string {
-    const port = process.env.PORT ?? 3001;
-    const base = (process.env.API_PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, '');
+    const base = this.publicApiBase();
     return `${base}/api/organizations/${organizationId}/assets/${assetId}/upload`;
   }
 
   buildLocalDownloadUrl(key: string): string {
+    return `${this.publicApiBase()}/uploads/${key}`;
+  }
+
+  /** Public API base URL used in player-facing download links (must be reachable from devices). */
+  private publicApiBase(): string {
     const port = process.env.PORT ?? 3001;
-    const base = (process.env.API_PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, '');
-    return `${base}/uploads/${key}`;
+    const base =
+      process.env.API_PUBLIC_URL ??
+      process.env.RENDER_EXTERNAL_URL ??
+      `http://localhost:${port}`;
+    return base.replace(/\/$/, '');
   }
 
   private localPath(key: string): string {

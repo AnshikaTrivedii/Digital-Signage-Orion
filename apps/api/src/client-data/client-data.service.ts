@@ -13,6 +13,7 @@ import {
   ScheduleStatus,
   TickerPriority,
   TickerBroadcastScope,
+  TickerHeight,
   TickerPosition,
   TickerSpeed,
   TickerStatus,
@@ -434,7 +435,7 @@ export class ClientDataService {
         orderBy: { updatedAt: 'desc' },
       }),
       this.prisma.device.findMany({
-        where: { organizationId },
+        where: { organizationId, isPaired: true },
         select: { id: true, name: true, location: true, status: true, currentPlaylistId: true },
         orderBy: { createdAt: 'asc' },
       }),
@@ -476,10 +477,10 @@ export class ClientDataService {
 
     if (deviceIds.length > 0) {
       const validDeviceCount = await this.prisma.device.count({
-        where: { organizationId, id: { in: deviceIds } },
+        where: { organizationId, isPaired: true, id: { in: deviceIds } },
       });
       if (validDeviceCount !== deviceIds.length) {
-        throw new BadRequestException('Some devices are invalid for this organization');
+        throw new BadRequestException('Some devices are invalid or not paired for this organization');
       }
     }
 
@@ -1062,6 +1063,7 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: string;
+      height?: string;
       broadcastScope?: string;
       deviceIds?: string[];
     },
@@ -1089,6 +1091,7 @@ export class ClientDataService {
           color: this.sanitizeTickerColor(body.color),
           backgroundColor: this.sanitizeTickerColor(body.backgroundColor ?? '#1a1f2e'),
           position: this.toTickerPosition(body.position),
+          height: this.toTickerHeight(body.height),
           broadcastScope,
           status: this.toTickerStatus(body.status, TickerStatus.ACTIVE),
           priority: this.toTickerPriority(body.priority),
@@ -1127,6 +1130,7 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: string;
+      height?: string;
       broadcastScope?: string;
       deviceIds?: string[];
     },
@@ -1152,6 +1156,7 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: TickerPosition;
+      height?: TickerHeight;
       broadcastScope?: TickerBroadcastScope;
       screens?: number;
     } = {};
@@ -1170,6 +1175,7 @@ export class ClientDataService {
       data.backgroundColor = this.sanitizeTickerColor(body.backgroundColor);
     }
     if (body.position !== undefined) data.position = this.toTickerPosition(body.position);
+    if (body.height !== undefined) data.height = this.toTickerHeight(body.height);
 
     const nextBroadcastScope =
       body.broadcastScope !== undefined
@@ -1956,6 +1962,13 @@ export class ClientDataService {
     return TickerPosition.BOTTOM;
   }
 
+  private toTickerHeight(height?: string | null) {
+    const normalized = (height ?? '').toLowerCase();
+    if (normalized === 'small') return TickerHeight.SMALL;
+    if (normalized === 'large') return TickerHeight.LARGE;
+    return TickerHeight.MEDIUM;
+  }
+
   private sanitizeTickerColor(color?: string | null) {
     if (!color) return '#00e5ff';
     return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '#00e5ff';
@@ -1969,6 +1982,7 @@ export class ClientDataService {
     color: string;
     backgroundColor: string;
     position: TickerPosition;
+    height: TickerHeight;
     broadcastScope: TickerBroadcastScope;
     status: TickerStatus;
     priority: TickerPriority;
@@ -1986,6 +2000,7 @@ export class ClientDataService {
       color: ticker.color,
       backgroundColor: ticker.backgroundColor,
       position: this.toTitleStatus(ticker.position),
+      height: this.toTitleStatus(ticker.height),
       broadcastScope: this.toTitleStatus(ticker.broadcastScope),
       status: this.toTitleStatus(ticker.status),
       priority: this.toTitleStatus(ticker.priority),

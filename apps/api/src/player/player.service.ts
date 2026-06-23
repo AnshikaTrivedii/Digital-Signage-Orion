@@ -290,7 +290,8 @@ export class PlayerService {
 
   /**
    * Return the active playlist manifest with incremental sync support.
-   * When playlistVersion matches the server version, returns unchanged=true with no asset payloads.
+   * Skips the manifest only when the client reports a matching playlist version
+   * and already has the current assets cached locally.
    */
   async syncPlaylist(authHeader: string | undefined, query: SyncQueryDto = {}) {
     const device = await this.resolveDeviceByToken(authHeader);
@@ -359,8 +360,15 @@ export class PlayerService {
     const currentAssetIds = manifest.map((entry) => entry.id);
     const removedAssetIds = knownAssetIds.filter((id) => !currentAssetIds.includes(id));
 
-    const playlistUnchanged =
+    const playlistVersionMatches =
       query.playlistVersion !== undefined && query.playlistVersion === playlist.syncVersion;
+    const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
+    const clientHasPendingDownloads = manifest.some((entry) => entry.requiresDownload);
+    const canSkipManifest =
+      playlistVersionMatches &&
+      knownAssetIds.length > 0 &&
+      !clientMissingAssets &&
+      !clientHasPendingDownloads;
 
     await this.prisma.device.update({
       where: { id: device.id },
@@ -370,7 +378,7 @@ export class PlayerService {
       },
     });
 
-    if (playlistUnchanged) {
+    if (canSkipManifest) {
       return {
         unchanged: true,
         playlistVersion: playlist.syncVersion,
@@ -410,11 +418,14 @@ export class PlayerService {
     });
 
     return tickers.map((ticker) => ({
+      id: ticker.id,
       text: ticker.text,
-      speed: ticker.speed,
-      color: ticker.color,
-      backgroundColor: ticker.backgroundColor,
       position: ticker.position,
+      speed: ticker.speed,
+      height: ticker.height,
+      style: ticker.style,
+      textColor: ticker.color,
+      backgroundColor: ticker.backgroundColor,
       priority: ticker.priority,
     }));
   }
@@ -465,11 +476,16 @@ export class PlayerService {
       for (const campaignAsset of link.campaign.campaignAssets) {
         const asset = campaignAsset.asset;
         const isUrlAsset = asset.type === 'URL';
+
+        if (isUrlAsset) {
+          if (!asset.url?.trim()) continue;
+        } else if (asset.status !== 'READY' || !asset.s3Key) {
+          continue;
+        }
+
         const clientVersion = clientAssetVersions.get(asset.id);
         const requiresDownload =
           !isUrlAsset &&
-          asset.status === 'READY' &&
-          !!asset.s3Key &&
           (clientVersion === undefined || clientVersion < asset.contentVersion);
 
         const downloadUrl =

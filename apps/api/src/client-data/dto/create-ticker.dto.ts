@@ -3,6 +3,7 @@ import { IsArray, IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength }
 export const TICKER_SPEEDS = ['Slow', 'Normal', 'Fast'] as const;
 export const TICKER_PRIORITIES = ['Low', 'Normal', 'Urgent'] as const;
 export const TICKER_POSITIONS = ['Top', 'Bottom'] as const;
+export const TICKER_HEIGHTS = ['Small', 'Medium', 'Large'] as const;
 export const TICKER_BROADCAST_SCOPES = ['All Devices', 'Selected Devices'] as const;
 export const TICKER_STYLES = ['Classic', 'Neon', 'Gradient', 'Minimal'] as const;
 export const TICKER_STATUSES = ['Active', 'Paused', 'Draft'] as const;
@@ -40,6 +41,10 @@ export class CreateTickerDto {
   @IsOptional()
   @IsIn(TICKER_POSITIONS as unknown as string[])
   position?: (typeof TICKER_POSITIONS)[number];
+
+  @IsOptional()
+  @IsIn(TICKER_HEIGHTS as unknown as string[])
+  height?: (typeof TICKER_HEIGHTS)[number];
 
   @IsOptional()
   @IsIn(TICKER_BROADCAST_SCOPES as unknown as string[])
