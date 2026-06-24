@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -31,7 +31,7 @@ async function bootstrap() {
 
   const port = Number(process.env.PORT ?? 3001);
   await app.listen(port);
-  console.log(`Orion API running on http://localhost:${port}/api`);
+  console.log(`Orion API ready on http://localhost:${port}/api`);
 }
 
 bootstrap();

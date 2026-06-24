@@ -15,11 +15,11 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentActor } from '../common/decorators/current-actor.decorator';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { ClientDataService } from './client-data.service';
+import { AddPlaylistAssetDto } from './dto/add-playlist-asset.dto';
 import { CreateDeviceDto } from './dto/create-device.dto';
-import { AddCampaignAssetDto } from './dto/add-campaign-asset.dto';
 import { PairDeviceDto } from './dto/pair-device.dto';
-import { ReorderCampaignAssetsDto } from './dto/reorder-campaign-assets.dto';
-import { UpdateCampaignAssetDurationDto } from './dto/update-campaign-asset-duration.dto';
+import { ReorderPlaylistAssetsDto } from './dto/reorder-playlist-assets.dto';
+import { UpdatePlaylistAssetDurationDto } from './dto/update-playlist-asset-duration.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { CreateScheduleEventDto } from './dto/create-schedule-event.dto';
 import { UpdateScheduleEventDto } from './dto/update-schedule-event.dto';
@@ -35,68 +35,6 @@ export class ClientDataController {
   @Get('dashboard')
   dashboard(@CurrentActor() actor: RequestActor) {
     return this.clientDataService.dashboard(actor);
-  }
-
-  @Get('campaigns')
-  listCampaigns(@CurrentActor() actor: RequestActor) {
-    return this.clientDataService.listCampaigns(actor);
-  }
-
-  @Post('campaigns')
-  createCampaign(@CurrentActor() actor: RequestActor, @Body() body: { name: string; description?: string }) {
-    return this.clientDataService.createCampaign(actor, body);
-  }
-
-  @Delete('campaigns/:campaignId')
-  deleteCampaign(@CurrentActor() actor: RequestActor, @Param('campaignId') campaignId: string) {
-    return this.clientDataService.deleteCampaign(actor, campaignId);
-  }
-
-  @Get('campaigns/:campaignId/assets')
-  getCampaignAssets(@CurrentActor() actor: RequestActor, @Param('campaignId') campaignId: string) {
-    return this.clientDataService.getCampaignAssets(actor, campaignId);
-  }
-
-  @Post('campaigns/:campaignId/assets')
-  addCampaignAsset(
-    @CurrentActor() actor: RequestActor,
-    @Param('campaignId') campaignId: string,
-    @Body() body: AddCampaignAssetDto,
-  ) {
-    return this.clientDataService.addCampaignAsset(actor, campaignId, body.assetId, body.durationSeconds);
-  }
-
-  @Patch('campaigns/:campaignId/assets/reorder')
-  reorderCampaignAssets(
-    @CurrentActor() actor: RequestActor,
-    @Param('campaignId') campaignId: string,
-    @Body() body: ReorderCampaignAssetsDto,
-  ) {
-    return this.clientDataService.reorderCampaignAssets(actor, campaignId, body);
-  }
-
-  @Patch('campaigns/:campaignId/assets/:assetId')
-  updateCampaignAssetDuration(
-    @CurrentActor() actor: RequestActor,
-    @Param('campaignId') campaignId: string,
-    @Param('assetId') assetId: string,
-    @Body() body: UpdateCampaignAssetDurationDto,
-  ) {
-    return this.clientDataService.updateCampaignAssetDuration(
-      actor,
-      campaignId,
-      assetId,
-      body.durationSeconds,
-    );
-  }
-
-  @Delete('campaigns/:campaignId/assets/:assetId')
-  removeCampaignAsset(
-    @CurrentActor() actor: RequestActor,
-    @Param('campaignId') campaignId: string,
-    @Param('assetId') assetId: string,
-  ) {
-    return this.clientDataService.removeCampaignAsset(actor, campaignId, assetId);
   }
 
   @Get('playlists')
@@ -132,9 +70,56 @@ export class ClientDataController {
   assignPlaylist(
     @CurrentActor() actor: RequestActor,
     @Param('playlistId') playlistId: string,
-    @Body() body: { campaignIds: string[]; deviceIds: string[] },
+    @Body() body: { deviceIds: string[] },
   ) {
     return this.clientDataService.assignPlaylist(actor, playlistId, body);
+  }
+
+  @Get('playlists/:playlistId/assets')
+  getPlaylistAssets(@CurrentActor() actor: RequestActor, @Param('playlistId') playlistId: string) {
+    return this.clientDataService.getPlaylistAssets(actor, playlistId);
+  }
+
+  @Post('playlists/:playlistId/assets')
+  addPlaylistAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('playlistId') playlistId: string,
+    @Body() body: AddPlaylistAssetDto,
+  ) {
+    return this.clientDataService.addPlaylistAsset(actor, playlistId, body.assetId, body.durationSeconds);
+  }
+
+  @Patch('playlists/:playlistId/assets/reorder')
+  reorderPlaylistAssets(
+    @CurrentActor() actor: RequestActor,
+    @Param('playlistId') playlistId: string,
+    @Body() body: ReorderPlaylistAssetsDto,
+  ) {
+    return this.clientDataService.reorderPlaylistAssets(actor, playlistId, body);
+  }
+
+  @Patch('playlists/:playlistId/assets/:assetId')
+  updatePlaylistAssetDuration(
+    @CurrentActor() actor: RequestActor,
+    @Param('playlistId') playlistId: string,
+    @Param('assetId') assetId: string,
+    @Body() body: UpdatePlaylistAssetDurationDto,
+  ) {
+    return this.clientDataService.updatePlaylistAssetDuration(
+      actor,
+      playlistId,
+      assetId,
+      body.durationSeconds,
+    );
+  }
+
+  @Delete('playlists/:playlistId/assets/:assetId')
+  removePlaylistAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('playlistId') playlistId: string,
+    @Param('assetId') assetId: string,
+  ) {
+    return this.clientDataService.removePlaylistAsset(actor, playlistId, assetId);
   }
 
   @Get('schedule-events')

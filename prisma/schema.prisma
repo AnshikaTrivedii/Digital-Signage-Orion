@@ -25,7 +25,6 @@ enum FeatureKey {
   DASHBOARD
   ASSETS
   PLAYLISTS
-  CAMPAIGNS
   SCHEDULE
   TICKERS
   DEVICES
@@ -69,12 +68,6 @@ enum InvitationStatus {
 
 enum InvitationScope {
   ORGANIZATION
-}
-
-enum CampaignStatus {
-  ACTIVE
-  DRAFT
-  SCHEDULED
 }
 
 enum PlaylistStatus {
@@ -188,7 +181,7 @@ model Organization {
   memberships        OrganizationMembership[]
   invitations        Invitation[]
   assets             Asset[]
-  campaigns          Campaign[]
+  assetFolders       AssetFolder[]
   playlists          Playlist[]
   scheduleEvents     ScheduleEvent[]
   devices            Device[]
@@ -199,26 +192,6 @@ model Organization {
   updatedAt          DateTime                 @updatedAt
 }
 
-
-model Campaign {
-  id             String         @id @default(cuid())
-  organizationId String
-  name           String
-  description    String
-  assetCount     Int            @default(0)
-  status         CampaignStatus @default(DRAFT)
-  screens        Int            @default(0)
-  impressions    Int            @default(0)
-  color          String         @default("#4ade80")
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
-
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  playlistLinks  PlaylistCampaign[]
-  campaignAssets CampaignAsset[]
-
-  @@index([organizationId, createdAt])
-}
 
 model Playlist {
   id             String         @id @default(cuid())
@@ -234,26 +207,10 @@ model Playlist {
 
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items          PlaylistItem[]
-  campaignLinks  PlaylistCampaign[]
+  playlistAssets PlaylistAsset[]
   devices        Device[]
 
   @@index([organizationId, createdAt])
-}
-
-model PlaylistCampaign {
-  id         String   @id @default(cuid())
-  playlistId String
-  campaignId String
-  position   Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  playlist   Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-
-  @@unique([playlistId, campaignId])
-  @@index([campaignId])
-  @@index([playlistId, position])
 }
 
 model PlaylistItem {
@@ -268,6 +225,22 @@ model PlaylistItem {
 
   playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
 
+  @@index([playlistId, position])
+}
+
+model PlaylistAsset {
+  id              String   @id @default(cuid())
+  playlistId      String
+  assetId         String
+  position        Int
+  durationSeconds Int      @default(10)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, assetId])
   @@index([playlistId, position])
 }
 
@@ -462,9 +435,27 @@ model AuditLog {
   @@index([actorUserId, createdAt])
 }
 
+model AssetFolder {
+  id             String        @id @default(cuid())
+  organizationId String
+  name           String
+  parentId       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent         AssetFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children       AssetFolder[] @relation("FolderHierarchy")
+  assets         Asset[]
+
+  @@unique([organizationId, parentId, name])
+  @@index([organizationId])
+}
+
 model Asset {
   id                     String        @id @default(cuid())
   organizationId         String
+  folderId               String?
   name                   String
   type                   AssetType
   status                 AssetStatus   @default(UPLOADING)
@@ -484,25 +475,11 @@ model Asset {
   updatedAt              DateTime      @updatedAt
 
   organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  folder           AssetFolder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
   uploadedBy       User          @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-  campaignAssets   CampaignAsset[]
+  playlistAssets   PlaylistAsset[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, type])
-}
-
-model CampaignAsset {
-  id              String   @id @default(cuid())
-  campaignId      String
-  assetId         String
-  position        Int
-  durationSeconds Int      @default(10)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  campaign        Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
-
-  @@unique([campaignId, assetId])
-  @@index([campaignId, position])
+  @@index([organizationId, folderId])
 }

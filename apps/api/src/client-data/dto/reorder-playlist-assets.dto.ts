@@ -1,6 +1,6 @@
 import { ArrayNotEmpty, IsArray, IsString } from 'class-validator';
 
-export class ReorderCampaignAssetsDto {
+export class ReorderPlaylistAssetsDto {
   @IsArray()
   @ArrayNotEmpty()
   @IsString({ each: true })

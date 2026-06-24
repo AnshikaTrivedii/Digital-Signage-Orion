@@ -16,14 +16,56 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentActor } from '../common/decorators/current-actor.decorator';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { AssetsService } from './assets.service';
+import { CreateFolderDto } from './dto/create-folder.dto';
 import { CreateUrlAssetDto } from './dto/create-url-asset.dto';
 import { RequestUploadDto } from './dto/request-upload.dto';
+import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetTagsDto } from './dto/update-asset-tags.dto';
+import { UpdateFolderDto } from './dto/update-folder.dto';
 
 @Controller('organizations/:organizationId/assets')
 @UseGuards(JwtAuthGuard)
 export class AssetsController {
   constructor(private readonly assetsService: AssetsService) {}
+
+  // --- Folders (declared before :assetId routes to avoid param capture) ------
+
+  @Get('folders')
+  listFolders(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Query('parentId') parentId?: string,
+  ) {
+    return this.assetsService.listFolders(actor, organizationId, parentId ?? null);
+  }
+
+  @Post('folders')
+  createFolder(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Body() dto: CreateFolderDto,
+  ) {
+    return this.assetsService.createFolder(actor, organizationId, dto);
+  }
+
+  @Patch('folders/:folderId')
+  updateFolder(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('folderId') folderId: string,
+    @Body() dto: UpdateFolderDto,
+  ) {
+    return this.assetsService.updateFolder(actor, organizationId, folderId, dto);
+  }
+
+  @Delete('folders/:folderId')
+  deleteFolder(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('folderId') folderId: string,
+  ) {
+    return this.assetsService.deleteFolder(actor, organizationId, folderId);
+  }
 
   @Post('url')
   createUrlAsset(
@@ -79,12 +121,16 @@ export class AssetsController {
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('folderId') folderId?: string,
+    @Query('scope') scope?: string,
   ) {
     return this.assetsService.listAssets(actor, organizationId, {
       type,
       search,
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
+      folderId: folderId ?? null,
+      scope: scope === 'all' ? 'all' : 'folder',
     });
   }
 
@@ -114,5 +160,15 @@ export class AssetsController {
     @Body() dto: UpdateAssetTagsDto,
   ) {
     return this.assetsService.updateTags(actor, organizationId, assetId, dto);
+  }
+
+  @Patch(':assetId')
+  updateAsset(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Param('assetId') assetId: string,
+    @Body() dto: UpdateAssetDto,
+  ) {
+    return this.assetsService.updateAsset(actor, organizationId, assetId, dto);
   }
 }

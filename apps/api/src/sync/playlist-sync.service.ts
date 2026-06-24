@@ -16,25 +16,17 @@ export class PlaylistSyncService {
     });
   }
 
-  async bumpPlaylistsForCampaign(campaignId: string): Promise<void> {
-    const links = await this.prisma.playlistCampaign.findMany({
-      where: { campaignId },
+  async bumpPlaylistsForAsset(assetId: string): Promise<void> {
+    const links = await this.prisma.playlistAsset.findMany({
+      where: { assetId },
       select: { playlistId: true },
     });
     if (!links.length) return;
 
+    const playlistIds = [...new Set(links.map((link) => link.playlistId))];
     await this.prisma.playlist.updateMany({
-      where: { id: { in: links.map((link) => link.playlistId) } },
+      where: { id: { in: playlistIds } },
       data: { syncVersion: { increment: 1 } },
     });
-  }
-
-  async bumpPlaylistsForAsset(assetId: string): Promise<void> {
-    const campaignLinks = await this.prisma.campaignAsset.findMany({
-      where: { assetId },
-      select: { campaignId: true },
-    });
-    const campaignIds = [...new Set(campaignLinks.map((link) => link.campaignId))];
-    await Promise.all(campaignIds.map((campaignId) => this.bumpPlaylistsForCampaign(campaignId)));
   }
 }

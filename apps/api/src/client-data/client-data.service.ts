@@ -5,7 +5,6 @@ import type { Prisma } from '@prisma/client';
 import {
   AssetStatus,
   AssetType,
-  CampaignStatus,
   DeviceStatus,
   PlaylistStatus,
   ProofOfPlayStatus,
@@ -25,7 +24,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
 
-const campaignPalette = ['#4ade80', '#00e5ff', '#a78bfa', '#f472b6', '#fb923c', '#60a5fa'];
+const colorPalette = ['#4ade80', '#00e5ff', '#a78bfa', '#f472b6', '#fb923c', '#60a5fa'];
 
 type PlaylistDto = {
   id: string;
@@ -36,8 +35,7 @@ type PlaylistDto = {
   totalDuration: string;
   lastPlayed: Date | null;
   color: string;
-  campaignIds: string[];
-  campaignNames: string[];
+  assetCount: number;
   deviceIds: string[];
   deviceNames: string[];
 };
@@ -52,10 +50,10 @@ export class ClientDataService {
 
   async dashboard(actor: RequestActor) {
     const organizationId = this.getOrgId(actor);
-    const [devices, assets, campaigns, tickers, scheduleEvents, logs] = await Promise.all([
+    const [devices, assets, playlists, tickers, scheduleEvents, logs] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
       this.prisma.asset.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' }, take: 5 }),
-      this.prisma.campaign.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
+      this.prisma.playlist.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.ticker.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.scheduleEvent.findMany({ where: { organizationId }, orderBy: { startTime: 'asc' }, take: 4 }),
       this.prisma.proofOfPlayLog.findMany({ where: { organizationId }, orderBy: { timestamp: 'desc' }, take: 8 }),
@@ -72,7 +70,7 @@ export class ClientDataService {
         warningDevices,
         offlineDevices,
         totalAssets: assets.length,
-        activeCampaigns: campaigns.filter((campaign) => campaign.status === CampaignStatus.ACTIVE).length,
+        activePlaylists: playlists.filter((playlist) => playlist.status === PlaylistStatus.ACTIVE).length,
         activeTickers: tickers.filter((ticker) => ticker.status === TickerStatus.ACTIVE).length,
       },
       recentActivityLog: logs.map((log) => ({
@@ -100,121 +98,59 @@ export class ClientDataService {
     };
   }
 
-  async listCampaigns(actor: RequestActor) {
+  async getPlaylistAssets(actor: RequestActor, playlistId: string) {
     const organizationId = this.getOrgId(actor);
-    const campaigns = await this.prisma.campaign.findMany({
-      where: { organizationId },
-      orderBy: { updatedAt: 'desc' },
-    });
-
-    return campaigns.map((campaign) => ({
-      id: campaign.id,
-      name: campaign.name,
-      description: campaign.description,
-      assetCount: campaign.assetCount,
-      status: this.toLowerStatus(campaign.status),
-      lastModified: campaign.updatedAt,
-      color: campaign.color,
-      screens: campaign.screens,
-      impressions: String(campaign.impressions),
-    }));
-  }
-
-  async createCampaign(actor: RequestActor, body: { name: string; description?: string }) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const name = body.name?.trim();
-    if (!name) throw new BadRequestException('Campaign name is required');
-
-    const count = await this.prisma.campaign.count({ where: { organizationId } });
-    const campaign = await this.prisma.campaign.create({
-      data: {
-        organizationId,
-        name,
-        description: body.description?.trim() || 'New campaign created.',
-        status: CampaignStatus.DRAFT,
-        color: campaignPalette[count % campaignPalette.length],
-      },
-    });
-
-    return {
-      id: campaign.id,
-      name: campaign.name,
-      description: campaign.description,
-      assetCount: campaign.assetCount,
-      status: this.toLowerStatus(campaign.status),
-      lastModified: campaign.updatedAt,
-      color: campaign.color,
-      screens: campaign.screens,
-      impressions: String(campaign.impressions),
-    };
-  }
-
-  async deleteCampaign(actor: RequestActor, campaignId: string) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
-    if (!existing) throw new NotFoundException('Campaign not found');
-    await this.prisma.campaign.delete({ where: { id: campaignId } });
-    return { success: true };
-  }
-
-  async getCampaignAssets(actor: RequestActor, campaignId: string) {
-    const organizationId = this.getOrgId(actor);
-    const campaignAssets = await this.prisma.campaignAsset.findMany({
-      where: { campaignId, campaign: { organizationId } },
+    const playlistAssets = await this.prisma.playlistAsset.findMany({
+      where: { playlistId, playlist: { organizationId } },
       orderBy: { position: 'asc' },
       include: { asset: true },
     });
 
-    const assetsWithUrls = await Promise.all(
-      campaignAssets.map(async (ca) => ({
-        id: ca.asset.id,
-        campaignAssetId: ca.id,
-        name: ca.asset.name,
-        type: ca.asset.type,
-        durationSeconds: ca.durationSeconds,
-        position: ca.position,
-        downloadUrl: await this.resolveAssetDownloadUrl(ca.asset),
-        url: ca.asset.url ?? null,
-        fileSize: ca.asset.fileSize,
-        mimeType: ca.asset.mimeType,
+    return Promise.all(
+      playlistAssets.map(async (pa) => ({
+        id: pa.asset.id,
+        playlistAssetId: pa.id,
+        name: pa.asset.name,
+        type: pa.asset.type,
+        durationSeconds: pa.durationSeconds,
+        position: pa.position,
+        downloadUrl: await this.resolveAssetDownloadUrl(pa.asset),
+        url: pa.asset.url ?? null,
+        fileSize: pa.asset.fileSize,
+        mimeType: pa.asset.mimeType,
       })),
     );
-
-    return assetsWithUrls;
   }
 
-  async addCampaignAsset(actor: RequestActor, campaignId: string, assetId: string, durationSeconds?: number) {
+  async addPlaylistAsset(actor: RequestActor, playlistId: string, assetId: string, durationSeconds?: number) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    // Verify ownership
-    const campaign = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
+    const playlist = await this.prisma.playlist.findFirst({ where: { id: playlistId, organizationId } });
     const asset = await this.prisma.asset.findFirst({ where: { id: assetId, organizationId } });
-    if (!campaign || !asset) throw new NotFoundException('Campaign or Asset not found');
+    if (!playlist || !asset) throw new NotFoundException('Playlist or Asset not found');
     if (asset.status !== AssetStatus.READY) {
-      throw new BadRequestException('Only ready assets can be added to a campaign');
+      throw new BadRequestException('Only ready assets can be added to a playlist');
     }
 
-    const existing = await this.prisma.campaignAsset.findUnique({
-      where: { campaignId_assetId: { campaignId, assetId } },
+    const existing = await this.prisma.playlistAsset.findUnique({
+      where: { playlistId_assetId: { playlistId, assetId } },
     });
     if (existing) {
-      throw new BadRequestException('This asset is already in the campaign');
+      throw new BadRequestException('This asset is already in the playlist');
     }
 
     const defaultDuration = asset.defaultDurationSeconds ?? 10;
     const normalizedDuration = this.normalizeDurationSeconds(durationSeconds ?? defaultDuration);
 
-    const lastAsset = await this.prisma.campaignAsset.findFirst({
-      where: { campaignId },
+    const lastAsset = await this.prisma.playlistAsset.findFirst({
+      where: { playlistId },
       orderBy: { position: 'desc' },
     });
     const position = lastAsset ? lastAsset.position + 1 : 0;
 
-    const ca = await this.prisma.campaignAsset.create({
+    const pa = await this.prisma.playlistAsset.create({
       data: {
-        campaignId,
+        playlistId,
         assetId,
         durationSeconds: normalizedDuration,
         position,
@@ -222,19 +158,14 @@ export class ClientDataService {
       include: { asset: true },
     });
 
-    await this.prisma.campaign.update({
-      where: { id: campaignId },
-      data: { assetCount: { increment: 1 } },
-    });
+    await this.playlistSync.bumpPlaylist(playlistId);
 
-    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
-
-    return { success: true, campaignAssetId: ca.id, durationSeconds: ca.durationSeconds };
+    return { success: true, playlistAssetId: pa.id, durationSeconds: pa.durationSeconds };
   }
 
-  async updateCampaignAssetDuration(
+  async updatePlaylistAssetDuration(
     actor: RequestActor,
-    campaignId: string,
+    playlistId: string,
     assetId: string,
     durationSeconds: number,
   ) {
@@ -242,26 +173,26 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const normalizedDuration = this.normalizeDurationSeconds(durationSeconds);
 
-    const campaignAsset = await this.prisma.campaignAsset.findUnique({
-      where: { campaignId_assetId: { campaignId, assetId } },
-      include: { campaign: true, asset: true },
+    const playlistAsset = await this.prisma.playlistAsset.findUnique({
+      where: { playlistId_assetId: { playlistId, assetId } },
+      include: { playlist: true, asset: true },
     });
 
-    if (!campaignAsset || campaignAsset.campaign.organizationId !== organizationId) {
-      throw new NotFoundException('Campaign asset not found');
+    if (!playlistAsset || playlistAsset.playlist.organizationId !== organizationId) {
+      throw new NotFoundException('Playlist asset not found');
     }
 
-    const updated = await this.prisma.campaignAsset.update({
-      where: { id: campaignAsset.id },
+    const updated = await this.prisma.playlistAsset.update({
+      where: { id: playlistAsset.id },
       data: { durationSeconds: normalizedDuration },
       include: { asset: true },
     });
 
-    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
+    await this.playlistSync.bumpPlaylist(playlistId);
 
     return {
       id: updated.asset.id,
-      campaignAssetId: updated.id,
+      playlistAssetId: updated.id,
       name: updated.asset.name,
       type: updated.asset.type,
       durationSeconds: updated.durationSeconds,
@@ -273,48 +204,43 @@ export class ClientDataService {
     };
   }
 
-  async removeCampaignAsset(actor: RequestActor, campaignId: string, assetId: string) {
+  async removePlaylistAsset(actor: RequestActor, playlistId: string, assetId: string) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    
-    const ca = await this.prisma.campaignAsset.findUnique({
-      where: { campaignId_assetId: { campaignId, assetId } },
-      include: { campaign: true },
+
+    const pa = await this.prisma.playlistAsset.findUnique({
+      where: { playlistId_assetId: { playlistId, assetId } },
+      include: { playlist: true },
     });
 
-    if (!ca || ca.campaign.organizationId !== organizationId) {
-      throw new NotFoundException('Campaign asset not found');
+    if (!pa || pa.playlist.organizationId !== organizationId) {
+      throw new NotFoundException('Playlist asset not found');
     }
 
-    await this.prisma.campaignAsset.delete({
-      where: { id: ca.id },
+    await this.prisma.playlistAsset.delete({
+      where: { id: pa.id },
     });
 
-    await this.prisma.campaign.update({
-      where: { id: campaignId },
-      data: { assetCount: { decrement: 1 } },
-    });
-
-    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
+    await this.playlistSync.bumpPlaylist(playlistId);
 
     return { success: true };
   }
 
-  async reorderCampaignAssets(actor: RequestActor, campaignId: string, body: { assetIds: string[] }) {
+  async reorderPlaylistAssets(actor: RequestActor, playlistId: string, body: { assetIds: string[] }) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
 
-    const campaign = await this.prisma.campaign.findFirst({ where: { id: campaignId, organizationId } });
-    if (!campaign) throw new NotFoundException('Campaign not found');
+    const playlist = await this.prisma.playlist.findFirst({ where: { id: playlistId, organizationId } });
+    if (!playlist) throw new NotFoundException('Playlist not found');
 
-    const existingAssets = await this.prisma.campaignAsset.findMany({
-      where: { campaignId },
+    const existingAssets = await this.prisma.playlistAsset.findMany({
+      where: { playlistId },
       select: { assetId: true },
     });
     const existingAssetIds = new Set(existingAssets.map((entry) => entry.assetId));
 
     if (body.assetIds.length !== existingAssetIds.size) {
-      throw new BadRequestException('assetIds must include every campaign asset exactly once');
+      throw new BadRequestException('assetIds must include every playlist asset exactly once');
     }
 
     const seen = new Set<string>();
@@ -330,14 +256,14 @@ export class ClientDataService {
 
     await this.prisma.$transaction(
       body.assetIds.map((assetId, index) =>
-        this.prisma.campaignAsset.update({
-          where: { campaignId_assetId: { campaignId, assetId } },
+        this.prisma.playlistAsset.update({
+          where: { playlistId_assetId: { playlistId, assetId } },
           data: { position: index },
         }),
       ),
     );
 
-    await this.playlistSync.bumpPlaylistsForCampaign(campaignId);
+    await this.playlistSync.bumpPlaylist(playlistId);
 
     return { success: true };
   }
@@ -348,10 +274,7 @@ export class ClientDataService {
       where: { organizationId },
       include: {
         items: { orderBy: { position: 'asc' } },
-        campaignLinks: {
-          orderBy: { position: 'asc' },
-          include: { campaign: { select: { id: true, name: true } } },
-        },
+        playlistAssets: { orderBy: { position: 'asc' } },
         devices: { select: { id: true, name: true } },
       },
       orderBy: { updatedAt: 'desc' },
@@ -372,7 +295,7 @@ export class ClientDataService {
         organizationId,
         name,
         status: PlaylistStatus.DRAFT,
-        color: campaignPalette[count % campaignPalette.length],
+        color: colorPalette[count % colorPalette.length],
       },
     });
 
@@ -385,8 +308,7 @@ export class ClientDataService {
       totalDuration: '0:00',
       lastPlayed: null,
       color: playlist.color,
-      campaignIds: [],
-      campaignNames: [],
+      assetCount: 0,
       deviceIds: [],
       deviceNames: [],
     };
@@ -428,25 +350,13 @@ export class ClientDataService {
 
   async playlistAssignmentOptions(actor: RequestActor) {
     const organizationId = this.getOrgId(actor);
-    const [campaigns, devices] = await Promise.all([
-      this.prisma.campaign.findMany({
-        where: { organizationId },
-        select: { id: true, name: true, status: true },
-        orderBy: { updatedAt: 'desc' },
-      }),
-      this.prisma.device.findMany({
-        where: { organizationId, isPaired: true },
-        select: { id: true, name: true, location: true, status: true, currentPlaylistId: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+    const devices = await this.prisma.device.findMany({
+      where: { organizationId, isPaired: true },
+      select: { id: true, name: true, location: true, status: true, currentPlaylistId: true },
+      orderBy: { createdAt: 'asc' },
+    });
 
     return {
-      campaigns: campaigns.map((campaign) => ({
-        id: campaign.id,
-        name: campaign.name,
-        status: this.toLowerStatus(campaign.status),
-      })),
       devices: devices.map((device) => ({
         id: device.id,
         name: device.name,
@@ -457,23 +367,13 @@ export class ClientDataService {
     };
   }
 
-  async assignPlaylist(actor: RequestActor, playlistId: string, body: { campaignIds: string[]; deviceIds: string[] }) {
+  async assignPlaylist(actor: RequestActor, playlistId: string, body: { deviceIds: string[] }) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    const campaignIds = Array.from(new Set(body.campaignIds ?? []));
     const deviceIds = Array.from(new Set(body.deviceIds ?? []));
 
     const playlist = await this.prisma.playlist.findFirst({ where: { id: playlistId, organizationId } });
     if (!playlist) throw new NotFoundException('Playlist not found');
-
-    if (campaignIds.length > 0) {
-      const validCampaignCount = await this.prisma.campaign.count({
-        where: { organizationId, id: { in: campaignIds } },
-      });
-      if (validCampaignCount !== campaignIds.length) {
-        throw new BadRequestException('Some campaigns are invalid for this organization');
-      }
-    }
 
     if (deviceIds.length > 0) {
       const validDeviceCount = await this.prisma.device.count({
@@ -485,17 +385,6 @@ export class ClientDataService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.playlistCampaign.deleteMany({ where: { playlistId } });
-      if (campaignIds.length > 0) {
-        await tx.playlistCampaign.createMany({
-          data: campaignIds.map((campaignId, index) => ({
-            playlistId,
-            campaignId,
-            position: index,
-          })),
-        });
-      }
-
       await tx.device.updateMany({
         where: { organizationId, currentPlaylistId: playlistId, id: { notIn: deviceIds } },
         data: { currentPlaylistId: null },
@@ -521,10 +410,7 @@ export class ClientDataService {
       where: { id: playlistId, organizationId },
       include: {
         items: { orderBy: { position: 'asc' } },
-        campaignLinks: {
-          orderBy: { position: 'asc' },
-          include: { campaign: { select: { id: true, name: true } } },
-        },
+        playlistAssets: { orderBy: { position: 'asc' } },
         devices: { select: { id: true, name: true } },
       },
     });
@@ -583,7 +469,7 @@ export class ClientDataService {
         status: this.toScheduleStatus(body.status),
         priority: this.toSchedulePriority(body.priority),
         recurring: body.recurring ?? true,
-        color: this.sanitizeHexColor(body.color, campaignPalette[count % campaignPalette.length]),
+        color: this.sanitizeHexColor(body.color, colorPalette[count % colorPalette.length]),
       },
     });
 
@@ -2017,13 +1903,13 @@ export class ClientDataService {
     name: string;
     status: PlaylistStatus;
     items: { id: string; name: string; type: string; durationSeconds: number }[];
+    playlistAssets: { durationSeconds: number }[];
     screens: number;
     lastPlayedAt: Date | null;
     color: string;
-    campaignLinks: { campaign: { id: string; name: string } }[];
     devices: { id: string; name: string }[];
   }): PlaylistDto {
-    const totalSeconds = playlist.items.reduce((sum, item) => sum + item.durationSeconds, 0);
+    const totalSeconds = playlist.playlistAssets.reduce((sum, item) => sum + item.durationSeconds, 0);
     return {
       id: playlist.id,
       name: playlist.name,
@@ -2038,8 +1924,7 @@ export class ClientDataService {
       totalDuration: this.formatDuration(totalSeconds),
       lastPlayed: playlist.lastPlayedAt,
       color: playlist.color,
-      campaignIds: playlist.campaignLinks.map((link) => link.campaign.id),
-      campaignNames: playlist.campaignLinks.map((link) => link.campaign.name),
+      assetCount: playlist.playlistAssets.length,
       deviceIds: playlist.devices.map((device) => device.id),
       deviceNames: playlist.devices.map((device) => device.name),
     };

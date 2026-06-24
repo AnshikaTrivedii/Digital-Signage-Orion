@@ -476,7 +476,7 @@ export default function SchedulePage() {
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 12 }}>{event.campaign || "Unassigned campaign"}</p>
+                                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 12 }}>{event.campaign || "No content label"}</p>
                                                 <div style={{ display: "flex", gap: 24, fontSize: "0.75rem", color: "hsl(var(--text-muted))", flexWrap: "wrap" }}>
                                                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {event.startTime} – {event.endTime}</span>
                                                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Monitor size={12} /> {event.screens} screens</span>
@@ -521,7 +521,7 @@ export default function SchedulePage() {
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
                                 {[
-                                    { label: "Campaign", value: selectedEvent.campaign || "Unassigned" },
+                                    { label: "Content", value: selectedEvent.campaign || "Unassigned" },
                                     { label: "Status", value: selectedEvent.status.charAt(0).toUpperCase() + selectedEvent.status.slice(1) },
                                     { label: "Time Window", value: `${selectedEvent.startTime} - ${selectedEvent.endTime}` },
                                     { label: "Screens", value: `${selectedEvent.screens} displays` },
@@ -584,8 +584,8 @@ export default function SchedulePage() {
                                     style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.95rem" }} />
                             </div>
                             <div style={{ marginBottom: 16 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Campaign / Label</label>
-                                <input placeholder="Associated campaign" value={editor.campaign} onChange={(e) => setEditor((prev) => ({ ...prev, campaign: e.target.value }))}
+                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Content Label</label>
+                                <input placeholder="e.g. Morning playlist" value={editor.campaign} onChange={(e) => setEditor((prev) => ({ ...prev, campaign: e.target.value }))}
                                     style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem" }} />
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>

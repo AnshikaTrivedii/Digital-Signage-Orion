@@ -1,6 +1,6 @@
 import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 
-export class AddCampaignAssetDto {
+export class AddPlaylistAssetDto {
   @IsString()
   assetId!: string;
 

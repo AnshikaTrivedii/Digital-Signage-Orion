@@ -6,17 +6,12 @@ export type PopLogPlaybackContext = {
   durationSeconds: number | null;
 };
 
-type PlaylistWithCampaigns = {
+type PlaylistWithAssets = {
   id: string;
   name: string;
-  campaignLinks: {
-    campaign: {
-      name: string;
-      campaignAssets: {
-        durationSeconds: number;
-        asset: { name: string };
-      }[];
-    };
+  playlistAssets: {
+    durationSeconds: number;
+    asset: { name: string };
   }[];
 };
 
@@ -70,37 +65,26 @@ export class PopLogContextIndex {
     return this.prisma.playlist.findMany({
       where: { organizationId },
       include: {
-        campaignLinks: {
+        playlistAssets: {
           orderBy: { position: 'asc' },
-          include: {
-            campaign: {
-              include: {
-                campaignAssets: {
-                  orderBy: { position: 'asc' },
-                  include: { asset: true },
-                },
-              },
-            },
-          },
+          include: { asset: true },
         },
       },
     });
   }
 
-  private indexPlaylist(playlist: PlaylistWithCampaigns) {
+  private indexPlaylist(playlist: PlaylistWithAssets) {
     const assetMap = new Map<string, PopLogPlaybackContext>();
-    for (const link of playlist.campaignLinks) {
-      for (const campaignAsset of link.campaign.campaignAssets) {
-        const key = normalizeAssetName(campaignAsset.asset.name);
-        const entry: PopLogPlaybackContext = {
-          playlistName: playlist.name,
-          campaignName: link.campaign.name,
-          durationSeconds: campaignAsset.durationSeconds,
-        };
-        assetMap.set(key, entry);
-        if (!this.fallbackByAsset.has(key)) {
-          this.fallbackByAsset.set(key, entry);
-        }
+    for (const playlistAsset of playlist.playlistAssets) {
+      const key = normalizeAssetName(playlistAsset.asset.name);
+      const entry: PopLogPlaybackContext = {
+        playlistName: playlist.name,
+        campaignName: null,
+        durationSeconds: playlistAsset.durationSeconds,
+      };
+      assetMap.set(key, entry);
+      if (!this.fallbackByAsset.has(key)) {
+        this.fallbackByAsset.set(key, entry);
       }
     }
     this.byPlaylistId.set(playlist.id, assetMap);

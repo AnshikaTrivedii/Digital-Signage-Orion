@@ -70,7 +70,6 @@ type FeatureKey =
     | "DASHBOARD"
     | "ASSETS"
     | "PLAYLISTS"
-    | "CAMPAIGNS"
     | "SCHEDULE"
     | "TICKERS"
     | "DEVICES"
@@ -91,7 +90,6 @@ const featureDefinitions: Array<{ key: FeatureKey; label: string; levels: Featur
     { key: "DASHBOARD", label: "Dashboard", levels: ["NONE", "VIEW"] },
     { key: "ASSETS", label: "Assets", levels: ["NONE", "VIEW", "EDIT"] },
     { key: "PLAYLISTS", label: "Playlists", levels: ["NONE", "VIEW", "EDIT"] },
-    { key: "CAMPAIGNS", label: "Campaigns", levels: ["NONE", "VIEW", "EDIT"] },
     { key: "SCHEDULE", label: "Schedule", levels: ["NONE", "VIEW", "EDIT"] },
     { key: "TICKERS", label: "Tickers", levels: ["NONE", "VIEW", "EDIT"] },
     { key: "DEVICES", label: "Devices", levels: ["NONE", "VIEW", "CONTROL"] },

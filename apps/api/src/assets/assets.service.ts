@@ -10,9 +10,12 @@ import type { RequestActor } from '../common/interfaces/request-with-actor.inter
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
+import { CreateFolderDto } from './dto/create-folder.dto';
 import { CreateUrlAssetDto } from './dto/create-url-asset.dto';
 import { RequestUploadDto } from './dto/request-upload.dto';
+import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetTagsDto } from './dto/update-asset-tags.dto';
+import { UpdateFolderDto } from './dto/update-folder.dto';
 
 const ALLOWED_MIME_TYPES: Record<string, AssetType> = {
   'image/jpeg': AssetType.IMAGE,
@@ -48,9 +51,12 @@ export class AssetsService {
       throw new BadRequestException('Duration must be at least 1 second');
     }
 
+    const folderId = await this.resolveFolderId(organizationId, dto.folderId);
+
     const asset = await this.prisma.asset.create({
       data: {
         organizationId,
+        folderId,
         name,
         type: AssetType.URL,
         status: AssetStatus.READY,
@@ -91,9 +97,12 @@ export class AssetsService {
       throw new BadRequestException(`Unsupported file type: ${dto.mimeType}. Allowed: ${allowed}`);
     }
 
+    const folderId = await this.resolveFolderId(organizationId, dto.folderId);
+
     const asset = await this.prisma.asset.create({
       data: {
         organizationId,
+        folderId,
         name: dto.filename,
         type: assetType,
         status: AssetStatus.UPLOADING,
@@ -221,7 +230,14 @@ export class AssetsService {
   async listAssets(
     actor: RequestActor,
     organizationId: string,
-    filters: { type?: string; search?: string; page?: number; limit?: number },
+    filters: {
+      type?: string;
+      search?: string;
+      page?: number;
+      limit?: number;
+      folderId?: string | null;
+      scope?: 'folder' | 'all';
+    },
   ) {
     this.ensureOrganizationAccess(actor, organizationId);
 
@@ -240,6 +256,14 @@ export class AssetsService {
 
     if (filters.search) {
       where.name = { contains: filters.search, mode: 'insensitive' };
+    }
+
+    // Folder scoping: when scope is 'all' (or a global search is in progress) we return
+    // assets from every folder. Otherwise we restrict to the requested folder, where an
+    // omitted/null folderId means the root (unfiled) assets.
+    const scopeAll = filters.scope === 'all' || Boolean(filters.search);
+    if (!scopeAll) {
+      where.folderId = filters.folderId ?? null;
     }
 
     const [assets, total] = await Promise.all([
@@ -318,7 +342,7 @@ export class AssetsService {
       }
     }
 
-    // Bump playlists while campaign links still exist
+    // Bump playlists that reference this asset
     await this.playlistSync.bumpPlaylistsForAsset(assetId);
 
     await this.prisma.asset.delete({ where: { id: assetId } });
@@ -359,6 +383,294 @@ export class AssetsService {
     };
   }
 
+  async updateAsset(actor: RequestActor, organizationId: string, assetId: string, dto: UpdateAssetDto) {
+    this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
+
+    const asset = await this.prisma.asset.findFirst({
+      where: { id: assetId, organizationId },
+    });
+
+    if (!asset) {
+      throw new NotFoundException('Asset not found');
+    }
+
+    const data: Record<string, unknown> = {};
+    if (dto.tags !== undefined) {
+      data.tags = dto.tags;
+    }
+    if (dto.folderId !== undefined) {
+      data.folderId = await this.resolveFolderId(organizationId, dto.folderId);
+    }
+
+    if (Object.keys(data).length === 0) {
+      return {
+        ...this.formatAsset(asset),
+        downloadUrl: await this.resolveAssetDownloadUrl(asset),
+      };
+    }
+
+    const updated = await this.prisma.asset.update({
+      where: { id: assetId },
+      data,
+    });
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'asset.updated',
+      targetType: 'asset',
+      targetId: assetId,
+      summary: `${actor.email} updated asset ${updated.name}`,
+      metadata: { folderId: updated.folderId ?? null },
+    });
+
+    return {
+      ...this.formatAsset(updated),
+      downloadUrl: await this.resolveAssetDownloadUrl(updated),
+    };
+  }
+
+  // --- Folders ---------------------------------------------------------------
+
+  async listFolders(
+    actor: RequestActor,
+    organizationId: string,
+    parentId: string | null,
+  ) {
+    this.ensureOrganizationAccess(actor, organizationId);
+
+    if (parentId) {
+      await this.getFolderOrThrow(organizationId, parentId);
+    }
+
+    const folders = await this.prisma.assetFolder.findMany({
+      where: { organizationId, parentId: parentId ?? null },
+      orderBy: { name: 'asc' },
+      include: {
+        _count: { select: { children: true, assets: true } },
+      },
+    });
+
+    const breadcrumbs = await this.buildBreadcrumbs(organizationId, parentId);
+
+    return {
+      currentFolderId: parentId ?? null,
+      breadcrumbs,
+      folders: folders.map((folder) => ({
+        id: folder.id,
+        name: folder.name,
+        parentId: folder.parentId,
+        subfolderCount: folder._count.children,
+        assetCount: folder._count.assets,
+        createdAt: folder.createdAt,
+        updatedAt: folder.updatedAt,
+      })),
+    };
+  }
+
+  async createFolder(actor: RequestActor, organizationId: string, dto: CreateFolderDto) {
+    this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
+
+    const name = dto.name.trim();
+    if (!name) {
+      throw new BadRequestException('Folder name is required');
+    }
+
+    const parentId = dto.parentId ?? null;
+    if (parentId) {
+      await this.getFolderOrThrow(organizationId, parentId);
+    }
+
+    await this.assertFolderNameAvailable(organizationId, parentId, name);
+
+    const folder = await this.prisma.assetFolder.create({
+      data: { organizationId, name, parentId },
+    });
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'asset.folder.created',
+      targetType: 'assetFolder',
+      targetId: folder.id,
+      summary: `${actor.email} created folder ${folder.name}`,
+      metadata: { parentId },
+    });
+
+    return this.formatFolder(folder);
+  }
+
+  async updateFolder(
+    actor: RequestActor,
+    organizationId: string,
+    folderId: string,
+    dto: UpdateFolderDto,
+  ) {
+    this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
+
+    const folder = await this.getFolderOrThrow(organizationId, folderId);
+
+    const nextName = dto.name !== undefined ? dto.name.trim() : folder.name;
+    if (dto.name !== undefined && !nextName) {
+      throw new BadRequestException('Folder name cannot be empty');
+    }
+
+    let nextParentId = folder.parentId;
+    if (dto.parentId !== undefined) {
+      nextParentId = dto.parentId ?? null;
+      if (nextParentId) {
+        if (nextParentId === folderId) {
+          throw new BadRequestException('A folder cannot be its own parent');
+        }
+        await this.getFolderOrThrow(organizationId, nextParentId);
+        await this.assertNotDescendant(organizationId, folderId, nextParentId);
+      }
+    }
+
+    const nameChanged = nextName !== folder.name;
+    const parentChanged = nextParentId !== folder.parentId;
+    if (nameChanged || parentChanged) {
+      await this.assertFolderNameAvailable(organizationId, nextParentId, nextName, folderId);
+    }
+
+    const updated = await this.prisma.assetFolder.update({
+      where: { id: folderId },
+      data: { name: nextName, parentId: nextParentId },
+    });
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'asset.folder.updated',
+      targetType: 'assetFolder',
+      targetId: folderId,
+      summary: `${actor.email} updated folder ${updated.name}`,
+      metadata: { name: updated.name, parentId: updated.parentId },
+    });
+
+    return this.formatFolder(updated);
+  }
+
+  async deleteFolder(actor: RequestActor, organizationId: string, folderId: string) {
+    this.ensureOrganizationAccess(actor, organizationId);
+    this.assertCanEdit(actor);
+
+    const folder = await this.getFolderOrThrow(organizationId, folderId);
+
+    // Deleting a folder cascades to its subfolders (DB-level onDelete: Cascade).
+    // Assets within the folder (and any descendant folders) are preserved: their
+    // folderId is set to null via onDelete: SetNull, so they move to the root.
+    await this.prisma.assetFolder.delete({ where: { id: folderId } });
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'asset.folder.deleted',
+      targetType: 'assetFolder',
+      targetId: folderId,
+      summary: `${actor.email} deleted folder ${folder.name}`,
+      metadata: { parentId: folder.parentId },
+    });
+
+    return { success: true };
+  }
+
+  private async resolveFolderId(
+    organizationId: string,
+    folderId: string | null | undefined,
+  ): Promise<string | null> {
+    if (folderId === null || folderId === undefined || folderId === '') {
+      return null;
+    }
+    await this.getFolderOrThrow(organizationId, folderId);
+    return folderId;
+  }
+
+  private async getFolderOrThrow(organizationId: string, folderId: string) {
+    const folder = await this.prisma.assetFolder.findFirst({
+      where: { id: folderId, organizationId },
+    });
+    if (!folder) {
+      throw new NotFoundException('Folder not found');
+    }
+    return folder;
+  }
+
+  private async assertFolderNameAvailable(
+    organizationId: string,
+    parentId: string | null,
+    name: string,
+    excludeFolderId?: string,
+  ) {
+    const conflict = await this.prisma.assetFolder.findFirst({
+      where: {
+        organizationId,
+        parentId: parentId ?? null,
+        name,
+        ...(excludeFolderId ? { id: { not: excludeFolderId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (conflict) {
+      throw new BadRequestException('A folder with this name already exists here');
+    }
+  }
+
+  private async assertNotDescendant(
+    organizationId: string,
+    folderId: string,
+    candidateParentId: string,
+  ) {
+    let cursor: string | null = candidateParentId;
+    while (cursor) {
+      if (cursor === folderId) {
+        throw new BadRequestException('Cannot move a folder into one of its own subfolders');
+      }
+      const parent: { parentId: string | null } | null = await this.prisma.assetFolder.findFirst({
+        where: { id: cursor, organizationId },
+        select: { parentId: true },
+      });
+      cursor = parent?.parentId ?? null;
+    }
+  }
+
+  private async buildBreadcrumbs(organizationId: string, folderId: string | null) {
+    const breadcrumbs: { id: string; name: string }[] = [];
+    let cursor: string | null = folderId;
+    while (cursor) {
+      const folder: { id: string; name: string; parentId: string | null } | null =
+        await this.prisma.assetFolder.findFirst({
+          where: { id: cursor, organizationId },
+          select: { id: true, name: true, parentId: true },
+        });
+      if (!folder) break;
+      breadcrumbs.unshift({ id: folder.id, name: folder.name });
+      cursor = folder.parentId;
+    }
+    return breadcrumbs;
+  }
+
+  private formatFolder(folder: {
+    id: string;
+    name: string;
+    parentId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      id: folder.id,
+      name: folder.name,
+      parentId: folder.parentId,
+      subfolderCount: 0,
+      assetCount: 0,
+      createdAt: folder.createdAt,
+      updatedAt: folder.updatedAt,
+    };
+  }
+
   private async resolveAssetDownloadUrl(asset: {
     type: AssetType;
     status: AssetStatus;
@@ -394,6 +706,7 @@ export class AssetsService {
     return {
       id: asset.id,
       organizationId: asset.organizationId,
+      folderId: asset.folderId ?? null,
       name: asset.name,
       type: asset.type,
       status: asset.status,

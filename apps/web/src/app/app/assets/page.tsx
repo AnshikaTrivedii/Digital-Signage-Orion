@@ -1,10 +1,11 @@
 "use client";
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     UploadCloud, Search, Image as ImageIcon, Video,
     FileText, Trash2, Link as LinkIcon, X,
-    Eye, CloudUpload, FileCode, Archive, AlertCircle, Loader2, Tag, Globe, Plus
+    Eye, CloudUpload, FileCode, Archive, AlertCircle, Loader2, Tag, Globe, Plus,
+    Folder as FolderIcon, FolderPlus, FolderInput, Pencil, ChevronRight, Home, Check
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
@@ -16,6 +17,7 @@ import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
 interface Asset {
     id: string;
     organizationId: string;
+    folderId?: string | null;
     name: string;
     type: "IMAGE" | "VIDEO" | "HTML" | "DOCUMENT" | "URL";
     status: "UPLOADING" | "READY" | "ERROR";
@@ -33,6 +35,21 @@ interface Asset {
     downloadUrl?: string | null;
 }
 
+interface Folder {
+    id: string;
+    name: string;
+    parentId: string | null;
+    subfolderCount: number;
+    assetCount: number;
+    createdAt: string;
+    updatedAt: string;
+}
+
+interface Breadcrumb {
+    id: string;
+    name: string;
+}
+
 interface AssetsListResponse {
     assets: Asset[];
     pagination: {
@@ -41,6 +58,12 @@ interface AssetsListResponse {
         total: number;
         totalPages: number;
     };
+}
+
+interface FoldersResponse {
+    currentFolderId: string | null;
+    breadcrumbs: Breadcrumb[];
+    folders: Folder[];
 }
 
 function formatFileSize(bytes: number): string {
@@ -71,10 +94,121 @@ const TAB_TO_TYPE: Record<string, string | undefined> = {
     URLs: "URL",
 };
 
+const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "10px 14px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)",
+    border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none",
+};
+
+// ---------------------------------------------------------------------------
+// Folder picker dialog (used for moving folders and assets)
+// ---------------------------------------------------------------------------
+
+function FolderPickerDialog({
+    orgId,
+    title,
+    excludeFolderId,
+    onCancel,
+    onConfirm,
+}: {
+    orgId: string;
+    title: string;
+    excludeFolderId?: string | null;
+    onCancel: () => void;
+    onConfirm: (folderId: string | null) => void;
+}) {
+    const [folderId, setFolderId] = useState<string | null>(null);
+    const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
+    const [folders, setFolders] = useState<Folder[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const load = useCallback(async (parentId: string | null) => {
+        setIsLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (parentId) params.set("parentId", parentId);
+            const res = await apiRequest<FoldersResponse>(`/api/organizations/${orgId}/assets/folders?${params.toString()}`);
+            setFolders(res.folders);
+            setBreadcrumbs(res.breadcrumbs);
+            setFolderId(res.currentFolderId);
+        } catch {
+            toast.error("Failed to load folders");
+        } finally {
+            setIsLoading(false);
+        }
+    }, [orgId]);
+
+    useEffect(() => { void load(null); }, [load]);
+
+    const visibleFolders = folders.filter((f) => f.id !== excludeFolderId);
+
+    return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.78)", backdropFilter: "blur(12px)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+            onClick={onCancel}>
+            <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+                className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 28 }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                    <h2 style={{ fontSize: "1.25rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
+                        <FolderInput size={22} style={{ color: "hsl(var(--accent-primary))" }} /> {title}
+                    </h2>
+                    <button className="btn-icon-soft" onClick={onCancel} disabled={isSubmitting}><X size={22} /></button>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 16, fontSize: "0.8rem" }}>
+                    <button onClick={() => load(null)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: folderId === null ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))", fontWeight: 600 }}>
+                        <Home size={14} /> Root
+                    </button>
+                    {breadcrumbs.map((b) => (
+                        <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <ChevronRight size={12} style={{ color: "hsl(var(--text-muted))" }} />
+                            <button onClick={() => load(b.id)} style={{ background: "none", border: "none", cursor: "pointer", color: b.id === folderId ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))", fontWeight: 600 }}>{b.name}</button>
+                        </span>
+                    ))}
+                </div>
+
+                <div style={{ minHeight: 180, maxHeight: 280, overflowY: "auto", background: "hsla(var(--bg-base), 0.4)", borderRadius: 12, padding: 12, marginBottom: 20 }}>
+                    {isLoading ? (
+                        <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Loader2 size={24} className="animate-spin-slow" style={{ color: "hsl(var(--accent-primary))" }} /></div>
+                    ) : visibleFolders.length === 0 ? (
+                        <p style={{ textAlign: "center", padding: 40, fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>No subfolders here.</p>
+                    ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                            {visibleFolders.map((f) => (
+                                <button key={f.id} onClick={() => load(f.id)}
+                                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "hsla(var(--bg-surface-elevated), 0.6)", border: "1px solid hsla(var(--border-subtle), 0.6)", cursor: "pointer", textAlign: "left", color: "hsl(var(--text-primary))" }}>
+                                    <FolderIcon size={18} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
+                                    <span style={{ flex: 1, fontSize: "0.85rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                                    <ChevronRight size={16} style={{ color: "hsl(var(--text-muted))" }} />
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                    <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-secondary))" }}>
+                        Destination: <strong style={{ color: "hsl(var(--text-primary))" }}>{folderId === null ? "Root" : (breadcrumbs.find((b) => b.id === folderId)?.name ?? "Selected folder")}</strong>
+                    </p>
+                    <div style={{ display: "flex", gap: 10 }}>
+                        <button className="btn-outline" onClick={onCancel} disabled={isSubmitting}>Cancel</button>
+                        <button className="btn-primary" disabled={isSubmitting} onClick={async () => { setIsSubmitting(true); try { await onConfirm(folderId); } finally { setIsSubmitting(false); } }} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {isSubmitting ? <Loader2 size={16} className="animate-spin-slow" /> : <Check size={16} />} Move here
+                        </button>
+                    </div>
+                </div>
+            </motion.div>
+        </motion.div>
+    );
+}
+
 export default function AssetsPage() {
     const { canEdit } = useClientFeature("ASSETS");
     const { activeOrganizationId } = useAuth();
     const [assets, setAssets] = useState<Asset[]>([]);
+    const [folders, setFolders] = useState<Folder[]>([]);
+    const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([]);
+    const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [activeTab, setActiveTab] = useState("All");
     const [search, setSearch] = useState("");
@@ -88,18 +222,43 @@ export default function AssetsPage() {
     const [uploadProgress, setUploadProgress] = useState(0);
     const [editingTags, setEditingTags] = useState<string | null>(null);
     const [tagInput, setTagInput] = useState("");
+    const [isNewFolderOpen, setIsNewFolderOpen] = useState(false);
+    const [newFolderName, setNewFolderName] = useState("");
+    const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+    const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+    const [renameValue, setRenameValue] = useState("");
+    const [moveTarget, setMoveTarget] = useState<{ kind: "asset" | "folder"; id: string; name: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const orgId = activeOrganizationId;
+    const isSearching = Boolean(search.trim());
 
-    const fetchAssets = useCallback(async (typeFilter?: string, searchFilter?: string) => {
+    // Initialise folder from URL (?folder=...) on first mount.
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const folder = params.get("folder");
+        if (folder) setCurrentFolderId(folder);
+    }, []);
+
+    const navigateToFolder = useCallback((folderId: string | null) => {
+        setCurrentFolderId(folderId);
+        setSearch("");
+        const url = new URL(window.location.href);
+        if (folderId) url.searchParams.set("folder", folderId);
+        else url.searchParams.delete("folder");
+        window.history.replaceState({}, "", url.toString());
+    }, []);
+
+    const fetchAssets = useCallback(async (typeFilter?: string, searchFilter?: string, folderId?: string | null, scope?: "folder" | "all") => {
         if (!orgId) return;
         setIsLoading(true);
         try {
             const params = new URLSearchParams();
             if (typeFilter) params.set("type", typeFilter);
             if (searchFilter) params.set("search", searchFilter);
+            if (scope === "all") params.set("scope", "all");
+            else if (folderId) params.set("folderId", folderId);
             params.set("limit", "100");
 
             const response = await apiRequest<AssetsListResponse>(
@@ -114,17 +273,43 @@ export default function AssetsPage() {
         }
     }, [orgId]);
 
+    const fetchFolders = useCallback(async (parentId: string | null) => {
+        if (!orgId) return;
+        try {
+            const params = new URLSearchParams();
+            if (parentId) params.set("parentId", parentId);
+            const res = await apiRequest<FoldersResponse>(`/api/organizations/${orgId}/assets/folders?${params.toString()}`);
+            setFolders(res.folders);
+            setBreadcrumbs(res.breadcrumbs);
+        } catch (error) {
+            console.error("Failed to fetch folders:", error);
+        }
+    }, [orgId]);
+
+    // Refetch when the tab or folder changes.
     useEffect(() => {
         const typeFilter = TAB_TO_TYPE[activeTab];
-        fetchAssets(typeFilter, search || undefined);
-    }, [activeTab, fetchAssets]); // eslint-disable-line react-hooks/exhaustive-deps
+        if (isSearching) {
+            fetchAssets(typeFilter, search.trim(), null, "all");
+            setFolders([]);
+        } else {
+            fetchAssets(typeFilter, undefined, currentFolderId, "folder");
+            fetchFolders(currentFolderId);
+        }
+    }, [activeTab, currentFolderId, fetchAssets, fetchFolders]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Debounced search
+    // Debounced search (global across folders).
     useEffect(() => {
         if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
         searchTimeoutRef.current = setTimeout(() => {
             const typeFilter = TAB_TO_TYPE[activeTab];
-            fetchAssets(typeFilter, search || undefined);
+            if (search.trim()) {
+                fetchAssets(typeFilter, search.trim(), null, "all");
+                setFolders([]);
+            } else {
+                fetchAssets(typeFilter, undefined, currentFolderId, "folder");
+                fetchFolders(currentFolderId);
+            }
         }, 350);
         return () => {
             if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
@@ -194,7 +379,6 @@ export default function AssetsPage() {
             setUploadProgress(Math.round(((i) / files.length) * 100));
 
             try {
-                // Step 1: Request presigned upload URL
                 const { asset, uploadUrl } = await apiRequest<{ asset: Asset; uploadUrl: string }>(
                     `/api/organizations/${orgId}/assets/upload-url`,
                     {
@@ -203,11 +387,11 @@ export default function AssetsPage() {
                             filename: file.name,
                             mimeType: file.type || "application/octet-stream",
                             fileSize: file.size,
+                            folderId: currentFolderId,
                         }),
                     }
                 );
 
-                // Step 2: Upload directly to S3
                 await new Promise<void>((resolve, reject) => {
                     const xhr = new XMLHttpRequest();
                     xhr.open("PUT", uploadUrl, true);
@@ -236,13 +420,14 @@ export default function AssetsPage() {
                     xhr.send(file);
                 });
 
-                // Step 3: Confirm upload
                 const confirmedAsset = await apiRequest<Asset>(
                     `/api/organizations/${orgId}/assets/${asset.id}/confirm`,
                     { method: "PATCH" }
                 );
 
-                setAssets(prev => [confirmedAsset, ...prev]);
+                if (!isSearching && (confirmedAsset.folderId ?? null) === currentFolderId) {
+                    setAssets(prev => [confirmedAsset, ...prev]);
+                }
                 successCount++;
             } catch (error) {
                 console.error(`Failed to upload ${file.name}:`, error);
@@ -288,9 +473,11 @@ export default function AssetsPage() {
         try {
             const created = await apiRequest<Asset>(
                 `/api/organizations/${orgId}/assets/url`,
-                { method: "POST", body: JSON.stringify({ name, url, durationSeconds }) },
+                { method: "POST", body: JSON.stringify({ name, url, durationSeconds, folderId: currentFolderId }) },
             );
-            setAssets(prev => [created, ...prev]);
+            if (!isSearching && (created.folderId ?? null) === currentFolderId) {
+                setAssets(prev => [created, ...prev]);
+            }
             setIsUrlModalOpen(false);
             setUrlForm({ name: "", url: "", durationSeconds: "15" });
             toast.success("URL asset created");
@@ -310,6 +497,82 @@ export default function AssetsPage() {
             setSelectedAsset(detail);
         } catch {
             setSelectedAsset(asset);
+        }
+    };
+
+    const handleCreateFolder = async () => {
+        if (!canEdit || !orgId) return toast.error("You only have view access to assets.");
+        const name = newFolderName.trim();
+        if (!name) return toast.error("Folder name is required");
+        setIsCreatingFolder(true);
+        try {
+            await apiRequest<Folder>(`/api/organizations/${orgId}/assets/folders`, {
+                method: "POST",
+                body: JSON.stringify({ name, parentId: currentFolderId }),
+            });
+            setIsNewFolderOpen(false);
+            setNewFolderName("");
+            await fetchFolders(currentFolderId);
+            toast.success("Folder created");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to create folder");
+        } finally {
+            setIsCreatingFolder(false);
+        }
+    };
+
+    const handleRenameFolder = async (folderId: string) => {
+        if (!orgId) return;
+        const name = renameValue.trim();
+        if (!name) return toast.error("Folder name cannot be empty");
+        try {
+            await apiRequest<Folder>(`/api/organizations/${orgId}/assets/folders/${folderId}`, {
+                method: "PATCH",
+                body: JSON.stringify({ name }),
+            });
+            setRenamingFolderId(null);
+            setRenameValue("");
+            await fetchFolders(currentFolderId);
+            toast.success("Folder renamed");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to rename folder");
+        }
+    };
+
+    const handleDeleteFolder = async (folder: Folder) => {
+        if (!canEdit || !orgId) return toast.error("You only have view access to assets.");
+        const confirmed = window.confirm(`Delete folder "${folder.name}"? Subfolders will be removed and any assets inside will move to the root library.`);
+        if (!confirmed) return;
+        try {
+            await apiRequest(`/api/organizations/${orgId}/assets/folders/${folder.id}`, { method: "DELETE" });
+            await fetchFolders(currentFolderId);
+            await fetchAssets(TAB_TO_TYPE[activeTab], undefined, currentFolderId, "folder");
+            toast.success("Folder deleted");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to delete folder");
+        }
+    };
+
+    const handleConfirmMove = async (destinationFolderId: string | null) => {
+        if (!moveTarget || !orgId) return;
+        try {
+            if (moveTarget.kind === "asset") {
+                await apiRequest(`/api/organizations/${orgId}/assets/${moveTarget.id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ folderId: destinationFolderId }),
+                });
+            } else {
+                await apiRequest(`/api/organizations/${orgId}/assets/folders/${moveTarget.id}`, {
+                    method: "PATCH",
+                    body: JSON.stringify({ parentId: destinationFolderId }),
+                });
+            }
+            setMoveTarget(null);
+            await fetchFolders(currentFolderId);
+            await fetchAssets(TAB_TO_TYPE[activeTab], isSearching ? search.trim() : undefined, currentFolderId, isSearching ? "all" : "folder");
+            toast.success(`${moveTarget.kind === "asset" ? "Asset" : "Folder"} moved`);
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to move");
         }
     };
 
@@ -344,6 +607,9 @@ export default function AssetsPage() {
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Centralized repository for all your digital signage content.</p>
                 </div>
                 <div style={{ display: "flex", gap: 12 }}>
+                    <button className="btn-outline" disabled={!canEdit} onClick={() => canEdit && setIsNewFolderOpen(true)} style={{ display: "flex", alignItems: "center", gap: 10, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
+                        <FolderPlus size={18} /> <span>New Folder</span>
+                    </button>
                     <button className="btn-outline" disabled={!canEdit || isCreatingUrl} onClick={() => canEdit && setIsUrlModalOpen(true)} style={{ display: "flex", alignItems: "center", gap: 10, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                         <Plus size={18} /> <span>Add URL Asset</span>
                     </button>
@@ -366,11 +632,85 @@ export default function AssetsPage() {
                 <div style={{ display: "flex", gap: 12, flex: 1, minWidth: 260, maxWidth: 500 }}>
                     <div style={{ position: "relative", width: "100%" }}>
                         <Search size={16} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "hsl(var(--text-muted))" }} />
-                        <input type="text" placeholder="Search by name..." value={search} onChange={e => setSearch(e.target.value)}
+                        <input type="text" placeholder="Search all folders by name..." value={search} onChange={e => setSearch(e.target.value)}
                             style={{ width: "100%", padding: "10px 14px 10px 38px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none" }} />
                     </div>
                 </div>
             </div>
+
+            {/* Breadcrumbs */}
+            {!isSearching && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 20, fontSize: "0.9rem" }}>
+                    <button onClick={() => navigateToFolder(null)} style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: currentFolderId === null ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))", fontWeight: 600 }}>
+                        <Home size={15} /> Root
+                    </button>
+                    {breadcrumbs.map((b, idx) => {
+                        const isLast = idx === breadcrumbs.length - 1;
+                        return (
+                            <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <ChevronRight size={14} style={{ color: "hsl(var(--text-muted))" }} />
+                                <button onClick={() => navigateToFolder(b.id)} disabled={isLast} style={{ background: "none", border: "none", cursor: isLast ? "default" : "pointer", color: isLast ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))", fontWeight: isLast ? 700 : 600 }}>{b.name}</button>
+                            </span>
+                        );
+                    })}
+                </div>
+            )}
+
+            {isSearching && (
+                <p style={{ marginBottom: 16, fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
+                    Showing search results across all folders.
+                </p>
+            )}
+
+            {/* Folder Grid */}
+            {!isSearching && folders.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginBottom: 28 }}>
+                    {folders.map((folder) => (
+                        <motion.div
+                            key={folder.id}
+                            layout
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="glass-card"
+                            style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12, cursor: "pointer" }}
+                            onDoubleClick={() => navigateToFolder(folder.id)}
+                        >
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }} onClick={() => navigateToFolder(folder.id)}>
+                                <div style={{ width: 44, height: 44, borderRadius: 10, background: "hsla(var(--accent-primary), 0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                    <FolderIcon size={24} style={{ color: "hsl(var(--accent-primary))" }} />
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    {renamingFolderId === folder.id ? (
+                                        <input
+                                            value={renameValue}
+                                            onChange={e => setRenameValue(e.target.value)}
+                                            onClick={e => e.stopPropagation()}
+                                            onKeyDown={e => {
+                                                if (e.key === "Enter") handleRenameFolder(folder.id);
+                                                if (e.key === "Escape") { setRenamingFolderId(null); setRenameValue(""); }
+                                            }}
+                                            autoFocus
+                                            style={{ ...inputStyle, padding: "4px 8px", fontSize: "0.85rem" }}
+                                        />
+                                    ) : (
+                                        <h3 style={{ fontSize: "0.95rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={folder.name}>{folder.name}</h3>
+                                    )}
+                                    <p style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))" }}>
+                                        {folder.subfolderCount} folder{folder.subfolderCount === 1 ? "" : "s"} · {folder.assetCount} asset{folder.assetCount === 1 ? "" : "s"}
+                                    </p>
+                                </div>
+                            </div>
+                            {canEdit && (
+                                <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, borderTop: "1px solid hsla(var(--border-subtle), 0.5)", paddingTop: 10 }} onClick={e => e.stopPropagation()}>
+                                    <button className="btn-icon-soft" style={{ padding: 6 }} title="Rename" onClick={() => { setRenamingFolderId(folder.id); setRenameValue(folder.name); }}><Pencil size={15} /></button>
+                                    <button className="btn-icon-soft" style={{ padding: 6 }} title="Move" onClick={() => setMoveTarget({ kind: "folder", id: folder.id, name: folder.name })}><FolderInput size={15} /></button>
+                                    <button className="btn-icon-soft" style={{ padding: 6, color: "hsl(var(--status-danger))" }} title="Delete" onClick={() => handleDeleteFolder(folder)}><Trash2 size={15} /></button>
+                                </div>
+                            )}
+                        </motion.div>
+                    ))}
+                </div>
+            )}
 
             {/* Asset Grid */}
             {isLoading ? (
@@ -381,11 +721,11 @@ export default function AssetsPage() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 24 }}>
                     <AnimatePresence mode="popLayout">
                         {assets.length === 0 ? (
-                            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ gridColumn: "1 / -1", textAlign: "center", padding: "100px 40px", color: "hsl(var(--text-muted))" }}>
+                            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ gridColumn: "1 / -1", textAlign: "center", padding: "80px 40px", color: "hsl(var(--text-muted))" }}>
                                 <Archive size={64} style={{ marginBottom: 20, opacity: 0.2, margin: "0 auto 20px" }} />
-                                <p style={{ fontSize: "1.2rem", fontWeight: 500 }}>No assets detected</p>
+                                <p style={{ fontSize: "1.2rem", fontWeight: 500 }}>{folders.length > 0 && !isSearching ? "No assets in this folder" : "No assets detected"}</p>
                                 <p style={{ fontSize: "0.9rem" }}>
-                                    {canEdit ? "Upload your first media asset to get started." : "No assets have been uploaded yet."}
+                                    {canEdit ? "Upload media or create a folder to organize your content." : "No assets have been uploaded yet."}
                                 </p>
                             </motion.div>
                         ) : (
@@ -452,6 +792,7 @@ export default function AssetsPage() {
                                         )}
                                         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: "auto", borderTop: "1px solid hsla(var(--border-subtle), 0.5)", paddingTop: 12 }}>
                                             <button className="btn-icon-soft" style={{ padding: "6px" }} onClick={() => handleCopyLink(asset.id)} title="Copy Link"><LinkIcon size={16} /></button>
+                                            <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => canEdit && setMoveTarget({ kind: "asset", id: asset.id, name: asset.name })} title="Move to folder"><FolderInput size={16} /></button>
                                             <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(asset.id)} title="Delete"><Trash2 size={16} /></button>
                                         </div>
                                     </div>
@@ -461,6 +802,55 @@ export default function AssetsPage() {
                     </AnimatePresence>
                 </div>
             )}
+
+            {/* New Folder Modal */}
+            <AnimatePresence>
+                {isNewFolderOpen && (
+                    <motion.div key="new-folder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        onClick={() => !isCreatingFolder && setIsNewFolderOpen(false)}>
+                        <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+                            className="glass-panel" style={{ width: "100%", maxWidth: 440, padding: 32 }} onClick={e => e.stopPropagation()}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+                                <h2 style={{ fontSize: "1.4rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 12 }}>
+                                    <FolderPlus style={{ color: "hsl(var(--accent-primary))" }} size={26} /> New Folder
+                                </h2>
+                                <button className="btn-icon-soft" onClick={() => setIsNewFolderOpen(false)} disabled={isCreatingFolder}><X size={22} /></button>
+                            </div>
+                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 12 }}>
+                                Creating inside: <strong style={{ color: "hsl(var(--text-primary))" }}>{currentFolderId === null ? "Root" : (breadcrumbs[breadcrumbs.length - 1]?.name ?? "current folder")}</strong>
+                            </p>
+                            <input
+                                value={newFolderName}
+                                onChange={e => setNewFolderName(e.target.value)}
+                                onKeyDown={e => { if (e.key === "Enter") handleCreateFolder(); }}
+                                placeholder="e.g. Marketing"
+                                autoFocus
+                                style={inputStyle}
+                            />
+                            <div style={{ marginTop: 28, display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                                <button className="btn-outline" onClick={() => setIsNewFolderOpen(false)} disabled={isCreatingFolder}>Cancel</button>
+                                <button className="btn-primary" disabled={!canEdit || isCreatingFolder} onClick={handleCreateFolder} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    {isCreatingFolder ? <Loader2 size={16} className="animate-spin-slow" /> : <FolderPlus size={16} />} Create Folder
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Move dialog */}
+            <AnimatePresence>
+                {moveTarget && orgId && (
+                    <FolderPickerDialog
+                        orgId={orgId}
+                        title={`Move "${moveTarget.name}"`}
+                        excludeFolderId={moveTarget.kind === "folder" ? moveTarget.id : null}
+                        onCancel={() => setMoveTarget(null)}
+                        onConfirm={handleConfirmMove}
+                    />
+                )}
+            </AnimatePresence>
 
             {/* URL Asset Modal */}
             <AnimatePresence>
@@ -480,20 +870,17 @@ export default function AssetsPage() {
                                 <label style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                     <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>Asset Name</span>
                                     <input type="text" value={urlForm.name} onChange={e => setUrlForm(prev => ({ ...prev, name: e.target.value }))}
-                                        placeholder="Weather Dashboard"
-                                        style={{ padding: "10px 14px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none" }} />
+                                        placeholder="Weather Dashboard" style={inputStyle} />
                                 </label>
                                 <label style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                     <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>URL</span>
                                     <input type="url" value={urlForm.url} onChange={e => setUrlForm(prev => ({ ...prev, url: e.target.value }))}
-                                        placeholder="https://weather.com"
-                                        style={{ padding: "10px 14px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none" }} />
+                                        placeholder="https://weather.com" style={inputStyle} />
                                 </label>
                                 <label style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                                     <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>Duration (seconds)</span>
                                     <input type="number" min={1} value={urlForm.durationSeconds} onChange={e => setUrlForm(prev => ({ ...prev, durationSeconds: e.target.value }))}
-                                        placeholder="15"
-                                        style={{ padding: "10px 14px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none" }} />
+                                        placeholder="15" style={inputStyle} />
                                 </label>
                             </div>
                             <div style={{ marginTop: 32, display: "flex", justifyContent: "flex-end", gap: 12 }}>
@@ -522,6 +909,9 @@ export default function AssetsPage() {
                                 </h2>
                                 <button className="btn-icon-soft" onClick={() => setIsUploadOpen(false)}><X size={24} /></button>
                             </div>
+                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginBottom: 16 }}>
+                                Uploading into: <strong style={{ color: "hsl(var(--text-primary))" }}>{currentFolderId === null ? "Root" : (breadcrumbs[breadcrumbs.length - 1]?.name ?? "current folder")}</strong>
+                            </p>
                             <div onDragEnter={handleDrag} onDragLeave={handleDrag} onDragOver={handleDrag} onDrop={handleDrop}
                                 onClick={() => fileInputRef.current?.click()}
                                 style={{
@@ -562,7 +952,6 @@ export default function AssetsPage() {
                                 <button className="btn-icon-soft" onClick={() => setSelectedAsset(null)}><X size={24} /></button>
                             </div>
 
-                            {/* Preview area */}
                             <div style={{ height: 220, background: "hsla(var(--bg-base), 0.85)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, overflow: "hidden" }}>
                                 {selectedAsset.downloadUrl && selectedAsset.type === "IMAGE" ? (
                                     // eslint-disable-next-line @next/next/no-img-element

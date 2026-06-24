@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsString, Max, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Max, Min, ValidateIf } from 'class-validator';
 
 export class RequestUploadDto {
   @IsString()
@@ -13,4 +13,9 @@ export class RequestUploadDto {
   @Min(1)
   @Max(524_288_000) // 500 MB
   fileSize!: number;
+
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsString()
+  folderId?: string | null;
 }

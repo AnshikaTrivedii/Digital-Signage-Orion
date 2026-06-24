@@ -13,7 +13,7 @@ interface PlaylistItem {
 
 const demoPlaylist: PlaylistItem[] = [
     { id: "1", type: "image", label: "Welcome to Orion-Led", color: "linear-gradient(135deg, #0f0c29, #302b63, #24243e)", duration: 8000, subtitle: "Enterprise Digital Signage Platform" },
-    { id: "2", type: "image", label: "Summer Campaign 2026", color: "linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d)", duration: 6000, subtitle: "Limited Time Offers — All Locations" },
+    { id: "2", type: "image", label: "Summer Promo 2026", color: "linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d)", duration: 6000, subtitle: "Limited Time Offers — All Locations" },
     { id: "3", type: "image", label: "Product Showcase", color: "linear-gradient(135deg, #134e5e, #71b280)", duration: 7000, subtitle: "Next-Gen Display Technology" },
     { id: "4", type: "image", label: "Corporate Update Q1", color: "linear-gradient(135deg, #0f2027, #203a43, #2c5364)", duration: 5000, subtitle: "Revenue Growth +23% YoY" },
     { id: "5", type: "image", label: "Employee Spotlight", color: "linear-gradient(135deg, #2d1b69, #833ab4, #fd1d1d)", duration: 6000, subtitle: "Celebrating Our Team" },

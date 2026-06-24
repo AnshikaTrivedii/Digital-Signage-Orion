@@ -2,7 +2,6 @@ export type ClientFeatureKey =
     | "DASHBOARD"
     | "ASSETS"
     | "PLAYLISTS"
-    | "CAMPAIGNS"
     | "SCHEDULE"
     | "TICKERS"
     | "DEVICES"
@@ -45,7 +44,6 @@ const legacyRoleDefaults: Record<PermissionAwareMembership["role"], Record<Clien
         DASHBOARD: "VIEW",
         ASSETS: "EDIT",
         PLAYLISTS: "EDIT",
-        CAMPAIGNS: "EDIT",
         SCHEDULE: "EDIT",
         TICKERS: "EDIT",
         DEVICES: "CONTROL",
@@ -57,7 +55,6 @@ const legacyRoleDefaults: Record<PermissionAwareMembership["role"], Record<Clien
         DASHBOARD: "VIEW",
         ASSETS: "VIEW",
         PLAYLISTS: "VIEW",
-        CAMPAIGNS: "VIEW",
         SCHEDULE: "VIEW",
         TICKERS: "VIEW",
         DEVICES: "VIEW",
@@ -69,7 +66,6 @@ const legacyRoleDefaults: Record<PermissionAwareMembership["role"], Record<Clien
         DASHBOARD: "VIEW",
         ASSETS: "EDIT",
         PLAYLISTS: "EDIT",
-        CAMPAIGNS: "EDIT",
         SCHEDULE: "EDIT",
         TICKERS: "EDIT",
         DEVICES: "NONE",
@@ -81,7 +77,6 @@ const legacyRoleDefaults: Record<PermissionAwareMembership["role"], Record<Clien
         DASHBOARD: "VIEW",
         ASSETS: "VIEW",
         PLAYLISTS: "VIEW",
-        CAMPAIGNS: "VIEW",
         SCHEDULE: "VIEW",
         TICKERS: "VIEW",
         DEVICES: "VIEW",
@@ -95,7 +90,6 @@ export const clientRouteRequirements: Array<{ prefix: string; requirement: Clien
     { prefix: "/app/dashboard", requirement: { featureKey: "DASHBOARD", requiredAccess: "VIEW" } },
     { prefix: "/app/assets", requirement: { featureKey: "ASSETS", requiredAccess: "VIEW" } },
     { prefix: "/app/playlists", requirement: { featureKey: "PLAYLISTS", requiredAccess: "VIEW" } },
-    { prefix: "/app/campaigns", requirement: { featureKey: "CAMPAIGNS", requiredAccess: "VIEW" } },
     { prefix: "/app/schedule", requirement: { featureKey: "SCHEDULE", requiredAccess: "VIEW" } },
     { prefix: "/app/tickers", requirement: { featureKey: "TICKERS", requiredAccess: "VIEW" } },
     { prefix: "/app/devices", requirement: { featureKey: "DEVICES", requiredAccess: "VIEW" } },

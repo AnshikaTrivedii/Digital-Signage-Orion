@@ -319,18 +319,9 @@ export class PlayerService {
     const playlist = await this.prisma.playlist.findUnique({
       where: { id: device.currentPlaylistId },
       include: {
-        campaignLinks: {
+        playlistAssets: {
           orderBy: { position: 'asc' },
-          include: {
-            campaign: {
-              include: {
-                campaignAssets: {
-                  orderBy: { position: 'asc' },
-                  include: { asset: true },
-                },
-              },
-            },
-          },
+          include: { asset: true },
         },
       },
     });
@@ -432,24 +423,20 @@ export class PlayerService {
 
   private async buildPlaylistManifest(
     playlist: {
-      campaignLinks: {
-        campaign: {
-          campaignAssets: {
-            durationSeconds: number;
-            asset: {
-              id: string;
-              name: string;
-              type: string;
-              mimeType: string;
-              status: string;
-              s3Key: string | null;
-              url: string | null;
-              fileSize: number;
-              contentVersion: number;
-              contentHash: string | null;
-              updatedAt: Date;
-            };
-          }[];
+      playlistAssets: {
+        durationSeconds: number;
+        asset: {
+          id: string;
+          name: string;
+          type: string;
+          mimeType: string;
+          status: string;
+          s3Key: string | null;
+          url: string | null;
+          fileSize: number;
+          contentVersion: number;
+          contentHash: string | null;
+          updatedAt: Date;
         };
       }[];
     },
@@ -472,43 +459,41 @@ export class PlayerService {
     }[] = [];
 
     let globalPosition = 0;
-    for (const link of playlist.campaignLinks) {
-      for (const campaignAsset of link.campaign.campaignAssets) {
-        const asset = campaignAsset.asset;
-        const isUrlAsset = asset.type === 'URL';
+    for (const playlistAsset of playlist.playlistAssets) {
+      const asset = playlistAsset.asset;
+      const isUrlAsset = asset.type === 'URL';
 
-        if (isUrlAsset) {
-          if (!asset.url?.trim()) continue;
-        } else if (asset.status !== 'READY' || !asset.s3Key) {
-          continue;
-        }
-
-        const clientVersion = clientAssetVersions.get(asset.id);
-        const requiresDownload =
-          !isUrlAsset &&
-          (clientVersion === undefined || clientVersion < asset.contentVersion);
-
-        const downloadUrl =
-          requiresDownload && asset.s3Key
-            ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
-            : null;
-
-        manifest.push({
-          id: asset.id,
-          name: asset.name,
-          type: asset.type,
-          mimeType: asset.mimeType,
-          durationSeconds: campaignAsset.durationSeconds,
-          position: globalPosition++,
-          assetVersion: asset.contentVersion,
-          updatedAt: asset.updatedAt.toISOString(),
-          contentHash: asset.contentHash,
-          requiresDownload,
-          downloadUrl,
-          url: asset.url ?? null,
-          fileSize: asset.fileSize,
-        });
+      if (isUrlAsset) {
+        if (!asset.url?.trim()) continue;
+      } else if (asset.status !== 'READY' || !asset.s3Key) {
+        continue;
       }
+
+      const clientVersion = clientAssetVersions.get(asset.id);
+      const requiresDownload =
+        !isUrlAsset &&
+        (clientVersion === undefined || clientVersion < asset.contentVersion);
+
+      const downloadUrl =
+        requiresDownload && asset.s3Key
+          ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
+          : null;
+
+      manifest.push({
+        id: asset.id,
+        name: asset.name,
+        type: asset.type,
+        mimeType: asset.mimeType,
+        durationSeconds: playlistAsset.durationSeconds,
+        position: globalPosition++,
+        assetVersion: asset.contentVersion,
+        updatedAt: asset.updatedAt.toISOString(),
+        contentHash: asset.contentHash,
+        requiresDownload,
+        downloadUrl,
+        url: asset.url ?? null,
+        fileSize: asset.fileSize,
+      });
     }
 
     return manifest;

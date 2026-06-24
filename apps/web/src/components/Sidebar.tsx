@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { 
     LayoutDashboard, MonitorPlay, ListVideo, 
     Image as ImageIcon, Settings, Activity, 
-    X, Type, Folder, Layout, LogOut,
+    X, Type, Layout, LogOut,
     HelpCircle, ShieldCheck, CalendarClock
 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -14,7 +14,6 @@ const navItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
     { name: "Devices", path: "/devices", icon: MonitorPlay },
     { name: "Layouts", path: "/designer", icon: Layout },
-    { name: "Campaigns", path: "/campaigns", icon: Folder },
     { name: "Playlists", path: "/playlists", icon: ListVideo },
     { name: "Assets", path: "/assets", icon: ImageIcon },
     { name: "Tickers", path: "/tickers", icon: Type },

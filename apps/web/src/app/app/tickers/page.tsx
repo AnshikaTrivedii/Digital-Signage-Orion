@@ -959,6 +959,7 @@ export default function TickersPage() {
                             alignItems: "center",
                             justifyContent: "center",
                             padding: 20,
+                            overflowY: "auto",
                         }}
                         onClick={closeEditor}
                     >
@@ -967,9 +968,23 @@ export default function TickersPage() {
                             animate={{ scale: 1, y: 0 }}
                             exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel"
-                            style={{ width: "100%", maxWidth: 560, padding: 32 }}
+                            style={{
+                                width: "100%",
+                                maxWidth: 560,
+                                maxHeight: "calc(100dvh - 40px)",
+                                margin: "auto",
+                                display: "flex",
+                                flexDirection: "column",
+                                overflow: "hidden",
+                            }}
                             onClick={(e) => e.stopPropagation()}
                         >
+                            <div
+                                style={{
+                                    flexShrink: 0,
+                                    padding: "24px 32px 0",
+                                }}
+                            >
                             <div className="flex-between" style={{ marginBottom: 24 }}>
                                 <h2
                                     style={{
@@ -987,6 +1002,16 @@ export default function TickersPage() {
                                     <X size={24} />
                                 </button>
                             </div>
+                            </div>
+
+                            <div
+                                style={{
+                                    flex: 1,
+                                    overflowY: "auto",
+                                    padding: "0 32px",
+                                    minHeight: 0,
+                                }}
+                            >
 
                             <div style={{ marginBottom: 20 }}>
                                 <label
@@ -1539,6 +1564,16 @@ export default function TickersPage() {
                                 </div>
                             </div>
 
+                            </div>
+
+                            <div
+                                style={{
+                                    flexShrink: 0,
+                                    padding: "16px 32px 24px",
+                                    borderTop: "1px solid hsla(var(--border-subtle), 0.35)",
+                                    background: "hsla(var(--bg-surface), 0.95)",
+                                }}
+                            >
                             {editorError && (
                                 <div
                                     style={{
@@ -1583,6 +1618,7 @@ export default function TickersPage() {
                                         "Broadcast Live"
                                     )}
                                 </button>
+                            </div>
                             </div>
                         </motion.div>
                     </motion.div>

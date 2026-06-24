@@ -148,9 +148,9 @@ export default function ClientDashboardPage() {
                         <p style={{ fontSize: "1.5rem", fontWeight: 800, fontFamily: "monospace", letterSpacing: "0.05em", color: "hsl(var(--text-primary))" }}>{currentTime}</p>
                         <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}</p>
                     </div>
-                    <button className="btn-primary" onClick={() => router.push("/app/campaigns")} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-primary" onClick={() => router.push("/app/playlists")} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <Sparkles size={18} />
-                        <span>New Campaign</span>
+                        <span>New Playlist</span>
                     </button>
                 </div>
             </div>
