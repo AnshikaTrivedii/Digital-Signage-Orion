@@ -262,7 +262,7 @@ export default function ClientDashboardPage() {
                             <h2 style={{ fontSize: "1.15rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
                                 <Globe size={18} style={{ color: "hsl(var(--accent-primary))" }} /> Global Network
                             </h2>
-                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>Real-time node connectivity across 8 regions</p>
+                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>Real-time node connectivity across global regions</p>
                         </div>
                     </div>
                     <AnimatedGlobe />
