@@ -422,7 +422,7 @@ export class PlayerService {
       text: ticker.text,
       position: ticker.position,
       speed: ticker.speed,
-      height: ticker.height,
+      heightPercent: ticker.heightPercent,
       style: ticker.style,
       textColor: ticker.color,
       backgroundColor: ticker.backgroundColor,

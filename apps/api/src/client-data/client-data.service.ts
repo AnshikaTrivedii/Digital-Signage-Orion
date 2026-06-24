@@ -13,7 +13,6 @@ import {
   ScheduleStatus,
   TickerPriority,
   TickerBroadcastScope,
-  TickerHeight,
   TickerPosition,
   TickerSpeed,
   TickerStatus,
@@ -1063,7 +1062,7 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: string;
-      height?: string;
+      heightPercent?: number;
       broadcastScope?: string;
       deviceIds?: string[];
     },
@@ -1091,7 +1090,7 @@ export class ClientDataService {
           color: this.sanitizeTickerColor(body.color),
           backgroundColor: this.sanitizeTickerColor(body.backgroundColor ?? '#1a1f2e'),
           position: this.toTickerPosition(body.position),
-          height: this.toTickerHeight(body.height),
+          heightPercent: this.clampTickerHeightPercent(body.heightPercent),
           broadcastScope,
           status: this.toTickerStatus(body.status, TickerStatus.ACTIVE),
           priority: this.toTickerPriority(body.priority),
@@ -1130,7 +1129,7 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: string;
-      height?: string;
+      heightPercent?: number;
       broadcastScope?: string;
       deviceIds?: string[];
     },
@@ -1156,7 +1155,7 @@ export class ClientDataService {
       color?: string;
       backgroundColor?: string;
       position?: TickerPosition;
-      height?: TickerHeight;
+      heightPercent?: number;
       broadcastScope?: TickerBroadcastScope;
       screens?: number;
     } = {};
@@ -1175,7 +1174,9 @@ export class ClientDataService {
       data.backgroundColor = this.sanitizeTickerColor(body.backgroundColor);
     }
     if (body.position !== undefined) data.position = this.toTickerPosition(body.position);
-    if (body.height !== undefined) data.height = this.toTickerHeight(body.height);
+    if (body.heightPercent !== undefined) {
+      data.heightPercent = this.clampTickerHeightPercent(body.heightPercent);
+    }
 
     const nextBroadcastScope =
       body.broadcastScope !== undefined
@@ -1962,11 +1963,10 @@ export class ClientDataService {
     return TickerPosition.BOTTOM;
   }
 
-  private toTickerHeight(height?: string | null) {
-    const normalized = (height ?? '').toLowerCase();
-    if (normalized === 'small') return TickerHeight.SMALL;
-    if (normalized === 'large') return TickerHeight.LARGE;
-    return TickerHeight.MEDIUM;
+  private clampTickerHeightPercent(heightPercent?: number | null) {
+    const value = Number(heightPercent ?? 10);
+    if (!Number.isFinite(value)) return 10;
+    return Math.min(20, Math.max(10, Math.round(value)));
   }
 
   private sanitizeTickerColor(color?: string | null) {
@@ -1982,7 +1982,7 @@ export class ClientDataService {
     color: string;
     backgroundColor: string;
     position: TickerPosition;
-    height: TickerHeight;
+    heightPercent: number;
     broadcastScope: TickerBroadcastScope;
     status: TickerStatus;
     priority: TickerPriority;
@@ -2000,7 +2000,7 @@ export class ClientDataService {
       color: ticker.color,
       backgroundColor: ticker.backgroundColor,
       position: this.toTitleStatus(ticker.position),
-      height: this.toTitleStatus(ticker.height),
+      heightPercent: this.clampTickerHeightPercent(ticker.heightPercent),
       broadcastScope: this.toTitleStatus(ticker.broadcastScope),
       status: this.toTitleStatus(ticker.status),
       priority: this.toTitleStatus(ticker.priority),

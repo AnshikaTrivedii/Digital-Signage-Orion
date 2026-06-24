@@ -1,7 +1,8 @@
-import { IsArray, IsHexColor, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsHexColor, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import {
   TICKER_BROADCAST_SCOPES,
-  TICKER_HEIGHTS,
+  TICKER_HEIGHT_MAX,
+  TICKER_HEIGHT_MIN,
   TICKER_POSITIONS,
   TICKER_PRIORITIES,
   TICKER_SPEEDS,
@@ -45,8 +46,10 @@ export class UpdateTickerDto {
   position?: (typeof TICKER_POSITIONS)[number];
 
   @IsOptional()
-  @IsIn(TICKER_HEIGHTS as unknown as string[])
-  height?: (typeof TICKER_HEIGHTS)[number];
+  @IsInt()
+  @Min(TICKER_HEIGHT_MIN)
+  @Max(TICKER_HEIGHT_MAX)
+  heightPercent?: number;
 
   @IsOptional()
   @IsIn(TICKER_BROADCAST_SCOPES as unknown as string[])

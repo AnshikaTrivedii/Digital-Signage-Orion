@@ -14,10 +14,13 @@ import { useAuth } from "@/components/AuthProvider";
 type Speed = "Slow" | "Normal" | "Fast";
 type Priority = "Low" | "Normal" | "Urgent";
 type Position = "Top" | "Bottom";
-type Height = "Small" | "Medium" | "Large";
 type BroadcastScope = "All Devices" | "Selected Devices";
 type Style = "Classic" | "Neon" | "Gradient" | "Minimal";
 type Status = "Active" | "Paused" | "Draft";
+
+const TICKER_HEIGHT_MIN = 10;
+const TICKER_HEIGHT_MAX = 20;
+const TICKER_HEIGHT_DEFAULT = 10;
 
 interface DeviceOption {
     id: string;
@@ -33,7 +36,7 @@ interface Ticker {
     color: string;
     backgroundColor: string;
     position: Position;
-    height: Height;
+    heightPercent: number;
     broadcastScope: BroadcastScope;
     status: Status;
     priority: Priority;
@@ -49,7 +52,7 @@ interface EditorState {
     speed: Speed;
     priority: Priority;
     position: Position;
-    height: Height;
+    heightPercent: number;
     broadcastScope: BroadcastScope;
     deviceIds: string[];
     style: Style;
@@ -63,7 +66,7 @@ const EMPTY_EDITOR: EditorState = {
     speed: "Normal",
     priority: "Normal",
     position: "Bottom",
-    height: "Medium",
+    heightPercent: TICKER_HEIGHT_DEFAULT,
     broadcastScope: "All Devices",
     deviceIds: [],
     style: "Neon",
@@ -75,7 +78,6 @@ const EMPTY_EDITOR: EditorState = {
 const SPEEDS: Speed[] = ["Slow", "Normal", "Fast"];
 const PRIORITIES: Priority[] = ["Low", "Normal", "Urgent"];
 const POSITIONS: Position[] = ["Top", "Bottom"];
-const HEIGHTS: Height[] = ["Small", "Medium", "Large"];
 const BROADCAST_SCOPES: BroadcastScope[] = ["All Devices", "Selected Devices"];
 const STYLES: Style[] = ["Classic", "Neon", "Gradient", "Minimal"];
 const STATUSES: Status[] = ["Active", "Paused", "Draft"];
@@ -83,8 +85,11 @@ const STATUSES: Status[] = ["Active", "Paused", "Draft"];
 const parseSpeed = (value: string): Speed => (value === "Slow" || value === "Fast" ? value : "Normal");
 const parsePriority = (value: string): Priority => (value === "Urgent" || value === "Low" ? value : "Normal");
 const parsePosition = (value: string): Position => (value === "Top" ? "Top" : "Bottom");
-const parseHeight = (value: string): Height =>
-    value === "Small" || value === "Large" ? value : "Medium";
+const clampHeightPercent = (value: number | string | null | undefined) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return TICKER_HEIGHT_DEFAULT;
+    return Math.min(TICKER_HEIGHT_MAX, Math.max(TICKER_HEIGHT_MIN, Math.round(parsed)));
+};
 const parseBroadcastScope = (value: string): BroadcastScope =>
     value === "Selected Devices" ? "Selected Devices" : "All Devices";
 const parseStyle = (value: string): Style =>
@@ -107,9 +112,6 @@ const statusColor = (s: Status) => {
 const speedDuration = (speed: Speed) =>
     speed === "Slow" ? 20 : speed === "Fast" ? 8 : 14;
 
-const heightPx = (height: Height) =>
-    height === "Small" ? 36 : height === "Large" ? 64 : 48;
-
 const describeError = (error: unknown, fallback: string) => {
     if (error instanceof ApiError) return error.message || fallback;
     if (error instanceof Error) return error.message || fallback;
@@ -120,7 +122,7 @@ const normalizeTicker = (ticker: Ticker): Ticker => ({
     ...ticker,
     backgroundColor: ticker.backgroundColor ?? "#1a1f2e",
     position: ticker.position ?? "Bottom",
-    height: ticker.height ?? "Medium",
+    heightPercent: clampHeightPercent(ticker.heightPercent),
     broadcastScope: ticker.broadcastScope ?? "All Devices",
     deviceIds: ticker.deviceIds ?? [],
     deviceNames: ticker.deviceNames ?? [],
@@ -135,27 +137,28 @@ const formatScopeListing = (ticker: Pick<Ticker, "broadcastScope" | "deviceNames
 
 type TickerPreviewSource = Pick<
     Ticker,
-    "text" | "speed" | "priority" | "style" | "color" | "backgroundColor" | "position" | "height" | "status"
+    "text" | "speed" | "priority" | "style" | "color" | "backgroundColor" | "position" | "heightPercent" | "status"
 >;
 
 const TickerPreviewStrip = ({
     ticker,
-    height = 44,
-    overlay = false,
+    heightPercent = TICKER_HEIGHT_DEFAULT,
+    embedded = false,
 }: {
     ticker: TickerPreviewSource;
-    height?: number;
-    overlay?: boolean;
+    heightPercent?: number;
+    embedded?: boolean;
 }) => (
     <div
         style={{
-            borderRadius: overlay ? 0 : 10,
+            borderRadius: embedded ? 0 : 10,
             background: ticker.backgroundColor,
-            border: overlay ? "none" : `1px solid ${ticker.color}33`,
-            borderTop: overlay && ticker.position === "Bottom" ? `1px solid ${ticker.color}33` : undefined,
-            borderBottom: overlay && ticker.position === "Top" ? `1px solid ${ticker.color}33` : undefined,
+            border: embedded ? "none" : `1px solid ${ticker.color}33`,
+            borderTop: embedded && ticker.position === "Bottom" ? `1px solid ${ticker.color}33` : undefined,
+            borderBottom: embedded && ticker.position === "Top" ? `1px solid ${ticker.color}33` : undefined,
             overflow: "hidden",
-            height,
+            height: embedded ? "100%" : undefined,
+            minHeight: embedded ? undefined : 44,
             display: "flex",
             alignItems: "center",
         }}
@@ -169,7 +172,7 @@ const TickerPreviewStrip = ({
                 height: "100%",
                 display: "flex",
                 alignItems: "center",
-                fontSize: "0.72rem",
+                fontSize: heightPercent >= 18 ? "0.8rem" : "0.72rem",
                 letterSpacing: "0.08em",
                 whiteSpace: "nowrap",
             }}
@@ -186,7 +189,7 @@ const TickerPreviewStrip = ({
                 }}
                 style={{
                     whiteSpace: "nowrap",
-                    fontSize: height > 48 ? "1.05rem" : "0.95rem",
+                    fontSize: heightPercent >= 18 ? "1.05rem" : "0.95rem",
                     paddingLeft: 20,
                     ...stylePreview({
                         style: ticker.style,
@@ -200,37 +203,45 @@ const TickerPreviewStrip = ({
     </div>
 );
 
-const TickerOverlayPreview = ({
+const TickerLayoutPreview = ({
     ticker,
-    minHeight = 200,
+    minHeight = 280,
 }: {
     ticker: TickerPreviewSource;
     minHeight?: number;
 }) => {
-    const barHeight = heightPx(ticker.height ?? "Medium");
-    const strip = <TickerPreviewStrip ticker={ticker} height={barHeight} overlay />;
+    const heightPercent = clampHeightPercent(ticker.heightPercent);
+    const contentPercent = 100 - heightPercent;
+    const strip = (
+        <TickerPreviewStrip ticker={ticker} heightPercent={heightPercent} embedded />
+    );
 
     return (
         <div
             style={{
-                position: "relative",
+                display: "flex",
+                flexDirection: "column",
                 borderRadius: 12,
                 overflow: "hidden",
                 background: "#0a0e1a",
                 border: `1px solid ${ticker.color}30`,
                 minHeight,
+                height: minHeight,
             }}
         >
+            {ticker.position === "Top" ? (
+                <div style={{ flex: `0 0 ${heightPercent}%`, minHeight: 0 }}>{strip}</div>
+            ) : null}
             <div
                 style={{
-                    position: "absolute",
-                    inset: 0,
+                    flex: `0 0 ${contentPercent}%`,
+                    minHeight: 0,
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "center",
                     justifyContent: "center",
                     gap: 8,
-                    padding: barHeight + 16,
+                    padding: 16,
                     background:
                         "radial-gradient(ellipse at center, hsla(var(--accent-primary), 0.08) 0%, transparent 70%), linear-gradient(135deg, #12182a 0%, #0a0e1a 100%)",
                     color: "hsl(var(--text-muted))",
@@ -240,14 +251,11 @@ const TickerOverlayPreview = ({
                 <Monitor size={28} style={{ opacity: 0.35 }} />
                 <p style={{ fontSize: "0.85rem", fontWeight: 600, margin: 0 }}>Playlist content plays here</p>
                 <p style={{ fontSize: "0.72rem", margin: 0, maxWidth: 280, lineHeight: 1.5 }}>
-                    Image, video, URL, or HTML — ticker overlays on top and does not replace content
+                    Ticker uses {heightPercent}% of the screen — content fills the remaining {contentPercent}%
                 </p>
             </div>
-            {ticker.position === "Top" ? (
-                <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 2 }}>{strip}</div>
-            ) : null}
             {ticker.position === "Bottom" ? (
-                <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 2 }}>{strip}</div>
+                <div style={{ flex: `0 0 ${heightPercent}%`, minHeight: 0 }}>{strip}</div>
             ) : null}
         </div>
     );
@@ -381,7 +389,7 @@ export default function TickersPage() {
             speed: ticker.speed,
             priority: ticker.priority,
             position: ticker.position,
-            height: ticker.height,
+            heightPercent: ticker.heightPercent,
             broadcastScope: ticker.broadcastScope,
             deviceIds: ticker.deviceIds,
             style: ticker.style,
@@ -866,7 +874,7 @@ export default function TickersPage() {
                                                 Position: {t.position}
                                             </span>
                                             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                                Height: {t.height}
+                                                Height: {t.heightPercent}%
                                             </span>
                                             <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                                 <Monitor size={12} /> {t.screens} screen{t.screens === 1 ? "" : "s"}
@@ -920,13 +928,13 @@ export default function TickersPage() {
                                 letterSpacing: "0.1em",
                             }}
                         >
-                            Live Preview • {previewTicker.position} • {previewTicker.height} • {previewTicker.style}
+                            Live Preview • {previewTicker.position} • {previewTicker.heightPercent}% • {previewTicker.style}
                         </p>
                         <div
                             style={{ width: "100%", maxWidth: 900 }}
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <TickerOverlayPreview ticker={previewTicker} minHeight={280} />
+                            <TickerLayoutPreview ticker={previewTicker} minHeight={280} />
                         </div>
                         <p
                             style={{
@@ -999,9 +1007,9 @@ export default function TickersPage() {
                                         marginBottom: 8,
                                     }}
                                 >
-                                    Overlay Preview
+                                    Screen Layout Preview
                                 </label>
-                                <TickerOverlayPreview
+                                <TickerLayoutPreview
                                     ticker={{
                                         text: editorForm.text,
                                         speed: editorForm.speed,
@@ -1011,7 +1019,7 @@ export default function TickersPage() {
                                         color: editorForm.color,
                                         backgroundColor: editorForm.backgroundColor,
                                         position: editorForm.position,
-                                        height: editorForm.height,
+                                        heightPercent: editorForm.heightPercent,
                                     }}
                                 />
                             </div>
@@ -1189,31 +1197,38 @@ export default function TickersPage() {
                                             marginBottom: 8,
                                         }}
                                     >
-                                        Height
+                                        Screen Height ({TICKER_HEIGHT_MIN}%–{TICKER_HEIGHT_MAX}%)
                                     </label>
-                                    <select
-                                        value={editorForm.height}
-                                        onChange={(e) =>
-                                            setEditorForm((prev) => ({
-                                                ...prev,
-                                                height: parseHeight(e.target.value),
-                                            }))
-                                        }
-                                        style={{
-                                            width: "100%",
-                                            padding: 10,
-                                            borderRadius: 8,
-                                            background: "hsla(var(--bg-base), 0.5)",
-                                            border: "1px solid hsla(var(--border-subtle), 0.5)",
-                                            color: "hsl(var(--text-primary))",
-                                        }}
-                                    >
-                                        {HEIGHTS.map((height) => (
-                                            <option key={height} value={height}>
-                                                {height}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                        <input
+                                            type="range"
+                                            min={TICKER_HEIGHT_MIN}
+                                            max={TICKER_HEIGHT_MAX}
+                                            step={1}
+                                            value={editorForm.heightPercent}
+                                            onChange={(e) =>
+                                                setEditorForm((prev) => ({
+                                                    ...prev,
+                                                    heightPercent: clampHeightPercent(e.target.value),
+                                                }))
+                                            }
+                                            style={{ flex: 1 }}
+                                        />
+                                        <span
+                                            style={{
+                                                minWidth: 44,
+                                                textAlign: "right",
+                                                fontSize: "0.85rem",
+                                                fontWeight: 700,
+                                                color: "hsl(var(--text-primary))",
+                                            }}
+                                        >
+                                            {editorForm.heightPercent}%
+                                        </span>
+                                    </div>
+                                    <p style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))", marginTop: 8 }}>
+                                        Default is {TICKER_HEIGHT_DEFAULT}% of the screen. Content uses the remaining area.
+                                    </p>
                                 </div>
                                 <div>
                                     <label

@@ -124,12 +124,6 @@ enum TickerBroadcastScope {
   SELECTED_DEVICES
 }
 
-enum TickerHeight {
-  SMALL
-  MEDIUM
-  LARGE
-}
-
 enum ScheduleStatus {
   SCHEDULED
   ACTIVE
@@ -338,7 +332,7 @@ model Ticker {
   color           String               @default("#00e5ff")
   backgroundColor String               @default("#1a1f2e")
   position        TickerPosition       @default(BOTTOM)
-  height          TickerHeight         @default(MEDIUM)
+  heightPercent   Int                  @default(10)
   broadcastScope  TickerBroadcastScope @default(ALL_DEVICES)
   status          TickerStatus         @default(DRAFT)
   priority        TickerPriority       @default(NORMAL)
