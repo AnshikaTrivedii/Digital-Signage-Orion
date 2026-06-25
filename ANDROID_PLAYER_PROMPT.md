@@ -15,7 +15,9 @@ Copy the following text and provide it to your AI assistant or Android developer
 Build a robust, kiosk-mode Android application for a Digital Signage system ("Digital-Signage-Orion"). The app must run seamlessly on Android-based displays or TV boxes, fetching content from a NestJS backend and playing it in a continuous loop.
 
 **Context:**
-Our platform has a backend (NestJS) that manages `Organizations`, `Campaigns`, `Playlists`, and `Assets` (Images, Videos, HTML). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
+Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `Assets` (Images, Videos, HTML, URL), and `Tickers` (scrolling text overlays). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
+
+> **Note (architecture):** There is **no "Campaign" layer**. Playlists link **directly** to assets (`Playlist → PlaylistAsset → Asset`). Assets may be organized into folders in the CMS, but folders are a CMS-only convenience — the `/sync` manifest always delivers a **flat, ordered list** of assets, so folders require **no player changes**.
 
 **Core Requirements:**
 
@@ -59,6 +61,41 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Campaigns`, `
 2. Create the `PairingScreen` UI (where the pairing code is displayed) and the `PlaybackScreen` UI.
 3. Write the Retrofit API interface matching the exact contracts documented below.
 4. Write the pairing service logic (Coroutine loop for polling pairing status).
+
+---
+**End Copy**
+
+---
+
+## Part 1B: Required Updates for an EXISTING Player (Backend Changes — June 2026)
+
+> If you already have a working Android player built from an earlier version of this guide, hand the AI assistant / developer the copy-paste prompt below. It covers the three backend changes that affect the player: **campaign removal**, **asset folders**, and **ticker `heightPercent`**.
+
+---
+**Copy from here:**
+
+**Objective:** Update our existing Digital-Signage-Orion Android player to match recent backend changes. The pairing, sync, heartbeat, and PoP flows are unchanged in shape — only the details below change.
+
+**1. Campaigns are gone (low effort):**
+- The backend no longer has any "Campaign" concept. Playlists now link directly to assets.
+- The `GET /api/player/sync` manifest is structurally **unchanged** (still a flat, ordered list of assets with `position` + `durationSeconds`). No change needed to playback.
+- In `POST /api/player/pop-logs`, the `campaignName` field is now **deprecated/optional**. Stop sending it (or send `null`). `assetName` + `playlistName` are all that's needed. Do **not** remove it from your data class if that breaks serialization — just leave it null.
+
+**2. Asset folders (no player change):**
+- The CMS can now group assets into nested folders, but this is purely organizational. The player still receives a flat ordered asset list from `/sync`. **No code change required.** (Mentioned only so you don't go looking for a folder field.)
+
+**3. Tickers now use `heightPercent` instead of Small/Medium/Large (action required):**
+- `GET /api/player/sync` returns a `tickers` array (sibling of `assets`). Render the **highest-priority** active ticker as a horizontally scrolling text bar over the playlist content.
+- Each ticker object: `{ id, text, position, speed, heightPercent, style, textColor, backgroundColor, priority }`.
+- **`heightPercent` is an integer (10–20)** = the percentage of the **screen height** the ticker bar occupies. Compute pixel height as `screenHeightPx * heightPercent / 100`. The playlist content area should fill the remaining `(100 − heightPercent)%` so content and ticker never overlap.
+- `position` is `"TOP"` or `"BOTTOM"` (which edge the bar sits on).
+- **If your current code uses a `height` enum (`SMALL`/`MEDIUM`/`LARGE`) with fixed pixel sizes, replace it** with the `heightPercent` calculation above. Remove the old enum.
+- Other fields: `speed` (`"SLOW"|"NORMAL"|"FAST"` → scroll speed), `style` (`"CLASSIC"|"NEON"|"GRADIENT"|"MINIMAL"` → visual theme), `textColor` & `backgroundColor` (hex strings), `priority` (`"LOW"|"NORMAL"|"URGENT"` — show the highest-priority active ticker).
+
+**Tasks:**
+1. Add/replace a `TickerInfo` data class in the Retrofit layer (see Part 4) and add `tickers: List<TickerInfo>` to `SyncResponse`.
+2. Update the playback screen to lay out content + ticker using `heightPercent` (no more fixed Small/Medium/Large sizes).
+3. Set `campaignName = null` in PoP log uploads.
 
 ---
 **End Copy**
@@ -263,9 +300,31 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "url": "https://weather.com",
       "fileSize": 0
     }
+  ],
+  "tickers": [
+    {
+      "id": "ckt123",
+      "text": "Welcome to our store — flash sale ends at 6 PM!",
+      "position": "BOTTOM",
+      "speed": "NORMAL",
+      "heightPercent": 12,
+      "style": "NEON",
+      "textColor": "#00e5ff",
+      "backgroundColor": "#1a1f2e",
+      "priority": "URGENT"
+    }
   ]
 }
 ```
+
+> The `tickers` array is returned on **every** `/sync` response (including `unchanged: true`), so the player always has the current ticker state. If empty, render no ticker bar and let playlist content use the full screen.
+
+**Ticker rendering:**
+1. Pick the **highest-`priority`** ticker (`URGENT` > `NORMAL` > `LOW`); the array is already sorted priority-desc.
+2. The ticker bar occupies `screenHeightPx * heightPercent / 100` pixels on the `position` edge (`TOP`/`BOTTOM`); playlist content fills the remaining height (no overlap).
+3. Scroll `text` horizontally at a rate based on `speed` (`SLOW`/`NORMAL`/`FAST`).
+4. Apply `textColor`, `backgroundColor`, and `style` (`CLASSIC`/`NEON`/`GRADIENT`/`MINIMAL`) for theming.
+5. Tickers are independent of the playlist loop — keep the bar visible across asset transitions.
 
 **Offline sync flow:**
 1. Persist `playlistVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.
@@ -317,7 +376,8 @@ Submit queued proof-of-play analytics. Call every ~5 minutes, or when the offlin
 }
 ```
 - `assetName` (preferred) or legacy `content`
-- `playlistName`, `campaignName`: optional context for reporting
+- `playlistName`: optional context for reporting
+- `campaignName`: **deprecated** — campaigns were removed. Send `null` or omit it; new logs no longer populate this field.
 - `startTime` (preferred) or legacy `timestamp`
 - `endTime`, `durationSeconds`: optional; server derives missing values when possible
 - `status`: `"VERIFIED"` (played successfully) or `"FAILED"` (playback error)
@@ -478,10 +538,23 @@ data class SyncResponse(
     val playlistVersion: Int?,
     val playlist: PlaylistInfo?,
     val assets: List<AssetInfo>,
+    val tickers: List<TickerInfo> = emptyList(),
     val currentAssetIds: List<String>,
     val removedAssetIds: List<String>,
 )
 data class PlaylistInfo(val id: String, val name: String)
+
+data class TickerInfo(
+    val id: String,
+    val text: String,
+    val position: String,        // "TOP" | "BOTTOM"
+    val speed: String,           // "SLOW" | "NORMAL" | "FAST"
+    val heightPercent: Int,      // 10–20: % of screen height the bar occupies
+    val style: String,           // "CLASSIC" | "NEON" | "GRADIENT" | "MINIMAL"
+    val textColor: String,       // hex, e.g. "#00e5ff"
+    val backgroundColor: String, // hex, e.g. "#1a1f2e"
+    val priority: String,        // "LOW" | "NORMAL" | "URGENT"
+)
 data class AssetInfo(
     val id: String,
     val name: String,
@@ -502,7 +575,7 @@ data class PopLogEntry(
     val assetName: String? = null,
     val content: String? = null,
     val playlistName: String? = null,
-    val campaignName: String? = null,
+    val campaignName: String? = null, // deprecated — campaigns removed; leave null
     val status: String,              // "VERIFIED" or "FAILED"
     val startTime: String? = null,   // ISO 8601
     val endTime: String? = null,
