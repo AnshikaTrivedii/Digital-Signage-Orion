@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, Lock, Mail, ChevronRight, Zap, Globe, Cpu, Fingerprint, MonitorPlay, Sparkles } from "lucide-react";
+import { Shield, Lock, Mail, ChevronRight, Zap, Globe, Cpu, Fingerprint, Sparkles } from "lucide-react";
+import { OrionLogo } from "@/components/shared/OrionLogo";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
@@ -165,21 +166,9 @@ export default function LoginPage() {
                     transition={{ duration: 0.8, ease: "easeOut" }}
                     style={{ textAlign: "center", marginBottom: 48 }}
                 >
-                    <motion.div 
-                        animate={{ boxShadow: ["0 0 32px rgba(0,229,255,0.3)", "0 0 48px rgba(167,139,250,0.4)", "0 0 32px rgba(0,229,255,0.3)"] }}
-                        transition={{ duration: 4, repeat: Infinity }}
-                        style={{ 
-                            width: 72, height: 72, borderRadius: 20, 
-                            background: "linear-gradient(135deg, #00e5ff, #a78bfa)", 
-                            display: "flex", alignItems: "center", justifyContent: "center", 
-                            margin: "0 auto 28px",
-                        }}
-                    >
-                        <MonitorPlay size={36} color="hsl(var(--surface-contrast))" />
-                    </motion.div>
-                    <h1 style={{ fontSize: "2rem", fontWeight: 800, letterSpacing: "-0.03em", marginBottom: 8 }}>
-                        Orion-<span style={{ background: "linear-gradient(90deg, #00e5ff, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Led</span>
-                    </h1>
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+                        <OrionLogo height={200} priority />
+                    </div>
                     <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.9rem", letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 500 }}>Enterprise Digital Signage</p>
                     
                     {/* Animated feature tags */}

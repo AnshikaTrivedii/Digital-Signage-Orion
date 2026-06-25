@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { useAuth } from "./AuthProvider";
+import { OrionLogo } from "@/components/shared/OrionLogo";
 
 const navItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -34,15 +35,7 @@ export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () 
             {/* Brand */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32, marginTop: 8, paddingLeft: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{
-                        width: 36, height: 36, borderRadius: 10,
-                        background: "linear-gradient(135deg, #00e5ff, #a78bfa)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        boxShadow: "0 0 16px rgba(0,229,255,0.4)"
-                    }}>
-                        <MonitorPlay size={18} color="hsl(var(--surface-contrast))" />
-                    </div>
-                    <h1 className="text-gradient" style={{ fontSize: "1.25rem", fontWeight: 700 }}>Orion-<span style={{ color: "hsl(var(--accent-secondary))" }}>Led</span></h1>
+                    <OrionLogo height={88} />
                 </div>
                 <button className="mobile-only btn-icon-soft" onClick={close}>
                     <X size={20} />

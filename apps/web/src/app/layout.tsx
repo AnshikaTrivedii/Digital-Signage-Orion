@@ -4,7 +4,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-    title: "Orion-Led CMS Dashboard",
+    title: "Orion LED CMS Dashboard",
     description: "Enterprise Digital Signage System",
 };
 

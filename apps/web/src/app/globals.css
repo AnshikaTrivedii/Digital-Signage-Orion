@@ -22,7 +22,7 @@
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 20px hsla(var(--accent-primary), 0.4);
-  --sidebar-width: 280px;
+  --sidebar-width: 300px;
   --header-height: 80px;
   --radius-sm: 8px;
   --radius-md: 16px;

@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ArrowRightLeft, Menu, MonitorPlay, Moon, PanelLeftClose, PanelLeftOpen, Sun, User, LogOut } from "lucide-react";
+import { ArrowRightLeft, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, User, LogOut } from "lucide-react";
+import { OrionLogo } from "@/components/shared/OrionLogo";
 import { useEffect, useMemo, useState } from "react";
 import { Toaster } from "react-hot-toast";
 import { useTheme } from "@/components/ThemeProvider";
@@ -128,22 +129,12 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
         <>
             <aside className={`app-sidebar ${isSidebarOpen ? "open" : ""}`} style={{ width: isDesktopSidebarCollapsed ? 96 : undefined }}>
                 <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, marginTop: 8, paddingLeft: 4 }}>
-                        <Link href={homePath} style={{ display: "flex", alignItems: "center", gap: 12, textDecoration: "none", color: "inherit" }}>
-                            <div style={{
-                                width: 36, height: 36, borderRadius: 10,
-                                background: portal === "platform" ? "linear-gradient(135deg, #34d399, #0ea5e9)" : "linear-gradient(135deg, #00e5ff, #a78bfa)",
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                boxShadow: portal === "platform" ? "0 0 16px rgba(52,211,153,0.35)" : "0 0 16px rgba(0,229,255,0.35)",
-                            }}>
-                                <MonitorPlay size={18} color="hsl(var(--surface-contrast))" />
-                            </div>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, marginTop: 4, paddingLeft: isDesktopSidebarCollapsed ? 0 : 2, gap: 8 }}>
+                        <Link href={homePath} style={{ display: "flex", flex: 1, flexDirection: "column", alignItems: isDesktopSidebarCollapsed ? "center" : "flex-start", gap: 8, textDecoration: "none", color: "inherit", minWidth: 0, paddingTop: 2 }}>
+                            <OrionLogo height={isDesktopSidebarCollapsed ? 52 : 104} />
                             {!isDesktopSidebarCollapsed && (
-                                <div>
-                                    <div className="text-gradient" style={{ fontSize: "1.1rem", fontWeight: 800 }}>Orion-Led</div>
-                                    <div style={{ fontSize: "0.68rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                                        {getPortalTitle(portal)}
-                                    </div>
+                                <div style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", letterSpacing: "0.12em", whiteSpace: "nowrap", fontWeight: 600 }}>
+                                    {getPortalTitle(portal)}
                                 </div>
                             )}
                         </Link>
