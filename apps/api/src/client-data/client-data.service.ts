@@ -6,6 +6,8 @@ import {
   AssetStatus,
   AssetType,
   DeviceStatus,
+  LayoutResolution,
+  LayoutStatus,
   PlaylistStatus,
   ProofOfPlayStatus,
   SchedulePriority,
@@ -16,6 +18,7 @@ import {
   TickerSpeed,
   TickerStatus,
   TickerStyle,
+  ZoneType,
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
@@ -392,7 +395,7 @@ export class ClientDataService {
       if (deviceIds.length > 0) {
         await tx.device.updateMany({
           where: { organizationId, id: { in: deviceIds } },
-          data: { currentPlaylistId: playlistId, currentContent: playlist.name },
+          data: { currentPlaylistId: playlistId, currentLayoutId: null, currentContent: playlist.name },
         });
       }
 
@@ -1928,5 +1931,347 @@ export class ClientDataService {
       deviceIds: playlist.devices.map((device) => device.id),
       deviceNames: playlist.devices.map((device) => device.name),
     };
+  }
+
+  async listLayouts(actor: RequestActor) {
+    const organizationId = this.getOrgId(actor);
+    const layouts = await this.prisma.layout.findMany({
+      where: { organizationId },
+      include: {
+        zones: { orderBy: { zIndex: 'asc' } },
+        devices: { select: { id: true, name: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return layouts.map((layout) => this.serializeLayout(layout));
+  }
+
+  async getLayout(actor: RequestActor, layoutId: string) {
+    const organizationId = this.getOrgId(actor);
+    const layout = await this.prisma.layout.findFirst({
+      where: { id: layoutId, organizationId },
+      include: {
+        zones: { orderBy: { zIndex: 'asc' }, include: { playlist: { select: { id: true, name: true } }, asset: { select: { id: true, name: true } } } },
+        devices: { select: { id: true, name: true } },
+      },
+    });
+    if (!layout) throw new NotFoundException('Layout not found');
+    return this.serializeLayout(layout);
+  }
+
+  async createLayout(actor: RequestActor, body: { name: string; resolution?: string }) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const name = body.name?.trim();
+    if (!name) throw new BadRequestException('Layout name is required');
+
+    const count = await this.prisma.layout.count({ where: { organizationId } });
+    const resolution = this.parseLayoutResolution(body.resolution);
+
+    const layout = await this.prisma.layout.create({
+      data: {
+        organizationId,
+        name,
+        resolution,
+        status: LayoutStatus.DRAFT,
+        color: colorPalette[(count + 2) % colorPalette.length],
+        zones: {
+          create: [
+            { name: 'Center_Display', type: ZoneType.PLAYLIST, x: 0, y: 0, w: 75, h: 80, zIndex: 0, color: '#00e5ff' },
+            { name: 'Bottom_Ticker', type: ZoneType.TICKER, x: 0, y: 80, w: 100, h: 20, zIndex: 1, color: '#a78bfa' },
+            { name: 'Sidebar_Promo', type: ZoneType.PLAYLIST, x: 75, y: 0, w: 25, h: 80, zIndex: 2, color: '#f472b6' },
+          ],
+        },
+      },
+      include: {
+        zones: { orderBy: { zIndex: 'asc' } },
+        devices: { select: { id: true, name: true } },
+      },
+    });
+
+    return this.serializeLayout(layout);
+  }
+
+  async updateLayout(actor: RequestActor, layoutId: string, body: { name?: string; resolution?: string; status?: string }) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
+    if (!existing) throw new NotFoundException('Layout not found');
+
+    const data: Prisma.LayoutUpdateInput = {};
+    if (body.name !== undefined) {
+      const name = body.name.trim();
+      if (!name) throw new BadRequestException('Layout name is required');
+      data.name = name;
+    }
+    if (body.resolution !== undefined) data.resolution = this.parseLayoutResolution(body.resolution);
+    if (body.status !== undefined) data.status = this.parseLayoutStatus(body.status);
+
+    const layout = await this.prisma.layout.update({
+      where: { id: layoutId },
+      data,
+      include: {
+        zones: { orderBy: { zIndex: 'asc' }, include: { playlist: { select: { id: true, name: true } }, asset: { select: { id: true, name: true } } } },
+        devices: { select: { id: true, name: true } },
+      },
+    });
+
+    if (body.resolution !== undefined || body.status !== undefined) {
+      await this.playlistSync.bumpLayout(layoutId);
+    }
+
+    return this.serializeLayout(layout);
+  }
+
+  async saveLayoutZones(
+    actor: RequestActor,
+    layoutId: string,
+    body: {
+      zones: {
+        id?: string;
+        name: string;
+        type: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+        zIndex?: number;
+        color?: string;
+        playlistId?: string | null;
+        assetId?: string | null;
+      }[];
+    },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const layout = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
+    if (!layout) throw new NotFoundException('Layout not found');
+
+    const zones = body.zones ?? [];
+    if (zones.length === 0) throw new BadRequestException('At least one zone is required');
+
+    for (const zone of zones) {
+      if (zone.playlistId) {
+        const playlist = await this.prisma.playlist.findFirst({
+          where: { id: zone.playlistId, organizationId },
+        });
+        if (!playlist) throw new BadRequestException(`Invalid playlist for zone "${zone.name}"`);
+      }
+      if (zone.assetId) {
+        const asset = await this.prisma.asset.findFirst({
+          where: { id: zone.assetId, organizationId },
+        });
+        if (!asset) throw new BadRequestException(`Invalid asset for zone "${zone.name}"`);
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.layoutZone.deleteMany({ where: { layoutId } });
+      await tx.layoutZone.createMany({
+        data: zones.map((zone, index) => ({
+          layoutId,
+          name: zone.name.trim(),
+          type: this.parseZoneType(zone.type),
+          x: zone.x,
+          y: zone.y,
+          w: zone.w,
+          h: zone.h,
+          zIndex: zone.zIndex ?? index,
+          color: zone.color ?? '#00e5ff',
+          playlistId: zone.playlistId ?? null,
+          assetId: zone.assetId ?? null,
+        })),
+      });
+      await tx.layout.update({
+        where: { id: layoutId },
+        data: { syncVersion: { increment: 1 } },
+      });
+    });
+
+    return this.getLayout(actor, layoutId);
+  }
+
+  async deleteLayout(actor: RequestActor, layoutId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
+    if (!existing) throw new NotFoundException('Layout not found');
+    await this.prisma.layout.delete({ where: { id: layoutId } });
+    return { success: true };
+  }
+
+  async layoutAssignmentOptions(actor: RequestActor) {
+    const organizationId = this.getOrgId(actor);
+    const devices = await this.prisma.device.findMany({
+      where: { organizationId, isPaired: true },
+      select: { id: true, name: true, location: true, status: true, currentLayoutId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return {
+      devices: devices.map((device) => ({
+        id: device.id,
+        name: device.name,
+        location: device.location,
+        status: this.toLowerStatus(device.status),
+        currentLayoutId: device.currentLayoutId,
+      })),
+    };
+  }
+
+  async assignLayout(actor: RequestActor, layoutId: string, body: { deviceIds: string[] }) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const deviceIds = Array.from(new Set(body.deviceIds ?? []));
+
+    const layout = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
+    if (!layout) throw new NotFoundException('Layout not found');
+
+    if (deviceIds.length > 0) {
+      const validDeviceCount = await this.prisma.device.count({
+        where: { organizationId, isPaired: true, id: { in: deviceIds } },
+      });
+      if (validDeviceCount !== deviceIds.length) {
+        throw new BadRequestException('Some devices are invalid or not paired for this organization');
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.device.updateMany({
+        where: { organizationId, currentLayoutId: layoutId, id: { notIn: deviceIds } },
+        data: { currentLayoutId: null },
+      });
+
+      if (deviceIds.length > 0) {
+        await tx.device.updateMany({
+          where: { organizationId, id: { in: deviceIds } },
+          data: {
+            currentLayoutId: layoutId,
+            currentPlaylistId: null,
+            currentContent: layout.name,
+          },
+        });
+      }
+
+      await tx.layout.update({
+        where: { id: layoutId },
+        data: {
+          screens: deviceIds.length,
+          syncVersion: { increment: 1 },
+        },
+      });
+    });
+
+    return this.getLayout(actor, layoutId);
+  }
+
+  private parseLayoutResolution(value?: string | null): LayoutResolution {
+    const normalized = (value ?? '').toLowerCase();
+    if (normalized.includes('4k')) return LayoutResolution.LANDSCAPE_4K;
+    if (normalized.includes('portrait')) return LayoutResolution.PORTRAIT;
+    return LayoutResolution.LANDSCAPE_1080P;
+  }
+
+  private parseLayoutStatus(value?: string | null): LayoutStatus {
+    return (value ?? '').toLowerCase() === 'active' ? LayoutStatus.ACTIVE : LayoutStatus.DRAFT;
+  }
+
+  private parseZoneType(value?: string | null): ZoneType {
+    const normalized = (value ?? '').toLowerCase();
+    if (normalized === 'ticker') return ZoneType.TICKER;
+    if (normalized === 'image') return ZoneType.IMAGE;
+    if (normalized === 'html') return ZoneType.HTML;
+    if (normalized === 'clock') return ZoneType.CLOCK;
+    return ZoneType.PLAYLIST;
+  }
+
+  private serializeLayout(layout: {
+    id: string;
+    name: string;
+    status: LayoutStatus;
+    resolution: LayoutResolution;
+    syncVersion: number;
+    screens: number;
+    color: string;
+    createdAt: Date;
+    updatedAt: Date;
+    zones: {
+      id: string;
+      name: string;
+      type: ZoneType;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      zIndex: number;
+      color: string;
+      playlistId: string | null;
+      assetId: string | null;
+      playlist?: { id: string; name: string } | null;
+      asset?: { id: string; name: string } | null;
+    }[];
+    devices: { id: string; name: string }[];
+  }) {
+    return {
+      id: layout.id,
+      name: layout.name,
+      status: this.toTitleStatus(layout.status),
+      resolution: this.toTitleResolution(layout.resolution),
+      syncVersion: layout.syncVersion,
+      screens: layout.devices.length || layout.screens,
+      color: layout.color,
+      zoneCount: layout.zones.length,
+      zones: layout.zones.map((zone) => this.serializeLayoutZone(zone)),
+      deviceIds: layout.devices.map((device) => device.id),
+      deviceNames: layout.devices.map((device) => device.name),
+      createdAt: layout.createdAt,
+      updatedAt: layout.updatedAt,
+    };
+  }
+
+  private serializeLayoutZone(zone: {
+    id: string;
+    name: string;
+    type: ZoneType;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    zIndex: number;
+    color: string;
+    playlistId: string | null;
+    assetId: string | null;
+    playlist?: { id: string; name: string } | null;
+    asset?: { id: string; name: string } | null;
+  }) {
+    return {
+      id: zone.id,
+      name: zone.name,
+      type: this.toTitleZoneType(zone.type),
+      x: zone.x,
+      y: zone.y,
+      w: zone.w,
+      h: zone.h,
+      zIndex: zone.zIndex,
+      color: zone.color,
+      playlistId: zone.playlistId,
+      assetId: zone.assetId,
+      playlistName: zone.playlist?.name ?? null,
+      assetName: zone.asset?.name ?? null,
+    };
+  }
+
+  private toTitleResolution(resolution: LayoutResolution) {
+    if (resolution === LayoutResolution.LANDSCAPE_4K) return 'Landscape 4K';
+    if (resolution === LayoutResolution.PORTRAIT) return 'Portrait';
+    return 'Landscape 1080p';
+  }
+
+  private toTitleZoneType(type: ZoneType) {
+    if (type === ZoneType.TICKER) return 'Ticker';
+    if (type === ZoneType.IMAGE) return 'Image';
+    if (type === ZoneType.HTML) return 'Html';
+    if (type === ZoneType.CLOCK) return 'Clock';
+    return 'Playlist';
   }
 }

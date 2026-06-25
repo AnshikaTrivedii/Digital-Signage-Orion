@@ -2,6 +2,13 @@ import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class SyncQueryDto {
+  /** Last layoutVersion the player successfully cached */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  layoutVersion?: number;
+
   /** Last playlistVersion the player successfully cached */
   @IsOptional()
   @Type(() => Number)

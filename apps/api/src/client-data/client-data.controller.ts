@@ -7,6 +7,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   StreamableFile,
   UseGuards,
@@ -26,6 +27,10 @@ import { UpdateScheduleEventDto } from './dto/update-schedule-event.dto';
 import { CreateTickerDto } from './dto/create-ticker.dto';
 import { UpdateTickerDto } from './dto/update-ticker.dto';
 import { ReportsQueryDto } from './dto/reports-query.dto';
+import { AssignLayoutDto } from './dto/assign-layout.dto';
+import { CreateLayoutDto } from './dto/create-layout.dto';
+import { SaveLayoutZonesDto } from './dto/save-layout-zones.dto';
+import { UpdateLayoutDto } from './dto/update-layout.dto';
 
 @Controller('client-data')
 @UseGuards(JwtAuthGuard)
@@ -120,6 +125,58 @@ export class ClientDataController {
     @Param('assetId') assetId: string,
   ) {
     return this.clientDataService.removePlaylistAsset(actor, playlistId, assetId);
+  }
+
+  @Get('layouts')
+  listLayouts(@CurrentActor() actor: RequestActor) {
+    return this.clientDataService.listLayouts(actor);
+  }
+
+  @Post('layouts')
+  createLayout(@CurrentActor() actor: RequestActor, @Body() body: CreateLayoutDto) {
+    return this.clientDataService.createLayout(actor, body);
+  }
+
+  @Get('layouts/assignment-options')
+  layoutAssignmentOptions(@CurrentActor() actor: RequestActor) {
+    return this.clientDataService.layoutAssignmentOptions(actor);
+  }
+
+  @Get('layouts/:layoutId')
+  getLayout(@CurrentActor() actor: RequestActor, @Param('layoutId') layoutId: string) {
+    return this.clientDataService.getLayout(actor, layoutId);
+  }
+
+  @Patch('layouts/:layoutId')
+  updateLayout(
+    @CurrentActor() actor: RequestActor,
+    @Param('layoutId') layoutId: string,
+    @Body() body: UpdateLayoutDto,
+  ) {
+    return this.clientDataService.updateLayout(actor, layoutId, body);
+  }
+
+  @Put('layouts/:layoutId/zones')
+  saveLayoutZones(
+    @CurrentActor() actor: RequestActor,
+    @Param('layoutId') layoutId: string,
+    @Body() body: SaveLayoutZonesDto,
+  ) {
+    return this.clientDataService.saveLayoutZones(actor, layoutId, body);
+  }
+
+  @Patch('layouts/:layoutId/assign')
+  assignLayout(
+    @CurrentActor() actor: RequestActor,
+    @Param('layoutId') layoutId: string,
+    @Body() body: AssignLayoutDto,
+  ) {
+    return this.clientDataService.assignLayout(actor, layoutId, body);
+  }
+
+  @Delete('layouts/:layoutId')
+  deleteLayout(@CurrentActor() actor: RequestActor, @Param('layoutId') layoutId: string) {
+    return this.clientDataService.deleteLayout(actor, layoutId);
   }
 
   @Get('schedule-events')

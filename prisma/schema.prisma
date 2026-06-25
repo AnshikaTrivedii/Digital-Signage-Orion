@@ -130,6 +130,25 @@ enum SchedulePriority {
   HIGH
 }
 
+enum LayoutStatus {
+  DRAFT
+  ACTIVE
+}
+
+enum LayoutResolution {
+  LANDSCAPE_1080P
+  LANDSCAPE_4K
+  PORTRAIT
+}
+
+enum ZoneType {
+  PLAYLIST
+  TICKER
+  IMAGE
+  HTML
+  CLOCK
+}
+
 enum ProofOfPlayStatus {
   VERIFIED
   FAILED
@@ -177,6 +196,7 @@ model Organization {
   assets             Asset[]
   assetFolders       AssetFolder[]
   playlists          Playlist[]
+  layouts            Layout[]
   scheduleEvents     ScheduleEvent[]
   devices            Device[]
   tickers            Ticker[]
@@ -202,6 +222,7 @@ model Playlist {
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items          PlaylistItem[]
   playlistAssets PlaylistAsset[]
+  layoutZones    LayoutZone[]
   devices        Device[]
 
   @@index([organizationId, createdAt])
@@ -236,6 +257,48 @@ model PlaylistAsset {
 
   @@unique([playlistId, assetId])
   @@index([playlistId, position])
+}
+
+model Layout {
+  id             String           @id @default(cuid())
+  organizationId String
+  name           String
+  status         LayoutStatus     @default(DRAFT)
+  resolution     LayoutResolution @default(LANDSCAPE_1080P)
+  syncVersion    Int              @default(1)
+  screens        Int              @default(0)
+  color          String           @default("#a78bfa")
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  zones          LayoutZone[]
+  devices        Device[]
+
+  @@index([organizationId, updatedAt])
+}
+
+model LayoutZone {
+  id         String   @id @default(cuid())
+  layoutId   String
+  name       String
+  type       ZoneType
+  x          Float
+  y          Float
+  w          Float
+  h          Float
+  zIndex     Int      @default(0)
+  color      String   @default("#00e5ff")
+  playlistId String?
+  assetId    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  layout     Layout    @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  playlist   Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  asset      Asset?    @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([layoutId, zIndex])
 }
 
 model ScheduleEvent {
@@ -275,7 +338,9 @@ model Device {
   os             String       @default("Unknown")
   currentContent String?
   currentPlaylistId String?
+  currentLayoutId   String?
   lastAckedPlaylistVersion Int?
+  lastAckedLayoutVersion   Int?
 
   // Pairing fields
   pairingCode    String?      @unique
@@ -289,11 +354,13 @@ model Device {
 
   organization    Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   currentPlaylist Playlist?        @relation(fields: [currentPlaylistId], references: [id], onDelete: SetNull)
+  currentLayout   Layout?          @relation(fields: [currentLayoutId], references: [id], onDelete: SetNull)
   proofOfPlayLogs ProofOfPlayLog[]
   tickerTargets   TickerDevice[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, currentPlaylistId])
+  @@index([organizationId, currentLayoutId])
 }
 
 model Ticker {
@@ -472,6 +539,7 @@ model Asset {
   folder           AssetFolder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
   uploadedBy       User          @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   playlistAssets   PlaylistAsset[]
+  layoutZones      LayoutZone[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, type])

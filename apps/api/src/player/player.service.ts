@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
-import { Device, DeviceStatus, ProofOfPlayStatus, TickerBroadcastScope, TickerStatus } from '@prisma/client';
+import { Device, DeviceStatus, ProofOfPlayStatus, TickerBroadcastScope, TickerStatus, ZoneType } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { PrismaService } from '../prisma/prisma.service';
@@ -297,6 +297,11 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     const knownAssetIds = this.parseCommaSeparatedIds(query.knownAssetIds);
     const clientAssetVersions = this.parseAssetVersionMap(query.assetVersions);
+
+    if (device.currentLayoutId) {
+      return this.syncLayout(device, query, knownAssetIds, clientAssetVersions);
+    }
+
     const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
 
     if (!device.currentPlaylistId) {
@@ -389,6 +394,234 @@ export class PlayerService {
       currentAssetIds,
       removedAssetIds,
       tickers,
+    };
+  }
+
+  private async syncLayout(
+    device: PairedDevice,
+    query: SyncQueryDto,
+    knownAssetIds: string[],
+    clientAssetVersions: Map<string, number>,
+  ) {
+    const activeTickers = await this.fetchActiveTickers(device.organizationId, device.id);
+    const primaryTicker = activeTickers[0] ?? null;
+
+    const layout = await this.prisma.layout.findUnique({
+      where: { id: device.currentLayoutId! },
+      include: {
+        zones: {
+          orderBy: { zIndex: 'asc' },
+          include: {
+            playlist: {
+              include: {
+                playlistAssets: {
+                  orderBy: { position: 'asc' },
+                  include: { asset: true },
+                },
+              },
+            },
+            asset: true,
+          },
+        },
+      },
+    });
+
+    if (!layout || layout.organizationId !== device.organizationId) {
+      await this.prisma.device.update({
+        where: { id: device.id },
+        data: { lastSync: new Date().toISOString(), lastAckedLayoutVersion: null },
+      });
+      return {
+        unchanged: false,
+        layoutVersion: null,
+        layout: null,
+        playlistVersion: null,
+        playlist: null,
+        assets: [],
+        currentAssetIds: [],
+        removedAssetIds: knownAssetIds,
+        tickers: [],
+      };
+    }
+
+    const aggregatedAssets: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>> = [];
+    const assetIndex = new Map<string, number>();
+    const zoneManifests: {
+      id: string;
+      name: string;
+      type: ZoneType;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      zIndex: number;
+      playlistId?: string | null;
+      playlistVersion?: number | null;
+      playlistName?: string | null;
+      assets?: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>>;
+      assetId?: string | null;
+      asset?: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>>[number] | null;
+      ticker?: (typeof activeTickers)[number] | null;
+    }[] = [];
+
+    for (const zone of layout.zones) {
+      if (zone.type === ZoneType.PLAYLIST && zone.playlist) {
+        const assets = await this.buildPlaylistManifest(zone.playlist, clientAssetVersions);
+        for (const asset of assets) {
+          if (!assetIndex.has(asset.id)) {
+            assetIndex.set(asset.id, aggregatedAssets.length);
+            aggregatedAssets.push(asset);
+          }
+        }
+        zoneManifests.push({
+          id: zone.id,
+          name: zone.name,
+          type: zone.type,
+          x: zone.x,
+          y: zone.y,
+          w: zone.w,
+          h: zone.h,
+          zIndex: zone.zIndex,
+          playlistId: zone.playlist.id,
+          playlistVersion: zone.playlist.syncVersion,
+          playlistName: zone.playlist.name,
+          assets,
+        });
+        continue;
+      }
+
+      if (zone.type === ZoneType.IMAGE && zone.asset) {
+        const asset = zone.asset;
+        const isUrlAsset = asset.type === 'URL';
+        let manifestEntry: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>>[number] | null = null;
+
+        if (isUrlAsset && asset.url?.trim()) {
+          manifestEntry = {
+            id: asset.id,
+            name: asset.name,
+            type: asset.type,
+            mimeType: asset.mimeType,
+            durationSeconds: asset.defaultDurationSeconds ?? 10,
+            position: 0,
+            assetVersion: asset.contentVersion,
+            updatedAt: asset.updatedAt.toISOString(),
+            contentHash: asset.contentHash,
+            requiresDownload: false,
+            downloadUrl: null,
+            url: asset.url,
+            fileSize: asset.fileSize,
+          };
+        } else if (!isUrlAsset && asset.status === 'READY' && asset.s3Key) {
+          const clientVersion = clientAssetVersions.get(asset.id);
+          const requiresDownload = clientVersion === undefined || clientVersion < asset.contentVersion;
+          manifestEntry = {
+            id: asset.id,
+            name: asset.name,
+            type: asset.type,
+            mimeType: asset.mimeType,
+            durationSeconds: asset.defaultDurationSeconds ?? 10,
+            position: 0,
+            assetVersion: asset.contentVersion,
+            updatedAt: asset.updatedAt.toISOString(),
+            contentHash: asset.contentHash,
+            requiresDownload,
+            downloadUrl:
+              requiresDownload && asset.s3Key
+                ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
+                : null,
+            url: null,
+            fileSize: asset.fileSize,
+          };
+        }
+
+        if (manifestEntry) {
+          if (!assetIndex.has(manifestEntry.id)) {
+            assetIndex.set(manifestEntry.id, aggregatedAssets.length);
+            aggregatedAssets.push(manifestEntry);
+          }
+        }
+
+        zoneManifests.push({
+          id: zone.id,
+          name: zone.name,
+          type: zone.type,
+          x: zone.x,
+          y: zone.y,
+          w: zone.w,
+          h: zone.h,
+          zIndex: zone.zIndex,
+          assetId: zone.assetId,
+          asset: manifestEntry,
+        });
+        continue;
+      }
+
+      zoneManifests.push({
+        id: zone.id,
+        name: zone.name,
+        type: zone.type,
+        x: zone.x,
+        y: zone.y,
+        w: zone.w,
+        h: zone.h,
+        zIndex: zone.zIndex,
+        ticker: zone.type === ZoneType.TICKER ? primaryTicker : null,
+      });
+    }
+
+    const currentAssetIds = aggregatedAssets.map((entry) => entry.id);
+    const removedAssetIds = knownAssetIds.filter((id) => !currentAssetIds.includes(id));
+    const hasTickerZone = layout.zones.some((zone) => zone.type === ZoneType.TICKER);
+    const layoutVersionMatches =
+      query.layoutVersion !== undefined && query.layoutVersion === layout.syncVersion;
+    const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
+    const clientHasPendingDownloads = aggregatedAssets.some((entry) => entry.requiresDownload);
+    const canSkipManifest =
+      layoutVersionMatches &&
+      knownAssetIds.length > 0 &&
+      !clientMissingAssets &&
+      !clientHasPendingDownloads;
+
+    await this.prisma.device.update({
+      where: { id: device.id },
+      data: {
+        lastSync: new Date().toISOString(),
+        lastAckedLayoutVersion: layout.syncVersion,
+        lastAckedPlaylistVersion: null,
+      },
+    });
+
+    const layoutPayload = {
+      id: layout.id,
+      name: layout.name,
+      resolution: layout.resolution,
+      zones: zoneManifests,
+    };
+
+    if (canSkipManifest) {
+      return {
+        unchanged: true,
+        layoutVersion: layout.syncVersion,
+        layout: layoutPayload,
+        playlistVersion: null,
+        playlist: null,
+        assets: [],
+        currentAssetIds,
+        removedAssetIds,
+        tickers: hasTickerZone ? [] : activeTickers,
+      };
+    }
+
+    return {
+      unchanged: false,
+      layoutVersion: layout.syncVersion,
+      layout: layoutPayload,
+      playlistVersion: null,
+      playlist: null,
+      assets: aggregatedAssets,
+      currentAssetIds,
+      removedAssetIds,
+      tickers: hasTickerZone ? [] : activeTickers,
     };
   }
 

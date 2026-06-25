@@ -14,6 +14,7 @@ export class PlaylistSyncService {
       where: { id: playlistId },
       data: { syncVersion: { increment: 1 } },
     });
+    await this.bumpLayoutsForPlaylists([playlistId]);
   }
 
   async bumpPlaylistsForAsset(assetId: string): Promise<void> {
@@ -26,6 +27,29 @@ export class PlaylistSyncService {
     const playlistIds = [...new Set(links.map((link) => link.playlistId))];
     await this.prisma.playlist.updateMany({
       where: { id: { in: playlistIds } },
+      data: { syncVersion: { increment: 1 } },
+    });
+
+    await this.bumpLayoutsForPlaylists(playlistIds);
+  }
+
+  async bumpLayout(layoutId: string): Promise<void> {
+    await this.prisma.layout.update({
+      where: { id: layoutId },
+      data: { syncVersion: { increment: 1 } },
+    });
+  }
+
+  async bumpLayoutsForPlaylists(playlistIds: string[]): Promise<void> {
+    if (!playlistIds.length) return;
+    const zones = await this.prisma.layoutZone.findMany({
+      where: { playlistId: { in: playlistIds } },
+      select: { layoutId: true },
+    });
+    const layoutIds = [...new Set(zones.map((zone) => zone.layoutId))];
+    if (!layoutIds.length) return;
+    await this.prisma.layout.updateMany({
+      where: { id: { in: layoutIds } },
       data: { syncVersion: { increment: 1 } },
     });
   }

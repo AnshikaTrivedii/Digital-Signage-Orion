@@ -15,9 +15,9 @@ Copy the following text and provide it to your AI assistant or Android developer
 Build a robust, kiosk-mode Android application for a Digital Signage system ("Digital-Signage-Orion"). The app must run seamlessly on Android-based displays or TV boxes, fetching content from a NestJS backend and playing it in a continuous loop.
 
 **Context:**
-Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `Assets` (Images, Videos, HTML, URL), and `Tickers` (scrolling text overlays). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
+Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `Layouts` (multi-zone screen designs), `Assets` (Images, Videos, HTML, URL), and `Tickers` (scrolling text overlays). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
 
-> **Note (architecture):** There is **no "Campaign" layer**. Playlists link **directly** to assets (`Playlist → PlaylistAsset → Asset`). Assets may be organized into folders in the CMS, but folders are a CMS-only convenience — the `/sync` manifest always delivers a **flat, ordered list** of assets, so folders require **no player changes**.
+> **Note (architecture):** There is **no "Campaign" layer**. Playlists link **directly** to assets (`Playlist → PlaylistAsset → Asset`). A device can play either a **full-screen playlist** OR a **multi-zone layout** assigned from the CMS Layout Designer. When a layout is assigned, `/sync` returns zone geometry + per-zone content instead of a single full-screen playlist.
 
 **Core Requirements:**
 
@@ -69,7 +69,7 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 
 ## Part 1B: Required Updates for an EXISTING Player (Backend Changes — June 2026)
 
-> If you already have a working Android player built from an earlier version of this guide, hand the AI assistant / developer the copy-paste prompt below. It covers the three backend changes that affect the player: **campaign removal**, **asset folders**, and **ticker `heightPercent`**.
+> If you already have a working Android player built from an earlier version of this guide, hand the AI assistant / developer the copy-paste prompt below. It covers backend changes that affect the player: **campaign removal**, **asset folders**, **ticker `heightPercent`**, and **multi-zone layouts**.
 
 ---
 **Copy from here:**
@@ -93,10 +93,23 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 - Other fields: `speed` (`"SLOW"|"NORMAL"|"FAST"` → constant scroll velocity: 45 / 85 / 150 px/sec), `style` (`"CLASSIC"|"NEON"|"GRADIENT"|"MINIMAL"` → visual theme), `textColor` & `backgroundColor` (hex strings), `priority` (`"LOW"|"NORMAL"|"URGENT"` — show the highest-priority active ticker).
 - Scroll must be a **seamless continuous loop** (repeat the message with a ~56px gap), never static or single-pass. No badges — just scrolling text on the colored bar. This must look identical to the CMS preview.
 
+**4. Multi-zone layouts (action required if supporting Layout Designer):**
+- When a device has a layout assigned in CMS, `GET /api/player/sync` returns a `layout` object (with `layoutVersion`) instead of a flat full-screen playlist.
+- Send `layoutVersion` on sync polls (same pattern as `playlistVersion`). Persist it after successful sync.
+- `layout.zones` is an array of absolutely-positioned regions. Each zone has `x`, `y`, `w`, `h` as **percentages (0–100)** of the screen. Convert to pixels: `left = screenW * x/100`, etc.
+- Zone types:
+  - **`PLAYLIST`** — contains `assets[]` (same shape as flat sync assets). Run an independent playback loop inside the zone bounds.
+  - **`TICKER`** — contains `ticker` object (same fields as global tickers). Render scrolling text **inside the zone rectangle** (not full-screen). When layout has ticker zones, global `tickers[]` is empty.
+  - **`IMAGE`** — contains `asset` (single asset entry). Display static image/video in zone bounds.
+  - **`HTML`** / **`CLOCK`** — reserved; render placeholder or WebView clock until implemented.
+- Top-level `assets[]` is still returned as a **deduplicated flat list** of all assets across zones — use it for download/cache (same incremental sync with `knownAssetIds` / `assetVersions`).
+- When `layout` is null, fall back to existing full-screen `playlist` + `tickers` behavior (backward compatible).
+
 **Tasks:**
 1. Add/replace a `TickerInfo` data class in the Retrofit layer (see Part 4) and add `tickers: List<TickerInfo>` to `SyncResponse`.
-2. Update the playback screen to lay out content + ticker using `heightPercent` (no more fixed Small/Medium/Large sizes).
-3. Set `campaignName = null` in PoP log uploads.
+2. Add `layoutVersion`, `layout: LayoutInfo?` to `SyncResponse` plus `LayoutZoneInfo` data classes (see Part 4).
+3. Update the playback screen: if `layout != null`, render zones; else full-screen playlist + ticker overlay.
+4. Set `campaignName = null` in PoP log uploads.
 
 ---
 **End Copy**
@@ -213,6 +226,7 @@ Fetch the active playlist assigned to this device. Supports **incremental sync**
 | Parameter | Description |
 |-----------|-------------|
 | `playlistVersion` | Last `playlistVersion` the player successfully cached |
+| `layoutVersion` | Last `layoutVersion` the player successfully cached (when device uses a layout) |
 | `knownAssetIds` | Comma-separated asset IDs currently on disk (used to detect removals) |
 | `assetVersions` | Comma-separated `assetId:contentVersion` pairs for delta downloads |
 
@@ -328,6 +342,64 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
    - Loop **seamlessly**: repeat the message with a fixed gap (~56px) so the bar is never blank — when one copy scrolls off the left, the next is already entering from the right. Do not use a static or single-pass-then-jump animation.
 4. Apply `textColor`, `backgroundColor`, and `style` (`CLASSIC`/`NEON`/`GRADIENT`/`MINIMAL`) for theming. No priority/position badge — just the scrolling text on the colored bar.
 5. Tickers are independent of the playlist loop — keep the bar scrolling continuously across asset transitions.
+
+**Layout mode (when device has a layout assigned):**
+
+```json
+{
+  "unchanged": false,
+  "layoutVersion": 2,
+  "layout": {
+    "id": "clayout123",
+    "name": "Lobby Split Screen",
+    "resolution": "LANDSCAPE_1080P",
+    "zones": [
+      {
+        "id": "zone1",
+        "name": "Center_Display",
+        "type": "PLAYLIST",
+        "x": 0, "y": 0, "w": 75, "h": 80,
+        "zIndex": 0,
+        "playlistId": "clxyz123",
+        "playlistVersion": 4,
+        "playlistName": "Main Loop",
+        "assets": [ /* same asset entries as flat sync */ ]
+      },
+      {
+        "id": "zone2",
+        "name": "Bottom_Ticker",
+        "type": "TICKER",
+        "x": 0, "y": 80, "w": 100, "h": 20,
+        "zIndex": 1,
+        "ticker": {
+          "id": "ckt123",
+          "text": "Welcome!",
+          "position": "BOTTOM",
+          "speed": "NORMAL",
+          "heightPercent": 12,
+          "style": "NEON",
+          "textColor": "#00e5ff",
+          "backgroundColor": "#1a1f2e",
+          "priority": "URGENT"
+        }
+      }
+    ]
+  },
+  "playlistVersion": null,
+  "playlist": null,
+  "assets": [ /* deduplicated union of all zone assets */ ],
+  "currentAssetIds": ["abc", "def"],
+  "removedAssetIds": [],
+  "tickers": []
+}
+```
+
+**Layout rendering:**
+1. If `layout != null`, use multi-zone mode. `playlist`/`playlistVersion` will be null.
+2. Render each zone as an absolutely-positioned view using percent → pixel conversion.
+3. Run independent content loops per `PLAYLIST` zone. Ticker zones scroll inside their bounds.
+4. When `layout` has ticker zones, `tickers[]` at root is empty — use zone-level `ticker` objects.
+5. When `layout` is null, use legacy full-screen playlist + optional global ticker overlay.
 
 **Offline sync flow:**
 1. Persist `playlistVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.
@@ -500,8 +572,9 @@ interface OrionPlayerApi {
     @GET("player/sync")
     suspend fun syncPlaylist(
         @Header("Authorization") token: String,
-        @Query("playlistVersion") playlistVersion: Int? = null,
-        @Query("knownAssetIds") knownAssetIds: String? = null,
+    @Query("playlistVersion") playlistVersion: Int? = null,
+    @Query("layoutVersion") layoutVersion: Int? = null,
+    @Query("knownAssetIds") knownAssetIds: String? = null,
         @Query("assetVersions") assetVersions: String? = null,
     ): SyncResponse
 
@@ -540,12 +613,39 @@ data class SyncResponse(
     val unchanged: Boolean,
     val playlistVersion: Int?,
     val playlist: PlaylistInfo?,
+    val layoutVersion: Int? = null,
+    val layout: LayoutInfo? = null,
     val assets: List<AssetInfo>,
     val tickers: List<TickerInfo> = emptyList(),
     val currentAssetIds: List<String>,
     val removedAssetIds: List<String>,
 )
 data class PlaylistInfo(val id: String, val name: String)
+
+data class LayoutInfo(
+    val id: String,
+    val name: String,
+    val resolution: String,   // LANDSCAPE_1080P | LANDSCAPE_4K | PORTRAIT
+    val zones: List<LayoutZoneInfo>,
+)
+
+data class LayoutZoneInfo(
+    val id: String,
+    val name: String,
+    val type: String,          // PLAYLIST | TICKER | IMAGE | HTML | CLOCK
+    val x: Double,
+    val y: Double,
+    val w: Double,
+    val h: Double,
+    val zIndex: Int,
+    val playlistId: String? = null,
+    val playlistVersion: Int? = null,
+    val playlistName: String? = null,
+    val assets: List<AssetInfo>? = null,
+    val assetId: String? = null,
+    val asset: AssetInfo? = null,
+    val ticker: TickerInfo? = null,
+)
 
 data class TickerInfo(
     val id: String,
