@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, Reorder, useDragControls } from "framer-motion";
-import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Video, FileText, Globe, Folder as FolderIcon, ChevronRight, Home } from "lucide-react";
+import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Video, FileText, Globe, Folder as FolderIcon, ChevronRight, ChevronLeft, Home } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { apiRequest, apiDelete, ApiError } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
@@ -191,29 +191,73 @@ export default function PlaylistBuilderPage() {
     const [libBreadcrumbs, setLibBreadcrumbs] = useState<Breadcrumb[]>([]);
     const [libFolderId, setLibFolderId] = useState<string | null>(null);
     const [isLibLoading, setIsLibLoading] = useState(true);
+    const [isNarrow, setIsNarrow] = useState(false);
+
+    // In-memory cache of folder contents so back/forward navigation is instant
+    // (stale-while-revalidate), plus per-folder scroll position memory.
+    const libScrollRef = useRef<HTMLDivElement>(null);
+    const libCacheRef = useRef<Record<string, { assets: Asset[]; folders: Folder[]; breadcrumbs: Breadcrumb[] }>>({});
+    const scrollPosRef = useRef<Record<string, number>>({});
+
+    const restoreScroll = useCallback((key: string) => {
+        requestAnimationFrame(() => {
+            if (libScrollRef.current) {
+                libScrollRef.current.scrollTop = scrollPosRef.current[key] ?? 0;
+            }
+        });
+    }, []);
 
     const loadLibrary = useCallback(async (folderId: string | null) => {
         if (!activeOrganizationId) return;
-        setIsLibLoading(true);
+        const key = folderId ?? "root";
+        const cached = libCacheRef.current[key];
+
+        // Instant paint from cache, then revalidate in the background.
+        if (cached) {
+            setAssets(cached.assets);
+            setLibFolders(cached.folders);
+            setLibBreadcrumbs(cached.breadcrumbs);
+            setIsLibLoading(false);
+            restoreScroll(key);
+        } else {
+            setIsLibLoading(true);
+        }
+
         try {
             const params = new URLSearchParams();
             if (folderId) params.set("folderId", folderId);
             params.set("limit", "100");
             const libraryRes = await apiRequest<{ assets: Asset[] }>(`/api/organizations/${activeOrganizationId}/assets?${params.toString()}`);
-            setAssets(libraryRes.assets);
 
             const folderParams = new URLSearchParams();
             if (folderId) folderParams.set("parentId", folderId);
             const foldersRes = await apiRequest<FoldersResponse>(`/api/organizations/${activeOrganizationId}/assets/folders?${folderParams.toString()}`);
+
+            libCacheRef.current[key] = {
+                assets: libraryRes.assets,
+                folders: foldersRes.folders,
+                breadcrumbs: foldersRes.breadcrumbs,
+            };
+            setAssets(libraryRes.assets);
             setLibFolders(foldersRes.folders);
             setLibBreadcrumbs(foldersRes.breadcrumbs);
+            if (!cached) restoreScroll(key);
         } catch (error) {
             console.error(error);
-            toast.error("Failed to load asset library");
+            if (!cached) toast.error("Failed to load asset library");
         } finally {
             setIsLibLoading(false);
         }
-    }, [activeOrganizationId]);
+    }, [activeOrganizationId, restoreScroll]);
+
+    // Navigate folders without leaving the builder: remember the scroll
+    // position of the folder we're leaving so it can be restored on return.
+    const navigateToFolder = useCallback((targetId: string | null) => {
+        if (libScrollRef.current) {
+            scrollPosRef.current[libFolderId ?? "root"] = libScrollRef.current.scrollTop;
+        }
+        setLibFolderId(targetId);
+    }, [libFolderId]);
 
     const loadData = useCallback(async () => {
         if (!activeOrganizationId || !playlistId) return;
@@ -241,6 +285,14 @@ export default function PlaylistBuilderPage() {
     useEffect(() => {
         void loadLibrary(libFolderId);
     }, [loadLibrary, libFolderId]);
+
+    useEffect(() => {
+        const mq = window.matchMedia("(max-width: 900px)");
+        const update = () => setIsNarrow(mq.matches);
+        update();
+        mq.addEventListener("change", update);
+        return () => mq.removeEventListener("change", update);
+    }, []);
 
     const handleAddAsset = async (asset: Asset) => {
         if (!canEdit) return toast.error("Read-only mode");
@@ -386,8 +438,19 @@ export default function PlaylistBuilderPage() {
                 </div>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 24, flex: 1, alignItems: "start" }}>
-                <div className="glass-panel" style={{ padding: 20, height: "calc(100vh - 180px)", overflowY: "auto", position: "sticky", top: 120 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isNarrow ? "1fr" : "minmax(280px, 320px) 1fr", gap: 24, flex: 1, alignItems: "start" }}>
+                <div
+                    ref={libScrollRef}
+                    className="glass-panel"
+                    style={{
+                        padding: 20,
+                        height: isNarrow ? "auto" : "calc(100vh - 180px)",
+                        maxHeight: isNarrow ? 460 : undefined,
+                        overflowY: "auto",
+                        position: isNarrow ? "static" : "sticky",
+                        top: 120,
+                    }}
+                >
                     <h3 style={{ fontSize: "1.1rem", fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
                         <ImageIcon size={18} /> Asset Library
                     </h3>
@@ -395,20 +458,41 @@ export default function PlaylistBuilderPage() {
                         Browse folders and click an asset to add it to the timeline.
                     </p>
 
-                    {/* Breadcrumbs */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginBottom: 14, fontSize: "0.75rem" }}>
-                        <button onClick={() => setLibFolderId(null)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: libFolderId === null ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))", fontWeight: 600 }}>
-                            <Home size={13} /> Root
+                    {/* Back + Breadcrumbs */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const parentId = libBreadcrumbs.length >= 2 ? libBreadcrumbs[libBreadcrumbs.length - 2].id : null;
+                                navigateToFolder(parentId);
+                            }}
+                            disabled={libFolderId === null}
+                            aria-label="Back to parent folder"
+                            title="Back"
+                            className="btn-icon-soft"
+                            style={{
+                                padding: 6,
+                                flexShrink: 0,
+                                cursor: libFolderId === null ? "not-allowed" : "pointer",
+                                opacity: libFolderId === null ? 0.4 : 1,
+                            }}
+                        >
+                            <ChevronLeft size={16} />
                         </button>
-                        {libBreadcrumbs.map((b, idx) => {
-                            const isLast = idx === libBreadcrumbs.length - 1;
-                            return (
-                                <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                    <ChevronRight size={11} style={{ color: "hsl(var(--text-muted))" }} />
-                                    <button onClick={() => setLibFolderId(b.id)} disabled={isLast} style={{ background: "none", border: "none", cursor: isLast ? "default" : "pointer", color: isLast ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))", fontWeight: isLast ? 700 : 600 }}>{b.name}</button>
-                                </span>
-                            );
-                        })}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", fontSize: "0.75rem", minWidth: 0 }}>
+                            <button onClick={() => navigateToFolder(null)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: libFolderId === null ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))", fontWeight: 600 }}>
+                                <Home size={13} /> Root
+                            </button>
+                            {libBreadcrumbs.map((b, idx) => {
+                                const isLast = idx === libBreadcrumbs.length - 1;
+                                return (
+                                    <span key={b.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                        <ChevronRight size={11} style={{ color: "hsl(var(--text-muted))" }} />
+                                        <button onClick={() => navigateToFolder(b.id)} disabled={isLast} style={{ background: "none", border: "none", cursor: isLast ? "default" : "pointer", color: isLast ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))", fontWeight: isLast ? 700 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>{b.name}</button>
+                                    </span>
+                                );
+                            })}
+                        </div>
                     </div>
 
                     {isLibLoading ? (
@@ -418,7 +502,7 @@ export default function PlaylistBuilderPage() {
                             {libFolders.map((folder) => (
                                 <button
                                     key={folder.id}
-                                    onClick={() => setLibFolderId(folder.id)}
+                                    onClick={() => navigateToFolder(folder.id)}
                                     className="glass-card"
                                     style={{ padding: 8, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", textAlign: "left", border: "none", width: "100%", color: "hsl(var(--text-primary))" }}
                                 >

@@ -90,7 +90,8 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 - **`heightPercent` is an integer (10–20)** = the percentage of the **screen height** the ticker bar occupies. Compute pixel height as `screenHeightPx * heightPercent / 100`. The playlist content area should fill the remaining `(100 − heightPercent)%` so content and ticker never overlap.
 - `position` is `"TOP"` or `"BOTTOM"` (which edge the bar sits on).
 - **If your current code uses a `height` enum (`SMALL`/`MEDIUM`/`LARGE`) with fixed pixel sizes, replace it** with the `heightPercent` calculation above. Remove the old enum.
-- Other fields: `speed` (`"SLOW"|"NORMAL"|"FAST"` → scroll speed), `style` (`"CLASSIC"|"NEON"|"GRADIENT"|"MINIMAL"` → visual theme), `textColor` & `backgroundColor` (hex strings), `priority` (`"LOW"|"NORMAL"|"URGENT"` — show the highest-priority active ticker).
+- Other fields: `speed` (`"SLOW"|"NORMAL"|"FAST"` → constant scroll velocity: 45 / 85 / 150 px/sec), `style` (`"CLASSIC"|"NEON"|"GRADIENT"|"MINIMAL"` → visual theme), `textColor` & `backgroundColor` (hex strings), `priority` (`"LOW"|"NORMAL"|"URGENT"` — show the highest-priority active ticker).
+- Scroll must be a **seamless continuous loop** (repeat the message with a ~56px gap), never static or single-pass. No badges — just scrolling text on the colored bar. This must look identical to the CMS preview.
 
 **Tasks:**
 1. Add/replace a `TickerInfo` data class in the Retrofit layer (see Part 4) and add `tickers: List<TickerInfo>` to `SyncResponse`.
@@ -319,12 +320,14 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 
 > The `tickers` array is returned on **every** `/sync` response (including `unchanged: true`), so the player always has the current ticker state. If empty, render no ticker bar and let playlist content use the full screen.
 
-**Ticker rendering:**
+**Ticker rendering (must match the CMS preview exactly):**
 1. Pick the **highest-`priority`** ticker (`URGENT` > `NORMAL` > `LOW`); the array is already sorted priority-desc.
 2. The ticker bar occupies `screenHeightPx * heightPercent / 100` pixels on the `position` edge (`TOP`/`BOTTOM`); playlist content fills the remaining height (no overlap).
-3. Scroll `text` horizontally at a rate based on `speed` (`SLOW`/`NORMAL`/`FAST`).
-4. Apply `textColor`, `backgroundColor`, and `style` (`CLASSIC`/`NEON`/`GRADIENT`/`MINIMAL`) for theming.
-5. Tickers are independent of the playlist loop — keep the bar visible across asset transitions.
+3. Scroll `text` **continuously right → left** at a **constant velocity** (the same px/sec regardless of text length):
+   - `SLOW` = **45 px/sec**, `NORMAL` = **85 px/sec**, `FAST` = **150 px/sec**.
+   - Loop **seamlessly**: repeat the message with a fixed gap (~56px) so the bar is never blank — when one copy scrolls off the left, the next is already entering from the right. Do not use a static or single-pass-then-jump animation.
+4. Apply `textColor`, `backgroundColor`, and `style` (`CLASSIC`/`NEON`/`GRADIENT`/`MINIMAL`) for theming. No priority/position badge — just the scrolling text on the colored bar.
+5. Tickers are independent of the playlist loop — keep the bar scrolling continuously across asset transitions.
 
 **Offline sync flow:**
 1. Persist `playlistVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.

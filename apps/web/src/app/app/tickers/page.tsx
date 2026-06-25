@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
@@ -109,8 +109,10 @@ const statusColor = (s: Status) => {
     return "var(--text-muted)";
 };
 
-const speedDuration = (speed: Speed) =>
-    speed === "Slow" ? 20 : speed === "Fast" ? 8 : 14;
+// Constant scroll velocity (px/sec) so the marquee feels the same regardless of
+// how long the text is — this mirrors how the Android player scrolls.
+const SPEED_PX_PER_SEC: Record<Speed, number> = { Slow: 45, Normal: 85, Fast: 150 };
+const MARQUEE_GAP = 56;
 
 const describeError = (error: unknown, fallback: string) => {
     if (error instanceof ApiError) return error.message || fallback;
@@ -140,6 +142,82 @@ type TickerPreviewSource = Pick<
     "text" | "speed" | "priority" | "style" | "color" | "backgroundColor" | "position" | "heightPercent" | "status"
 >;
 
+// Seamless, constant-velocity marquee that continuously scrolls right -> left.
+// It measures the rendered text so velocity stays consistent for any length, and
+// repeats the content enough times to fill the bar (no blank gaps), matching the
+// real player. Changing text/speed/colors/style restarts it immediately.
+const TickerMarquee = ({
+    text,
+    speed,
+    color,
+    style,
+    fontSize,
+}: {
+    text: string;
+    speed: Speed;
+    color: string;
+    style: Style;
+    fontSize: string;
+}) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const unitRef = useRef<HTMLSpanElement>(null);
+    const [unitWidth, setUnitWidth] = useState(0);
+    const [containerWidth, setContainerWidth] = useState(0);
+
+    const content = text || "Your ticker preview will appear here…";
+
+    useEffect(() => {
+        const measure = () => {
+            if (unitRef.current) setUnitWidth(unitRef.current.offsetWidth);
+            if (containerRef.current) setContainerWidth(containerRef.current.offsetWidth);
+        };
+        measure();
+        const ro = new ResizeObserver(measure);
+        if (unitRef.current) ro.observe(unitRef.current);
+        if (containerRef.current) ro.observe(containerRef.current);
+        return () => ro.disconnect();
+    }, [content, fontSize]);
+
+    // Repeat enough copies to overflow the bar, then duplicate the whole set so
+    // shifting by exactly one set width loops seamlessly.
+    const repeats = unitWidth > 0 ? Math.max(2, Math.ceil(containerWidth / unitWidth) + 1) : 3;
+    const shift = unitWidth * repeats;
+    const duration = shift > 0 ? shift / SPEED_PX_PER_SEC[speed] : 12;
+
+    const textStyle: React.CSSProperties = {
+        whiteSpace: "nowrap",
+        fontSize,
+        paddingRight: MARQUEE_GAP,
+        flexShrink: 0,
+        ...stylePreview({ style, color }),
+    };
+
+    return (
+        <div ref={containerRef} style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center" }}>
+            {/* Hidden measuring copy (one repeating unit = text + gap) */}
+            <span
+                ref={unitRef}
+                aria-hidden
+                style={{ ...textStyle, position: "absolute", visibility: "hidden", pointerEvents: "none" }}
+            >
+                {content}
+            </span>
+            <motion.div
+                key={`${content}|${speed}|${shift}`}
+                style={{ display: "flex", flexShrink: 0, willChange: "transform" }}
+                animate={shift > 0 ? { x: [0, -shift] } : { x: 0 }}
+                transition={{ duration, ease: "linear", repeat: Infinity }}
+            >
+                {Array.from({ length: repeats * 2 }).map((_, i) => (
+                    <span key={i} aria-hidden={i !== 0} style={textStyle}>
+                        {content}
+                    </span>
+                ))}
+            </motion.div>
+        </div>
+    );
+};
+
 const TickerPreviewStrip = ({
     ticker,
     heightPercent = TICKER_HEIGHT_DEFAULT,
@@ -161,45 +239,16 @@ const TickerPreviewStrip = ({
             minHeight: embedded ? undefined : 44,
             display: "flex",
             alignItems: "center",
+            padding: "0 16px",
         }}
     >
-        <div
-            style={{
-                background: ticker.color,
-                color: ticker.backgroundColor,
-                fontWeight: 800,
-                padding: "0 14px",
-                height: "100%",
-                display: "flex",
-                alignItems: "center",
-                fontSize: heightPercent >= 18 ? "0.8rem" : "0.72rem",
-                letterSpacing: "0.08em",
-                whiteSpace: "nowrap",
-            }}
-        >
-            {ticker.priority === "Urgent" ? "URGENT" : ticker.position.toUpperCase()}
-        </div>
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: "center" }}>
-            <motion.div
-                animate={{ x: ["100%", "-100%"] }}
-                transition={{
-                    repeat: Infinity,
-                    ease: "linear",
-                    duration: speedDuration(ticker.speed),
-                }}
-                style={{
-                    whiteSpace: "nowrap",
-                    fontSize: heightPercent >= 18 ? "1.05rem" : "0.95rem",
-                    paddingLeft: 20,
-                    ...stylePreview({
-                        style: ticker.style,
-                        color: ticker.color,
-                    }),
-                }}
-            >
-                {ticker.text || "Your ticker preview will appear here..."}
-            </motion.div>
-        </div>
+        <TickerMarquee
+            text={ticker.text}
+            speed={ticker.speed}
+            color={ticker.color}
+            style={ticker.style}
+            fontSize={heightPercent >= 18 ? "1.05rem" : "0.95rem"}
+        />
     </div>
 );
 
