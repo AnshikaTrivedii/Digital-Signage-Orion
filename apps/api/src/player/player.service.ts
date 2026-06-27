@@ -12,6 +12,47 @@ type PairedDevice = Device & { organizationId: string };
 /** Presigned URL lifetime for player sync downloads (7 days). */
 const SYNC_DOWNLOAD_URL_TTL_SECONDS = 86400 * 7;
 
+type SyncAssetContext = {
+  knownAssetIds: string[];
+  clientAssetVersions: Map<string, number>;
+  recoverCache: boolean;
+  missingAssetIds: Set<string>;
+};
+
+type ManifestAssetInput = {
+  id: string;
+  name: string;
+  type: string;
+  mimeType: string;
+  status: string;
+  s3Key: string | null;
+  url: string | null;
+  fileSize: number;
+  contentVersion: number;
+  contentHash: string | null;
+  updatedAt: Date;
+  defaultDurationSeconds?: number | null;
+};
+
+type ManifestEntry = {
+  id: string;
+  name: string;
+  type: string;
+  mimeType: string;
+  durationSeconds: number;
+  position: number;
+  assetVersion: number;
+  updatedAt: string;
+  contentHash: string | null;
+  status: string;
+  available: boolean;
+  unavailableReason: string | null;
+  requiresDownload: boolean;
+  downloadUrl: string | null;
+  url: string | null;
+  fileSize: number;
+};
+
 @Injectable()
 export class PlayerService {
   private readonly logger = new Logger(PlayerService.name);
@@ -295,17 +336,16 @@ export class PlayerService {
    */
   async syncPlaylist(authHeader: string | undefined, query: SyncQueryDto = {}) {
     const device = await this.resolveDeviceByToken(authHeader);
-    const knownAssetIds = this.parseCommaSeparatedIds(query.knownAssetIds);
-    const clientAssetVersions = this.parseAssetVersionMap(query.assetVersions);
+    const syncContext = this.buildSyncAssetContext(query);
 
     if (device.currentLayoutId) {
-      return this.syncLayout(device, query, knownAssetIds, clientAssetVersions);
+      return this.syncLayout(device, query, syncContext);
     }
 
     const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
 
     if (!device.currentPlaylistId) {
-      const removedAssetIds = knownAssetIds;
+      const removedAssetIds = syncContext.knownAssetIds;
       await this.prisma.device.update({
         where: { id: device.id },
         data: { lastSync: new Date().toISOString(), lastAckedPlaylistVersion: null },
@@ -332,7 +372,7 @@ export class PlayerService {
     });
 
     if (!playlist) {
-      const removedAssetIds = knownAssetIds;
+      const removedAssetIds = syncContext.knownAssetIds;
       await this.prisma.device.update({
         where: { id: device.id },
         data: { lastSync: new Date().toISOString(), lastAckedPlaylistVersion: null },
@@ -352,19 +392,21 @@ export class PlayerService {
       throw new ForbiddenException('Playlist does not belong to this device organization');
     }
 
-    const manifest = await this.buildPlaylistManifest(playlist, clientAssetVersions);
+    const manifest = await this.buildPlaylistManifest(playlist, syncContext);
     const currentAssetIds = manifest.map((entry) => entry.id);
-    const removedAssetIds = knownAssetIds.filter((id) => !currentAssetIds.includes(id));
+    const removedAssetIds = syncContext.knownAssetIds.filter((id) => !currentAssetIds.includes(id));
 
     const playlistVersionMatches =
       query.playlistVersion !== undefined && query.playlistVersion === playlist.syncVersion;
-    const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
+    const clientMissingAssets = currentAssetIds.some((id) => !syncContext.knownAssetIds.includes(id));
     const clientHasPendingDownloads = manifest.some((entry) => entry.requiresDownload);
-    const canSkipManifest =
+    const contentUnchanged =
       playlistVersionMatches &&
-      knownAssetIds.length > 0 &&
+      syncContext.knownAssetIds.length > 0 &&
       !clientMissingAssets &&
-      !clientHasPendingDownloads;
+      !clientHasPendingDownloads &&
+      !syncContext.recoverCache &&
+      syncContext.missingAssetIds.size === 0;
 
     await this.prisma.device.update({
       where: { id: device.id },
@@ -374,20 +416,8 @@ export class PlayerService {
       },
     });
 
-    if (canSkipManifest) {
-      return {
-        unchanged: true,
-        playlistVersion: playlist.syncVersion,
-        playlist: { id: playlist.id, name: playlist.name },
-        assets: [],
-        currentAssetIds,
-        removedAssetIds,
-        tickers,
-      };
-    }
-
     return {
-      unchanged: false,
+      unchanged: contentUnchanged,
       playlistVersion: playlist.syncVersion,
       playlist: { id: playlist.id, name: playlist.name },
       assets: manifest,
@@ -400,9 +430,9 @@ export class PlayerService {
   private async syncLayout(
     device: PairedDevice,
     query: SyncQueryDto,
-    knownAssetIds: string[],
-    clientAssetVersions: Map<string, number>,
+    syncContext: SyncAssetContext,
   ) {
+    const { knownAssetIds } = syncContext;
     const activeTickers = await this.fetchActiveTickers(device.organizationId, device.id);
     const primaryTicker = activeTickers[0] ?? null;
 
@@ -444,7 +474,7 @@ export class PlayerService {
       };
     }
 
-    const aggregatedAssets: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>> = [];
+    const aggregatedAssets: ManifestEntry[] = [];
     const assetIndex = new Map<string, number>();
     const zoneManifests: {
       id: string;
@@ -458,15 +488,15 @@ export class PlayerService {
       playlistId?: string | null;
       playlistVersion?: number | null;
       playlistName?: string | null;
-      assets?: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>>;
+      assets?: ManifestEntry[];
       assetId?: string | null;
-      asset?: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>>[number] | null;
+      asset?: ManifestEntry | null;
       ticker?: (typeof activeTickers)[number] | null;
     }[] = [];
 
     for (const zone of layout.zones) {
       if (zone.type === ZoneType.PLAYLIST && zone.playlist) {
-        const assets = await this.buildPlaylistManifest(zone.playlist, clientAssetVersions);
+        const assets = await this.buildPlaylistManifest(zone.playlist, syncContext);
         for (const asset of assets) {
           if (!assetIndex.has(asset.id)) {
             assetIndex.set(asset.id, aggregatedAssets.length);
@@ -491,54 +521,16 @@ export class PlayerService {
       }
 
       if (zone.type === ZoneType.IMAGE && zone.asset) {
-        const asset = zone.asset;
-        const isUrlAsset = asset.type === 'URL';
-        let manifestEntry: Awaited<ReturnType<PlayerService['buildPlaylistManifest']>>[number] | null = null;
+        const manifestEntry = await this.buildAssetManifestEntry(
+          zone.asset,
+          zone.asset.defaultDurationSeconds ?? 10,
+          0,
+          syncContext,
+        );
 
-        if (isUrlAsset && asset.url?.trim()) {
-          manifestEntry = {
-            id: asset.id,
-            name: asset.name,
-            type: asset.type,
-            mimeType: asset.mimeType,
-            durationSeconds: asset.defaultDurationSeconds ?? 10,
-            position: 0,
-            assetVersion: asset.contentVersion,
-            updatedAt: asset.updatedAt.toISOString(),
-            contentHash: asset.contentHash,
-            requiresDownload: false,
-            downloadUrl: null,
-            url: asset.url,
-            fileSize: asset.fileSize,
-          };
-        } else if (!isUrlAsset && asset.status === 'READY' && asset.s3Key) {
-          const clientVersion = clientAssetVersions.get(asset.id);
-          const requiresDownload = clientVersion === undefined || clientVersion < asset.contentVersion;
-          manifestEntry = {
-            id: asset.id,
-            name: asset.name,
-            type: asset.type,
-            mimeType: asset.mimeType,
-            durationSeconds: asset.defaultDurationSeconds ?? 10,
-            position: 0,
-            assetVersion: asset.contentVersion,
-            updatedAt: asset.updatedAt.toISOString(),
-            contentHash: asset.contentHash,
-            requiresDownload,
-            downloadUrl:
-              requiresDownload && asset.s3Key
-                ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
-                : null,
-            url: null,
-            fileSize: asset.fileSize,
-          };
-        }
-
-        if (manifestEntry) {
-          if (!assetIndex.has(manifestEntry.id)) {
-            assetIndex.set(manifestEntry.id, aggregatedAssets.length);
-            aggregatedAssets.push(manifestEntry);
-          }
+        if (!assetIndex.has(manifestEntry.id)) {
+          assetIndex.set(manifestEntry.id, aggregatedAssets.length);
+          aggregatedAssets.push(manifestEntry);
         }
 
         zoneManifests.push({
@@ -576,11 +568,13 @@ export class PlayerService {
       query.layoutVersion !== undefined && query.layoutVersion === layout.syncVersion;
     const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
     const clientHasPendingDownloads = aggregatedAssets.some((entry) => entry.requiresDownload);
-    const canSkipManifest =
+    const contentUnchanged =
       layoutVersionMatches &&
       knownAssetIds.length > 0 &&
       !clientMissingAssets &&
-      !clientHasPendingDownloads;
+      !clientHasPendingDownloads &&
+      !syncContext.recoverCache &&
+      syncContext.missingAssetIds.size === 0;
 
     await this.prisma.device.update({
       where: { id: device.id },
@@ -598,22 +592,8 @@ export class PlayerService {
       zones: zoneManifests,
     };
 
-    if (canSkipManifest) {
-      return {
-        unchanged: true,
-        layoutVersion: layout.syncVersion,
-        layout: layoutPayload,
-        playlistVersion: null,
-        playlist: null,
-        assets: [],
-        currentAssetIds,
-        removedAssetIds,
-        tickers: hasTickerZone ? [] : activeTickers,
-      };
-    }
-
     return {
-      unchanged: false,
+      unchanged: contentUnchanged,
       layoutVersion: layout.syncVersion,
       layout: layoutPayload,
       playlistVersion: null,
@@ -654,79 +634,131 @@ export class PlayerService {
     }));
   }
 
+  private buildSyncAssetContext(query: SyncQueryDto): SyncAssetContext {
+    return {
+      knownAssetIds: this.parseCommaSeparatedIds(query.knownAssetIds),
+      clientAssetVersions: this.parseAssetVersionMap(query.assetVersions),
+      recoverCache: query.recoverCache === true,
+      missingAssetIds: new Set(this.parseCommaSeparatedIds(query.missingAssetIds)),
+    };
+  }
+
+  private async buildAssetManifestEntry(
+    asset: ManifestAssetInput,
+    durationSeconds: number,
+    position: number,
+    syncContext: SyncAssetContext,
+  ): Promise<ManifestEntry> {
+    const baseEntry = {
+      id: asset.id,
+      name: asset.name,
+      type: asset.type,
+      mimeType: asset.mimeType,
+      durationSeconds,
+      position,
+      assetVersion: asset.contentVersion,
+      updatedAt: asset.updatedAt.toISOString(),
+      contentHash: asset.contentHash,
+      fileSize: asset.fileSize,
+    };
+
+    const isUrlAsset = asset.type === 'URL';
+    if (isUrlAsset) {
+      if (!asset.url?.trim()) {
+        return {
+          ...baseEntry,
+          status: asset.status,
+          available: false,
+          unavailableReason: 'URL asset is missing a destination URL',
+          requiresDownload: false,
+          downloadUrl: null,
+          url: null,
+        };
+      }
+      return {
+        ...baseEntry,
+        status: 'READY',
+        available: true,
+        unavailableReason: null,
+        requiresDownload: false,
+        downloadUrl: null,
+        url: asset.url,
+      };
+    }
+
+    if (asset.status !== 'READY') {
+      return {
+        ...baseEntry,
+        status: asset.status,
+        available: false,
+        unavailableReason:
+          asset.status === 'UPLOADING'
+            ? 'Asset is still processing'
+            : 'Asset is not ready for playback',
+        requiresDownload: false,
+        downloadUrl: null,
+        url: null,
+      };
+    }
+
+    if (!asset.s3Key) {
+      return {
+        ...baseEntry,
+        status: asset.status,
+        available: false,
+        unavailableReason: 'Asset file is not available',
+        requiresDownload: false,
+        downloadUrl: null,
+        url: null,
+      };
+    }
+
+    const clientHasAsset = syncContext.knownAssetIds.includes(asset.id);
+    const clientVersion = syncContext.clientAssetVersions.get(asset.id);
+    const forceDownload =
+      syncContext.recoverCache ||
+      syncContext.missingAssetIds.has(asset.id) ||
+      !clientHasAsset;
+    const requiresDownload =
+      forceDownload || clientVersion === undefined || clientVersion < asset.contentVersion;
+
+    const downloadUrl =
+      requiresDownload && asset.s3Key
+        ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
+        : null;
+
+    return {
+      ...baseEntry,
+      status: 'READY',
+      available: true,
+      unavailableReason: null,
+      requiresDownload,
+      downloadUrl,
+      url: null,
+    };
+  }
+
   private async buildPlaylistManifest(
     playlist: {
       playlistAssets: {
         durationSeconds: number;
-        asset: {
-          id: string;
-          name: string;
-          type: string;
-          mimeType: string;
-          status: string;
-          s3Key: string | null;
-          url: string | null;
-          fileSize: number;
-          contentVersion: number;
-          contentHash: string | null;
-          updatedAt: Date;
-        };
+        asset: ManifestAssetInput;
       }[];
     },
-    clientAssetVersions: Map<string, number>,
-  ) {
-    const manifest: {
-      id: string;
-      name: string;
-      type: string;
-      mimeType: string;
-      durationSeconds: number;
-      position: number;
-      assetVersion: number;
-      updatedAt: string;
-      contentHash: string | null;
-      requiresDownload: boolean;
-      downloadUrl: string | null;
-      url: string | null;
-      fileSize: number;
-    }[] = [];
+    syncContext: SyncAssetContext,
+  ): Promise<ManifestEntry[]> {
+    const manifest: ManifestEntry[] = [];
 
     let globalPosition = 0;
     for (const playlistAsset of playlist.playlistAssets) {
-      const asset = playlistAsset.asset;
-      const isUrlAsset = asset.type === 'URL';
-
-      if (isUrlAsset) {
-        if (!asset.url?.trim()) continue;
-      } else if (asset.status !== 'READY' || !asset.s3Key) {
-        continue;
-      }
-
-      const clientVersion = clientAssetVersions.get(asset.id);
-      const requiresDownload =
-        !isUrlAsset &&
-        (clientVersion === undefined || clientVersion < asset.contentVersion);
-
-      const downloadUrl =
-        requiresDownload && asset.s3Key
-          ? await this.s3.generateDownloadUrl(asset.s3Key, SYNC_DOWNLOAD_URL_TTL_SECONDS)
-          : null;
-
-      manifest.push({
-        id: asset.id,
-        name: asset.name,
-        type: asset.type,
-        mimeType: asset.mimeType,
-        durationSeconds: playlistAsset.durationSeconds,
-        position: globalPosition++,
-        assetVersion: asset.contentVersion,
-        updatedAt: asset.updatedAt.toISOString(),
-        contentHash: asset.contentHash,
-        requiresDownload,
-        downloadUrl,
-        url: asset.url ?? null,
-        fileSize: asset.fileSize,
-      });
+      manifest.push(
+        await this.buildAssetManifestEntry(
+          playlistAsset.asset,
+          playlistAsset.durationSeconds,
+          globalPosition++,
+          syncContext,
+        ),
+      );
     }
 
     return manifest;

@@ -39,6 +39,8 @@ interface LayoutSummary {
     zoneCount: number;
     screens: number;
     color: string;
+    isPlaybackReady?: boolean;
+    readinessWarnings?: string[];
 }
 
 interface LayoutDetail extends LayoutSummary {
@@ -386,6 +388,34 @@ export default function LayoutDesigner() {
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             {!canEdit && (
                 <ReadOnlyNotice message="Layouts are read-only for this account. You can inspect zones, but saving and structural edits are disabled." />
+            )}
+
+            {layout && layout.isPlaybackReady === false && layout.readinessWarnings && layout.readinessWarnings.length > 0 && (
+                <div
+                    style={{
+                        marginBottom: 20,
+                        padding: "14px 16px",
+                        borderRadius: 12,
+                        border: "1px solid hsl(var(--warning) / 0.35)",
+                        background: "hsl(var(--warning) / 0.08)",
+                        display: "flex",
+                        gap: 12,
+                        alignItems: "flex-start",
+                    }}
+                >
+                    <AlertCircle size={20} style={{ color: "hsl(var(--warning))", flexShrink: 0, marginTop: 2 }} />
+                    <div>
+                        <div style={{ fontWeight: 700, marginBottom: 6 }}>Layout not ready for device playback</div>
+                        <ul style={{ margin: 0, paddingLeft: 18, color: "hsl(var(--text-secondary))" }}>
+                            {layout.readinessWarnings.map((warning) => (
+                                <li key={warning}>{warning}</li>
+                            ))}
+                        </ul>
+                        <p style={{ margin: "8px 0 0", fontSize: "0.875rem", color: "hsl(var(--text-muted))" }}>
+                            Fix these issues before assigning this layout to devices. Non-ready assets cannot be saved into zones.
+                        </p>
+                    </div>
+                </div>
             )}
 
             <div className="flex-between" style={{ marginBottom: 24, gap: 16, flexWrap: "wrap" }}>

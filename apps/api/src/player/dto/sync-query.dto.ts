@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class SyncQueryDto {
   /** Last layoutVersion the player successfully cached */
@@ -30,4 +30,16 @@ export class SyncQueryDto {
   @IsString()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   assetVersions?: string;
+
+  /** Force presigned download URLs even when playlist/layout version is unchanged (cache recovery). */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  recoverCache?: boolean;
+
+  /** Comma-separated asset IDs the player knows it is missing locally — always returns download URLs for these. */
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  missingAssetIds?: string;
 }

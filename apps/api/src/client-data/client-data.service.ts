@@ -52,18 +52,28 @@ export class ClientDataService {
 
   async dashboard(actor: RequestActor) {
     const organizationId = this.getOrgId(actor);
-    const [devices, assets, playlists, tickers, scheduleEvents, logs] = await Promise.all([
+    const [devices, assets, playlists, tickers, scheduleEvents, logs, layouts] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
       this.prisma.asset.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' }, take: 5 }),
       this.prisma.playlist.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.ticker.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.scheduleEvent.findMany({ where: { organizationId }, orderBy: { startTime: 'asc' }, take: 4 }),
       this.prisma.proofOfPlayLog.findMany({ where: { organizationId }, orderBy: { timestamp: 'desc' }, take: 8 }),
+      this.prisma.layout.findMany({
+        where: { organizationId },
+        include: this.layoutReadinessInclude(),
+      }),
     ]);
 
     const onlineDevices = devices.filter((device) => device.status === DeviceStatus.ONLINE).length;
     const warningDevices = devices.filter((device) => device.status === DeviceStatus.WARNING).length;
     const offlineDevices = devices.filter((device) => device.status === DeviceStatus.OFFLINE).length;
+
+    const layoutReadiness = layouts.map((layout) => ({
+      layout,
+      ...this.computeLayoutReadiness(layout),
+    }));
+    const layoutsWithIssues = layoutReadiness.filter((entry) => !entry.isPlaybackReady).length;
 
     return {
       stats: {
@@ -74,6 +84,7 @@ export class ClientDataService {
         totalAssets: assets.length,
         activePlaylists: playlists.filter((playlist) => playlist.status === PlaylistStatus.ACTIVE).length,
         activeTickers: tickers.filter((ticker) => ticker.status === TickerStatus.ACTIVE).length,
+        layoutsWithIssues,
       },
       recentActivityLog: logs.map((log) => ({
         id: log.id,
@@ -97,6 +108,14 @@ export class ClientDataService {
         id: asset.id,
         name: asset.name,
       })),
+      layoutAlerts: layoutReadiness
+        .filter((entry) => !entry.isPlaybackReady)
+        .slice(0, 5)
+        .map((entry) => ({
+          layoutId: entry.layout.id,
+          layoutName: entry.layout.name,
+          warnings: entry.readinessWarnings,
+        })),
     };
   }
 
@@ -1937,26 +1956,24 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const layouts = await this.prisma.layout.findMany({
       where: { organizationId },
-      include: {
-        zones: { orderBy: { zIndex: 'asc' } },
-        devices: { select: { id: true, name: true } },
-      },
+      include: this.layoutReadinessInclude(),
       orderBy: { updatedAt: 'desc' },
     });
-    return layouts.map((layout) => this.serializeLayout(layout));
+    return layouts.map((layout) => {
+      const readiness = this.computeLayoutReadiness(layout);
+      return this.serializeLayout(layout, readiness);
+    });
   }
 
   async getLayout(actor: RequestActor, layoutId: string) {
     const organizationId = this.getOrgId(actor);
     const layout = await this.prisma.layout.findFirst({
       where: { id: layoutId, organizationId },
-      include: {
-        zones: { orderBy: { zIndex: 'asc' }, include: { playlist: { select: { id: true, name: true } }, asset: { select: { id: true, name: true } } } },
-        devices: { select: { id: true, name: true } },
-      },
+      include: this.layoutReadinessInclude(),
     });
     if (!layout) throw new NotFoundException('Layout not found');
-    return this.serializeLayout(layout);
+    const readiness = this.computeLayoutReadiness(layout);
+    return this.serializeLayout(layout, readiness);
   }
 
   async createLayout(actor: RequestActor, body: { name: string; resolution?: string }) {
@@ -1989,7 +2006,7 @@ export class ClientDataService {
       },
     });
 
-    return this.serializeLayout(layout);
+    return this.serializeLayout(layout, this.computeLayoutReadiness(layout));
   }
 
   async updateLayout(actor: RequestActor, layoutId: string, body: { name?: string; resolution?: string; status?: string }) {
@@ -2020,7 +2037,7 @@ export class ClientDataService {
       await this.playlistSync.bumpLayout(layoutId);
     }
 
-    return this.serializeLayout(layout);
+    return this.serializeLayout(layout, this.computeLayoutReadiness(layout));
   }
 
   async saveLayoutZones(
@@ -2064,6 +2081,8 @@ export class ClientDataService {
         if (!asset) throw new BadRequestException(`Invalid asset for zone "${zone.name}"`);
       }
     }
+
+    await this.validateLayoutZoneBindings(organizationId, zones);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.layoutZone.deleteMany({ where: { layoutId } });
@@ -2134,6 +2153,18 @@ export class ClientDataService {
       if (validDeviceCount !== deviceIds.length) {
         throw new BadRequestException('Some devices are invalid or not paired for this organization');
       }
+
+      const layoutWithZones = await this.prisma.layout.findFirst({
+        where: { id: layoutId, organizationId },
+        include: this.layoutReadinessInclude(),
+      });
+      if (!layoutWithZones) throw new NotFoundException('Layout not found');
+      const readiness = this.computeLayoutReadiness(layoutWithZones);
+      if (!readiness.isPlaybackReady) {
+        throw new BadRequestException(
+          `Layout is not ready for playback: ${readiness.readinessWarnings.join('; ')}`,
+        );
+      }
     }
 
     await this.prisma.$transaction(async (tx) => {
@@ -2165,6 +2196,142 @@ export class ClientDataService {
     return this.getLayout(actor, layoutId);
   }
 
+  private layoutReadinessInclude() {
+    return {
+      zones: {
+        orderBy: { zIndex: 'asc' as const },
+        include: {
+          playlist: {
+            include: {
+              playlistAssets: {
+                orderBy: { position: 'asc' as const },
+                include: {
+                  asset: {
+                    select: { id: true, name: true, status: true, type: true, s3Key: true, url: true },
+                  },
+                },
+              },
+            },
+          },
+          asset: {
+            select: { id: true, name: true, status: true, type: true, s3Key: true, url: true },
+          },
+        },
+      },
+      devices: { select: { id: true, name: true } },
+    };
+  }
+
+  private isAssetPlaybackReady(asset: {
+    status: AssetStatus;
+    type: string;
+    s3Key: string | null;
+    url: string | null;
+  }) {
+    if (asset.type === AssetType.URL) {
+      return !!asset.url?.trim();
+    }
+    return asset.status === AssetStatus.READY && !!asset.s3Key;
+  }
+
+  private computeLayoutReadiness(layout: {
+    zones: {
+      name: string;
+      type: ZoneType;
+      playlistId: string | null;
+      assetId: string | null;
+      playlist?: {
+        name: string;
+        playlistAssets: { asset: { id: string; name: string; status: AssetStatus; type: string; s3Key: string | null; url: string | null } }[];
+      } | null;
+      asset?: { id: string; name: string; status: AssetStatus; type: string; s3Key: string | null; url: string | null } | null;
+    }[];
+  }) {
+    const warnings: string[] = [];
+
+    for (const zone of layout.zones) {
+      if (zone.type === ZoneType.PLAYLIST) {
+        if (!zone.playlistId || !zone.playlist) {
+          warnings.push(`Zone "${zone.name}" has no playlist assigned`);
+          continue;
+        }
+        if (zone.playlist.playlistAssets.length === 0) {
+          warnings.push(`Zone "${zone.name}" playlist "${zone.playlist.name}" has no assets`);
+          continue;
+        }
+        for (const playlistAsset of zone.playlist.playlistAssets) {
+          if (!this.isAssetPlaybackReady(playlistAsset.asset)) {
+            const reason =
+              playlistAsset.asset.status !== AssetStatus.READY
+                ? `is ${playlistAsset.asset.status.toLowerCase()}`
+                : 'has no downloadable file';
+            warnings.push(`Zone "${zone.name}": asset "${playlistAsset.asset.name}" ${reason}`);
+          }
+        }
+      }
+
+      if (zone.type === ZoneType.IMAGE) {
+        if (!zone.assetId || !zone.asset) {
+          warnings.push(`Zone "${zone.name}" has no image asset assigned`);
+          continue;
+        }
+        if (!this.isAssetPlaybackReady(zone.asset)) {
+          const reason =
+            zone.asset.status !== AssetStatus.READY
+              ? `is ${zone.asset.status.toLowerCase()}`
+              : 'has no downloadable file';
+          warnings.push(`Zone "${zone.name}": asset "${zone.asset.name}" ${reason}`);
+        }
+      }
+    }
+
+    return {
+      isPlaybackReady: warnings.length === 0,
+      readinessWarnings: warnings,
+    };
+  }
+
+  private async validateLayoutZoneBindings(
+    organizationId: string,
+    zones: { name: string; type: string; playlistId?: string | null; assetId?: string | null }[],
+  ) {
+    const errors: string[] = [];
+
+    for (const zone of zones) {
+      const zoneType = this.parseZoneType(zone.type);
+
+      if (zoneType === ZoneType.IMAGE && zone.assetId) {
+        const asset = await this.prisma.asset.findFirst({
+          where: { id: zone.assetId, organizationId },
+        });
+        if (asset && !this.isAssetPlaybackReady(asset)) {
+          errors.push(`Zone "${zone.name}": asset "${asset.name}" is not ready for playback`);
+        }
+      }
+
+      if (zoneType === ZoneType.PLAYLIST && zone.playlistId) {
+        const playlistAssets = await this.prisma.playlistAsset.findMany({
+          where: { playlistId: zone.playlistId, playlist: { organizationId } },
+          include: { asset: true },
+        });
+        if (playlistAssets.length === 0) {
+          errors.push(`Zone "${zone.name}": assigned playlist has no assets`);
+        }
+        for (const playlistAsset of playlistAssets) {
+          if (!this.isAssetPlaybackReady(playlistAsset.asset)) {
+            errors.push(
+              `Zone "${zone.name}": playlist asset "${playlistAsset.asset.name}" is not ready for playback`,
+            );
+          }
+        }
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new BadRequestException(errors.join('; '));
+    }
+  }
+
   private parseLayoutResolution(value?: string | null): LayoutResolution {
     const normalized = (value ?? '').toLowerCase();
     if (normalized.includes('4k')) return LayoutResolution.LANDSCAPE_4K;
@@ -2185,7 +2352,8 @@ export class ClientDataService {
     return ZoneType.PLAYLIST;
   }
 
-  private serializeLayout(layout: {
+  private serializeLayout(
+    layout: {
     id: string;
     name: string;
     status: LayoutStatus;
@@ -2211,7 +2379,9 @@ export class ClientDataService {
       asset?: { id: string; name: string } | null;
     }[];
     devices: { id: string; name: string }[];
-  }) {
+  },
+    readiness?: { isPlaybackReady: boolean; readinessWarnings: string[] },
+  ) {
     return {
       id: layout.id,
       name: layout.name,
@@ -2221,6 +2391,8 @@ export class ClientDataService {
       screens: layout.devices.length || layout.screens,
       color: layout.color,
       zoneCount: layout.zones.length,
+      isPlaybackReady: readiness?.isPlaybackReady ?? true,
+      readinessWarnings: readiness?.readinessWarnings ?? [],
       zones: layout.zones.map((zone) => this.serializeLayoutZone(zone)),
       deviceIds: layout.devices.map((device) => device.id),
       deviceNames: layout.devices.map((device) => device.name),

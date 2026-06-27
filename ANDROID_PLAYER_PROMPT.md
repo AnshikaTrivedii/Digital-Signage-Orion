@@ -229,10 +229,14 @@ Fetch the active playlist assigned to this device. Supports **incremental sync**
 | `layoutVersion` | Last `layoutVersion` the player successfully cached (when device uses a layout) |
 | `knownAssetIds` | Comma-separated asset IDs currently on disk (used to detect removals) |
 | `assetVersions` | Comma-separated `assetId:contentVersion` pairs for delta downloads |
+| `recoverCache` | Set to `true` to force presigned download URLs for all file-based assets (cache recovery after reinstall or cleared storage) |
+| `missingAssetIds` | Comma-separated asset IDs the player knows it is missing locally — always returns download URLs for these IDs |
 
-**Example:** `GET /api/player/sync?playlistVersion=3&knownAssetIds=abc,def&assetVersions=abc:1,def:2`
+**Example:** `GET /api/player/sync?layoutVersion=2&knownAssetIds=abc,def&assetVersions=abc:1,def:2&recoverCache=true`
 
 Pre-signed S3 download URLs are valid for **7 days** (long enough for offline download windows between syncs).
+
+> **Important:** The `assets[]` manifest is **always returned** when content is assigned, even when `unchanged: true`. Use `unchanged` as a hint that layout/playlist geometry and versions have not changed — not as a signal to skip reading `assets[]`. When local files are missing, send `recoverCache=true` or list IDs in `missingAssetIds` to receive fresh presigned URLs.
 
 **Response (No playlist assigned):**
 ```json
@@ -252,7 +256,26 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
   "unchanged": true,
   "playlistVersion": 3,
   "playlist": { "id": "clxyz123", "name": "Lobby Playlist" },
-  "assets": [],
+  "assets": [
+    {
+      "id": "abc",
+      "name": "welcome-banner.jpg",
+      "type": "IMAGE",
+      "mimeType": "image/jpeg",
+      "durationSeconds": 10,
+      "position": 0,
+      "assetVersion": 2,
+      "updatedAt": "2026-06-18T12:00:00.000Z",
+      "contentHash": "d41d8cd98f00b204e9800998ecf8427e",
+      "status": "READY",
+      "available": true,
+      "unavailableReason": null,
+      "requiresDownload": false,
+      "downloadUrl": null,
+      "url": null,
+      "fileSize": 245670
+    }
+  ],
   "currentAssetIds": ["abc", "def", "ghi"],
   "removedAssetIds": []
 }
@@ -280,6 +303,9 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "assetVersion": 2,
       "updatedAt": "2026-06-18T12:00:00.000Z",
       "contentHash": "d41d8cd98f00b204e9800998ecf8427e",
+      "status": "READY",
+      "available": true,
+      "unavailableReason": null,
       "requiresDownload": true,
       "downloadUrl": "https://s3.ap-south-1.amazonaws.com/orion-assets/...",
       "url": null,
@@ -402,12 +428,14 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 5. When `layout` is null, use legacy full-screen playlist + optional global ticker overlay.
 
 **Offline sync flow:**
-1. Persist `playlistVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.
-2. On each sync poll, send `playlistVersion`, `knownAssetIds`, and `assetVersions`.
-3. If `unchanged: true`, keep playing from local cache — no downloads needed.
-4. If `removedAssetIds` is non-empty, delete those local files **only after** a successful sync response.
-5. Download only assets where `requiresDownload: true`.
-6. Playback never requires live internet — only sync, heartbeat, and PoP upload use the network.
+1. Persist `playlistVersion` / `layoutVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.
+2. On each sync poll, send `playlistVersion` or `layoutVersion`, `knownAssetIds`, and `assetVersions`.
+3. If `unchanged: true`, content geometry has not changed — still read `assets[]` to confirm local cache matches `requiresDownload: false` entries.
+4. If local files are missing (fresh install, cleared cache, failed download), retry sync with `recoverCache=true` or `missingAssetIds=id1,id2` to receive presigned URLs even when versions match.
+5. If `removedAssetIds` is non-empty, delete those local files **only after** a successful sync response.
+6. Download only assets where `requiresDownload: true` and `available: true`.
+7. When `available: false`, show a user-visible error using `unavailableReason` — do not attempt download.
+8. Playback never requires live internet — only sync, heartbeat, and PoP upload use the network.
 
 **Asset types:** `IMAGE`, `VIDEO`, `HTML`, `DOCUMENT`, `URL`
 
@@ -576,6 +604,8 @@ interface OrionPlayerApi {
     @Query("layoutVersion") layoutVersion: Int? = null,
     @Query("knownAssetIds") knownAssetIds: String? = null,
         @Query("assetVersions") assetVersions: String? = null,
+    @Query("recoverCache") recoverCache: Boolean? = null,
+    @Query("missingAssetIds") missingAssetIds: String? = null,
     ): SyncResponse
 
     @POST("player/pop-logs")
@@ -668,6 +698,9 @@ data class AssetInfo(
     val assetVersion: Int,
     val updatedAt: String,   // ISO 8601
     val contentHash: String?,
+    val status: String,      // READY, UPLOADING, ERROR, ...
+    val available: Boolean,  // false when asset cannot be played yet
+    val unavailableReason: String?, // human-readable reason when available=false
     val requiresDownload: Boolean,
     val downloadUrl: String?,
     val url: String?,        // populated for type URL; use WebView, no S3 download
