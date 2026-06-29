@@ -1170,6 +1170,7 @@ export class ClientDataService {
       startDate?: string;
       endDate?: string;
       deviceId?: string;
+      folderId?: string;
       search?: string;
       status?: 'all' | 'verified' | 'failed';
       page?: number;
@@ -1195,6 +1196,7 @@ export class ClientDataService {
 
     const [
       devices,
+      campaigns,
       organization,
       totalLogs,
       verifiedCount,
@@ -1204,6 +1206,11 @@ export class ClientDataService {
       latestLog,
     ] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { name: 'asc' } }),
+      this.prisma.assetFolder.findMany({
+        where: { organizationId },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true },
+      }),
       this.prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
       this.prisma.proofOfPlayLog.count({ where }),
       this.prisma.proofOfPlayLog.count({ where: verifiedWhere }),
@@ -1333,6 +1340,41 @@ export class ClientDataService {
         lastPlay: entry.lastPlay,
       }));
 
+    const campaignAgg = new Map<string, {
+      id: string | null;
+      name: string;
+      impressions: number;
+      verified: number;
+    }>();
+
+    for (const log of enrichedAggregateLogs) {
+      const campaignId = log.campaignId ?? null;
+      const campaignName = log.campaignName ?? null;
+      const key = campaignId ?? `name:${campaignName ?? '__uncategorized__'}`;
+      const current = campaignAgg.get(key) ?? {
+        id: campaignId,
+        name: campaignName ?? 'Uncategorized',
+        impressions: 0,
+        verified: 0,
+      };
+      current.impressions += 1;
+      if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
+      campaignAgg.set(key, current);
+    }
+
+    const campaignBreakdown = Array.from(campaignAgg.values())
+      .sort((a, b) => b.impressions - a.impressions)
+      .slice(0, 12)
+      .map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        impressions: entry.impressions,
+        verifiedRate:
+          entry.impressions > 0
+            ? Math.round((entry.verified / entry.impressions) * 10000) / 100
+            : 0,
+      }));
+
     const contentAgg = new Map<string, { content: string; impressions: number; verified: number }>();
     for (const log of enrichedAggregateLogs) {
       const label = log.assetName || log.content;
@@ -1406,6 +1448,7 @@ export class ClientDataService {
       rangeEnd,
       organizationName: organization?.name ?? 'Organization',
       devices: reportDeviceOptions,
+      campaigns,
       kpis: {
         billedImpressions: totalLogs,
         avgEngagement,
@@ -1418,6 +1461,7 @@ export class ClientDataService {
       },
       chartData,
       deviceBreakdown,
+      campaignBreakdown,
       topContent,
       proofOfPlay: enrichedLogs.map((log) => this.serializePopLog(log, deviceNameSet, deviceIdSet)),
       proofOfPlayMeta: {
@@ -1441,6 +1485,7 @@ export class ClientDataService {
       startDate?: string;
       endDate?: string;
       deviceId?: string;
+      folderId?: string;
       search?: string;
       status?: 'all' | 'verified' | 'failed';
     } = {},
@@ -1507,6 +1552,14 @@ export class ClientDataService {
     return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
+  private async getAssetNamesInFolder(organizationId: string, folderId: string) {
+    const assets = await this.prisma.asset.findMany({
+      where: { organizationId, folderId },
+      select: { name: true },
+    });
+    return assets.map((asset) => asset.name);
+  }
+
   private async buildPopLogWhere(
     organizationId: string,
     query: {
@@ -1514,6 +1567,7 @@ export class ClientDataService {
       startDate?: string;
       endDate?: string;
       deviceId?: string;
+      folderId?: string;
       search?: string;
       status?: 'all' | 'verified' | 'failed';
     },
@@ -1554,6 +1608,68 @@ export class ClientDataService {
             { deviceId: null, device: device.name },
           ],
         });
+      }
+    }
+
+    if (query.folderId) {
+      if (query.folderId === '__uncategorized__') {
+        const categorizedAssets = await this.prisma.asset.findMany({
+          where: { organizationId, folderId: { not: null } },
+          select: { name: true },
+        });
+        const categorizedNames = categorizedAssets.map((asset) => asset.name);
+        const uncategorizedAssets = await this.prisma.asset.findMany({
+          where: { organizationId, folderId: null },
+          select: { name: true },
+        });
+        const uncategorizedNames = uncategorizedAssets.map((asset) => asset.name);
+        const orConditions: Prisma.ProofOfPlayLogWhereInput[] = [
+          { campaignName: null },
+          { campaignName: '' },
+        ];
+        for (const name of uncategorizedNames) {
+          orConditions.push(
+            { assetName: { equals: name, mode: 'insensitive' } },
+            { content: { equals: name, mode: 'insensitive' } },
+          );
+        }
+        if (categorizedNames.length > 0) {
+          andClauses.push({
+            AND: [
+              { OR: orConditions },
+              {
+                NOT: {
+                  OR: categorizedNames.flatMap((name) => [
+                    { assetName: { equals: name, mode: 'insensitive' } },
+                    { content: { equals: name, mode: 'insensitive' } },
+                  ]),
+                },
+              },
+            ],
+          });
+        } else {
+          andClauses.push({ OR: orConditions });
+        }
+      } else {
+        const folder = await this.prisma.assetFolder.findFirst({
+          where: { id: query.folderId, organizationId },
+          select: { id: true, name: true },
+        });
+        if (!folder) {
+          andClauses.push({ id: '__no_match__' });
+        } else {
+          const assetNames = await this.getAssetNamesInFolder(organizationId, folder.id);
+          const orConditions: Prisma.ProofOfPlayLogWhereInput[] = [
+            { campaignName: { equals: folder.name, mode: 'insensitive' } },
+          ];
+          for (const name of assetNames) {
+            orConditions.push(
+              { assetName: { equals: name, mode: 'insensitive' } },
+              { content: { equals: name, mode: 'insensitive' } },
+            );
+          }
+          andClauses.push({ OR: orConditions });
+        }
       }
     }
 
@@ -1707,6 +1823,7 @@ export class ClientDataService {
     content: string;
     playlistName?: string | null;
     campaignName?: string | null;
+    campaignId?: string | null;
     startTime: Date;
     endTime?: Date | null;
     durationSeconds?: number | null;
@@ -1727,6 +1844,7 @@ export class ClientDataService {
       deviceIsActive,
       playlistName: log.playlistName ?? null,
       campaignName: log.campaignName ?? null,
+      campaignId: log.campaignId ?? null,
       assetName,
       content: assetName,
       startTime: log.startTime,

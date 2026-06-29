@@ -3,6 +3,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 export type PopLogPlaybackContext = {
   playlistName: string | null;
   campaignName: string | null;
+  campaignId: string | null;
   durationSeconds: number | null;
 };
 
@@ -32,6 +33,7 @@ export function enrichPopLogFields(
 ) {
   const playlistName = log.playlistName?.trim() || context?.playlistName || null;
   const campaignName = log.campaignName?.trim() || context?.campaignName || null;
+  const campaignId = context?.campaignId ?? null;
 
   let durationSeconds =
     typeof log.durationSeconds === 'number' && log.durationSeconds > 0
@@ -52,12 +54,13 @@ export function enrichPopLogFields(
     );
   }
 
-  return { playlistName, campaignName, endTime, durationSeconds };
+  return { playlistName, campaignName, campaignId, endTime, durationSeconds };
 }
 
 export class PopLogContextIndex {
   private readonly byPlaylistId = new Map<string, Map<string, PopLogPlaybackContext>>();
   private readonly fallbackByAsset = new Map<string, PopLogPlaybackContext>();
+  private readonly folderByAsset = new Map<string, { id: string; name: string }>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -73,13 +76,21 @@ export class PopLogContextIndex {
     });
   }
 
+  private campaignContextForAsset(assetName: string): Pick<PopLogPlaybackContext, 'campaignName' | 'campaignId'> {
+    const folder = this.folderByAsset.get(normalizeAssetName(assetName));
+    return {
+      campaignName: folder?.name ?? null,
+      campaignId: folder?.id ?? null,
+    };
+  }
+
   private indexPlaylist(playlist: PlaylistWithAssets) {
     const assetMap = new Map<string, PopLogPlaybackContext>();
     for (const playlistAsset of playlist.playlistAssets) {
       const key = normalizeAssetName(playlistAsset.asset.name);
       const entry: PopLogPlaybackContext = {
         playlistName: playlist.name,
-        campaignName: null,
+        ...this.campaignContextForAsset(playlistAsset.asset.name),
         durationSeconds: playlistAsset.durationSeconds,
       };
       assetMap.set(key, entry);
@@ -91,7 +102,20 @@ export class PopLogContextIndex {
   }
 
   async load(organizationId: string) {
-    const playlists = await this.loadPlaylists(organizationId);
+    const [playlists, assets] = await Promise.all([
+      this.loadPlaylists(organizationId),
+      this.prisma.asset.findMany({
+        where: { organizationId },
+        select: { name: true, folder: { select: { id: true, name: true } } },
+      }),
+    ]);
+
+    for (const asset of assets) {
+      if (asset.folder) {
+        this.folderByAsset.set(normalizeAssetName(asset.name), asset.folder);
+      }
+    }
+
     for (const playlist of playlists) {
       this.indexPlaylist(playlist);
     }

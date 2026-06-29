@@ -23,6 +23,10 @@ export class ReportsQueryDto {
 
   @IsOptional()
   @IsString()
+  folderId?: string;
+
+  @IsOptional()
+  @IsString()
   search?: string;
 
   @IsOptional()
