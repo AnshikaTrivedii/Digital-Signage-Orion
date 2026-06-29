@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Layout, Type, Video, Maximize2, Layers, Plus, Trash2, Save, Play,
@@ -11,6 +12,7 @@ import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { useAuth } from "@/components/AuthProvider";
 import { apiRequest, ApiError } from "@/lib/api";
+import { LAYOUT_DESIGNER_ENABLED } from "@/lib/feature-flags";
 
 type UiZoneType = "video" | "ticker" | "image" | "html" | "clock";
 type Resolution = "1080p" | "4k" | "portrait";
@@ -114,7 +116,22 @@ const Laptop = ({ size, style }: { size?: number; style?: React.CSSProperties })
     </svg>
 );
 
-export default function LayoutDesigner() {
+export default function LayoutDesignerPage() {
+    if (!LAYOUT_DESIGNER_ENABLED) {
+        return <LayoutDesignerRedirect />;
+    }
+    return <LayoutDesigner />;
+}
+
+function LayoutDesignerRedirect() {
+    const router = useRouter();
+    useEffect(() => {
+        router.replace("/app/dashboard");
+    }, [router]);
+    return null;
+}
+
+function LayoutDesigner() {
     const { canEdit } = useClientFeature("PLAYLISTS");
     const { activeOrganizationId } = useAuth();
 

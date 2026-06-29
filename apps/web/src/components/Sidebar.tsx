@@ -10,8 +10,9 @@ import {
 import { motion } from "framer-motion";
 import { useAuth } from "./AuthProvider";
 import { OrionLogo } from "@/components/shared/OrionLogo";
+import { LAYOUT_DESIGNER_ENABLED } from "@/lib/feature-flags";
 
-const navItems = [
+const allNavItems = [
     { name: "Dashboard", path: "/", icon: LayoutDashboard },
     { name: "Devices", path: "/devices", icon: MonitorPlay },
     { name: "Layouts", path: "/designer", icon: Layout },
@@ -22,6 +23,10 @@ const navItems = [
     { name: "Analytics", path: "/reports", icon: Activity },
     { name: "Settings", path: "/settings", icon: Settings },
 ];
+
+const navItems = LAYOUT_DESIGNER_ENABLED
+    ? allNavItems
+    : allNavItems.filter((item) => item.path !== "/designer");
 
 export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () => void }) {
     const pathname = usePathname();

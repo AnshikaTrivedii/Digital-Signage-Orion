@@ -1,3 +1,5 @@
+import { LAYOUT_DESIGNER_ENABLED } from "@/lib/feature-flags";
+
 export type ClientFeatureKey =
     | "DASHBOARD"
     | "ASSETS"
@@ -93,7 +95,9 @@ export const clientRouteRequirements: Array<{ prefix: string; requirement: Clien
     { prefix: "/app/schedule", requirement: { featureKey: "SCHEDULE", requiredAccess: "VIEW" } },
     { prefix: "/app/tickers", requirement: { featureKey: "TICKERS", requiredAccess: "VIEW" } },
     { prefix: "/app/devices", requirement: { featureKey: "DEVICES", requiredAccess: "VIEW" } },
-    { prefix: "/app/designer", requirement: { featureKey: "PLAYLISTS", requiredAccess: "EDIT" } },
+    ...(LAYOUT_DESIGNER_ENABLED
+        ? [{ prefix: "/app/designer", requirement: { featureKey: "PLAYLISTS" as const, requiredAccess: "EDIT" as const } }]
+        : []),
     { prefix: "/app/reports", requirement: { featureKey: "REPORTS", requiredAccess: "VIEW" } },
     { prefix: "/app/settings", requirement: { featureKey: "SETTINGS", requiredAccess: "VIEW" } },
 ];
