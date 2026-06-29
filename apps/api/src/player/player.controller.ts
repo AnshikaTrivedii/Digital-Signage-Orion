@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Headers, Param, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
+import { CacheReportDto } from './dto/cache-report.dto';
 import { InitPairingDto } from './dto/init-pairing.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
 import { SubmitPopLogsDto } from './dto/pop-log.dto';
@@ -67,6 +68,17 @@ export class PlayerController {
     @Query() query: SyncQueryDto,
   ) {
     return this.playerService.syncPlaylist(authHeader, query);
+  }
+
+  /**
+   * Device reports its offline cache inventory and sync health.
+   */
+  @Post('cache-report')
+  reportCache(
+    @Headers('authorization') authHeader: string | undefined,
+    @Body() body: CacheReportDto,
+  ) {
+    return this.playerService.reportCache(authHeader, body);
   }
 
   /**

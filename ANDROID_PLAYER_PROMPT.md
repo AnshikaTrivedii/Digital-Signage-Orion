@@ -448,6 +448,70 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 6. For `URL`: load `url` in a WebView for `durationSeconds` (no download/cache — `downloadUrl` is null)
 7. Loop back to position 0 when the last asset finishes
 
+**Cache commands (delivered on sync):**
+
+When an administrator queues a cache action from the CMS, the next `/sync` response includes:
+
+```json
+{
+  "cacheCommand": {
+    "id": "cmd_abc123",
+    "command": "FORCE_SYNC"
+  }
+}
+```
+
+Commands: `FORCE_SYNC`, `CLEAR_CACHE`, `REDOWNLOAD_PLAYLIST`. After executing, report completion via `POST /api/player/cache-report` with `completedCommandId` set.
+
+---
+
+#### `POST /api/player/cache-report`
+
+Report offline cache inventory to the CMS. Call every **5 minutes**, after sync/download completes, and when a cache command finishes.
+
+**Request:**
+```json
+{
+  "currentPlaylistId": "pl_123",
+  "currentPlaylistName": "Lobby Playlist",
+  "playlistVersion": 4,
+  "cacheTotalBytes": 524288000,
+  "cacheUsedBytes": 318000000,
+  "storageTotalBytes": 8589934592,
+  "cachedAssetCount": 8,
+  "expectedAssetCount": 8,
+  "pendingDownloadCount": 0,
+  "syncStatus": "OK",
+  "lastSuccessfulSyncAt": "2026-06-29T08:15:00.000Z",
+  "lastFailedSyncAt": null,
+  "lastSyncError": null,
+  "completedCommandId": "cmd_abc123",
+  "commandFailed": false,
+  "assets": [
+    {
+      "assetId": "asset_1",
+      "assetName": "welcome-banner.jpg",
+      "assetType": "IMAGE",
+      "mimeType": "image/jpeg",
+      "playlistId": "pl_123",
+      "playlistName": "Lobby Playlist",
+      "fileSize": 245670,
+      "assetVersion": 2,
+      "contentHash": "abc123",
+      "downloadStatus": "DOWNLOADED",
+      "localCacheStatus": "PRESENT",
+      "downloadedAt": "2026-06-29T08:14:55.000Z"
+    }
+  ]
+}
+```
+
+**Response:** `{ "received": true }`
+
+`downloadStatus`: `DOWNLOADED` | `PENDING` | `FAILED`  
+`localCacheStatus`: `PRESENT` | `MISSING` | `CORRUPT`  
+`syncStatus`: `OK` | `PARTIAL` | `FAILED`
+
 ---
 
 #### `POST /api/player/pop-logs`
@@ -613,6 +677,12 @@ interface OrionPlayerApi {
         @Header("Authorization") token: String,
         @Body body: PopLogsRequest
     ): PopLogsResponse
+
+    @POST("player/cache-report")
+    suspend fun reportCache(
+        @Header("Authorization") token: String,
+        @Body body: CacheReportRequest
+    ): CacheReportResponse
 }
 
 // ── Data Classes ───────────────────────────────────────────
@@ -649,6 +719,12 @@ data class SyncResponse(
     val tickers: List<TickerInfo> = emptyList(),
     val currentAssetIds: List<String>,
     val removedAssetIds: List<String>,
+    val cacheCommand: CacheCommandInfo? = null,
+)
+
+data class CacheCommandInfo(
+    val id: String,
+    val command: String, // FORCE_SYNC | CLEAR_CACHE | REDOWNLOAD_PLAYLIST
 )
 data class PlaylistInfo(val id: String, val name: String)
 
@@ -720,6 +796,46 @@ data class PopLogEntry(
 )
 data class PopLogsRequest(val logs: List<PopLogEntry>)
 data class PopLogsResponse(val received: Int)
+
+data class CacheReportAsset(
+    val assetId: String,
+    val assetName: String,
+    val assetType: String,
+    val mimeType: String? = null,
+    val playlistId: String? = null,
+    val playlistName: String? = null,
+    val fileSize: Int? = null,
+    val assetVersion: Int? = null,
+    val contentHash: String? = null,
+    val downloadStatus: String,
+    val localCacheStatus: String,
+    val downloadedAt: String? = null,
+)
+
+data class CacheReportRequest(
+    val currentPlaylistId: String? = null,
+    val currentPlaylistName: String? = null,
+    val playlistVersion: Int? = null,
+    val currentLayoutId: String? = null,
+    val currentLayoutName: String? = null,
+    val layoutVersion: Int? = null,
+    val cacheTotalBytes: Int? = null,
+    val cacheUsedBytes: Int? = null,
+    val storageTotalBytes: Int? = null,
+    val cachedAssetCount: Int? = null,
+    val expectedAssetCount: Int? = null,
+    val pendingDownloadCount: Int? = null,
+    val syncStatus: String? = null,
+    val lastSuccessfulSyncAt: String? = null,
+    val lastFailedSyncAt: String? = null,
+    val lastSyncError: String? = null,
+    val completedCommandId: String? = null,
+    val commandFailed: Boolean? = null,
+    val commandError: String? = null,
+    val assets: List<CacheReportAsset>,
+)
+
+data class CacheReportResponse(val received: Boolean)
 ```
 
 > **Note:** Pass `"Bearer $deviceToken"` to the `token` parameter (include the `Bearer ` prefix).

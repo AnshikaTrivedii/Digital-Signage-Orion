@@ -258,6 +258,36 @@ export class ClientDataController {
     return this.clientDataService.refreshDeviceStatus(actor, deviceId);
   }
 
+  @Get('devices/:deviceId/cache')
+  getDeviceCacheStatus(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDeviceCacheStatus(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/cache/assets')
+  getDeviceCachedAssets(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDeviceCachedAssets(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/cache/refresh-status')
+  refreshDeviceCacheStatus(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.refreshDeviceCacheStatus(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/cache/force-sync')
+  forceDeviceSync(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.forceDeviceSync(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/cache/clear')
+  clearDeviceCache(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.clearDeviceCache(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/cache/redownload')
+  redownloadDevicePlaylist(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.redownloadDevicePlaylist(actor, deviceId);
+  }
+
   @Get('tickers')
   listTickers(@CurrentActor() actor: RequestActor) {
     return this.clientDataService.listTickers(actor);

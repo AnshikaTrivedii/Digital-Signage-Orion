@@ -7,6 +7,7 @@ import {
     RefreshCw, HardDrive, Thermometer,
     Search, X, Eye, Cpu, AlertTriangle,
     Trash2, Pencil, Monitor, Save, Link2,
+    Database, Download, CloudOff,
 } from "lucide-react";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
@@ -27,6 +28,59 @@ interface Device {
     lastSync: string;
     os: string;
     currentContent: string;
+    cache?: {
+        cachedAssetCount: number;
+        expectedAssetCount: number;
+        storageUsedBytes: number;
+        storageUsedLabel: string;
+        pendingDownloads: number;
+        lastReportedAt: string | null;
+        reportStatus: string;
+        isStale: boolean;
+    };
+}
+
+interface DeviceCacheStatus {
+    deviceId: string;
+    deviceName: string;
+    deviceStatus: string;
+    offlineCache: {
+        currentPlaylist: string;
+        currentLayout: string | null;
+        playlistVersion: number | null;
+        layoutVersion: number | null;
+        assignedContentVersion: number | null;
+        lastSyncTime: string;
+        totalCacheBytes: number;
+        cachedAssetCount: number;
+        expectedAssetCount: number;
+        storageUsedBytes: number;
+        storageTotalBytes: number;
+        pendingDownloads: number;
+        reportAgeSeconds: number | null;
+    };
+    syncStatus: {
+        online: boolean;
+        lastSuccessfulSync: string | null;
+        lastFailedSync: string | null;
+        lastSyncError: string | null;
+        pendingDownloads: number;
+        reportStatus: string;
+    };
+    assets?: CachedAssetRow[];
+}
+
+interface CachedAssetRow {
+    id: string;
+    assetId: string;
+    assetName: string;
+    assetType: string;
+    playlist: string;
+    fileSize: number;
+    fileSizeLabel: string;
+    downloadStatus: string;
+    localCacheStatus: string;
+    downloadedAt: string | null;
 }
 
 type StatusFilter = "all" | "online" | "offline" | "warning";
@@ -79,6 +133,8 @@ export default function DevicesPage() {
 
     const [pendingAction, setPendingAction] = useState<string | null>(null);
     const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
+    const [deviceCache, setDeviceCache] = useState<DeviceCacheStatus | null>(null);
+    const [isCacheLoading, setIsCacheLoading] = useState(false);
 
     const orgHeaders = useMemo(
         () => (activeOrganizationId ? { "x-organization-id": activeOrganizationId } : undefined),
@@ -104,6 +160,71 @@ export default function DevicesPage() {
     useEffect(() => {
         void loadDevices();
     }, [loadDevices]);
+
+    const loadDeviceCache = useCallback(async (deviceId: string) => {
+        if (!activeOrganizationId) return;
+        setIsCacheLoading(true);
+        try {
+            const response = await apiRequest<DeviceCacheStatus>(
+                `/api/client-data/devices/${deviceId}/cache/refresh-status`,
+                { method: "POST", headers: orgHeaders },
+            );
+            setDeviceCache(response);
+        } catch (error) {
+            setDeviceCache(null);
+            toast.error(describeError(error, "Failed to load device cache"));
+        } finally {
+            setIsCacheLoading(false);
+        }
+    }, [activeOrganizationId, orgHeaders]);
+
+    useEffect(() => {
+        if (!selectedDevice?.id) {
+            setDeviceCache(null);
+            return;
+        }
+        void loadDeviceCache(selectedDevice.id);
+    }, [selectedDevice?.id, loadDeviceCache]);
+
+    const formatBytes = (bytes: number) => {
+        if (bytes <= 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB"];
+        const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+        const value = bytes / 1024 ** index;
+        return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+    };
+
+    const formatDateTime = (value: string | null) => {
+        if (!value) return "—";
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return value;
+        return date.toLocaleString();
+    };
+
+    const runCacheAction = async (device: Device, action: "force-sync" | "clear" | "redownload") => {
+        if (!canEdit || !activeOrganizationId) return;
+        const path =
+            action === "force-sync"
+                ? "force-sync"
+                : action === "clear"
+                    ? "clear"
+                    : "redownload";
+        setPendingAction(`cache-${action}`);
+        setPendingDeviceId(device.id);
+        try {
+            const response = await apiRequest<{ message: string }>(
+                `/api/client-data/devices/${device.id}/cache/${path}`,
+                { method: "POST", headers: orgHeaders },
+            );
+            toast.success(response.message);
+            await loadDeviceCache(device.id);
+        } catch (error) {
+            toast.error(describeError(error, "Cache action failed"));
+        } finally {
+            setPendingAction(null);
+            setPendingDeviceId(null);
+        }
+    };
 
     const filtered = useMemo(() => {
         const s = search.trim().toLowerCase();
@@ -681,7 +802,12 @@ export default function DevicesPage() {
                                         color: "hsl(var(--text-muted))",
                                     }}
                                 >
-                                    <span>Synced: {d.lastSync}</span>
+                                    <span>
+                                        Synced: {d.lastSync}
+                                        {d.cache && d.cache.cachedAssetCount > 0
+                                            ? ` · Cache: ${d.cache.cachedAssetCount} assets (${d.cache.storageUsedLabel})`
+                                            : ""}
+                                    </span>
                                     <span>{d.resolution}</span>
                                 </div>
                             </motion.div>
@@ -719,7 +845,7 @@ export default function DevicesPage() {
                             animate={{ scale: 1, y: 0 }}
                             exit={{ scale: 0.9, y: 20 }}
                             className="glass-panel"
-                            style={{ width: "100%", maxWidth: 720, overflow: "hidden" }}
+                            style={{ width: "100%", maxWidth: 960, maxHeight: "90vh", overflow: "auto" }}
                             onClick={(e) => e.stopPropagation()}
                         >
                             <div
@@ -825,6 +951,115 @@ export default function DevicesPage() {
                                                 ))}
                                             </div>
                                         )}
+
+                                        <div style={{ marginBottom: 32 }}>
+                                            <div className="flex-between" style={{ marginBottom: 16 }}>
+                                                <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "hsl(var(--text-muted))", display: "flex", alignItems: "center", gap: 8 }}>
+                                                    <Database size={16} /> OFFLINE CACHE
+                                                </h3>
+                                                <button
+                                                    className="btn-outline"
+                                                    disabled={!canEdit || isCacheLoading || isBusy(selectedDevice.id)}
+                                                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", padding: "6px 12px" }}
+                                                    onClick={() => void loadDeviceCache(selectedDevice.id)}
+                                                >
+                                                    <RefreshCw size={14} className={isCacheLoading ? "spin" : ""} />
+                                                    Refresh Cache Status
+                                                </button>
+                                            </div>
+
+                                            {isCacheLoading && !deviceCache ? (
+                                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>Loading cache report...</p>
+                                            ) : deviceCache ? (
+                                                <>
+                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
+                                                        {[
+                                                            { label: "Current Playlist", value: deviceCache.offlineCache.currentPlaylist },
+                                                            { label: "Playlist Version", value: deviceCache.offlineCache.playlistVersion ?? "—" },
+                                                            { label: "Last Sync Time", value: formatDateTime(deviceCache.offlineCache.lastSyncTime) },
+                                                            { label: "Total Cache Size", value: formatBytes(deviceCache.offlineCache.totalCacheBytes) },
+                                                            { label: "Cached Assets", value: `${deviceCache.offlineCache.cachedAssetCount} / ${deviceCache.offlineCache.expectedAssetCount}` },
+                                                            { label: "Storage Used", value: `${formatBytes(deviceCache.offlineCache.storageUsedBytes)}${deviceCache.offlineCache.storageTotalBytes ? ` / ${formatBytes(deviceCache.offlineCache.storageTotalBytes)}` : ""}` },
+                                                        ].map((item) => (
+                                                            <div key={item.label} style={{ padding: 12, borderRadius: 12, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
+                                                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
+                                                                <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{item.value}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+                                                        {[
+                                                            { label: "Online", value: deviceCache.syncStatus.online ? "Yes" : "No", color: deviceCache.syncStatus.online ? "#4ade80" : "#f87171" },
+                                                            { label: "Last Successful Sync", value: formatDateTime(deviceCache.syncStatus.lastSuccessfulSync) },
+                                                            { label: "Last Failed Sync", value: formatDateTime(deviceCache.syncStatus.lastFailedSync) },
+                                                            { label: "Pending Downloads", value: deviceCache.syncStatus.pendingDownloads },
+                                                        ].map((item) => (
+                                                            <div key={item.label}>
+                                                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
+                                                                <p style={{ fontSize: "0.85rem", fontWeight: 600, color: item.color ?? "inherit" }}>{item.value}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    {deviceCache.syncStatus.lastSyncError && (
+                                                        <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, background: "hsla(var(--status-danger), 0.08)", border: "1px solid hsla(var(--status-danger), 0.25)", color: "hsl(var(--status-danger))", fontSize: "0.85rem" }}>
+                                                            Last sync error: {deviceCache.syncStatus.lastSyncError}
+                                                        </div>
+                                                    )}
+
+                                                    <div style={{ marginBottom: 16 }}>
+                                                        <h4 style={{ fontSize: "0.8rem", fontWeight: 700, color: "hsl(var(--text-muted))", marginBottom: 10 }}>DOWNLOADED ASSETS</h4>
+                                                        {(deviceCache.assets ?? []).length === 0 ? (
+                                                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
+                                                                No cache report from this device yet. The player should POST to <code>/api/player/cache-report</code> periodically.
+                                                            </p>
+                                                        ) : (
+                                                            <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
+                                                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
+                                                                    <thead>
+                                                                        <tr style={{ background: "hsla(var(--bg-base), 0.45)", textAlign: "left" }}>
+                                                                            {["Asset", "Type", "Playlist", "Size", "Download", "Local", "Downloaded"].map((head) => (
+                                                                                <th key={head} style={{ padding: "10px 12px", color: "hsl(var(--text-muted))", fontWeight: 700 }}>{head}</th>
+                                                                            ))}
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {(deviceCache.assets ?? []).map((asset) => (
+                                                                            <tr key={asset.id} style={{ borderTop: "1px solid hsla(var(--border-subtle), 0.25)" }}>
+                                                                                <td style={{ padding: "10px 12px", fontWeight: 600 }}>{asset.assetName}</td>
+                                                                                <td style={{ padding: "10px 12px" }}>{asset.assetType}</td>
+                                                                                <td style={{ padding: "10px 12px" }}>{asset.playlist}</td>
+                                                                                <td style={{ padding: "10px 12px" }}>{asset.fileSizeLabel}</td>
+                                                                                <td style={{ padding: "10px 12px", textTransform: "capitalize" }}>{asset.downloadStatus}</td>
+                                                                                <td style={{ padding: "10px 12px", textTransform: "capitalize", color: asset.localCacheStatus === "present" ? "#4ade80" : asset.localCacheStatus === "corrupt" ? "#f87171" : "#fbbf24" }}>{asset.localCacheStatus}</td>
+                                                                                <td style={{ padding: "10px 12px" }}>{formatDateTime(asset.downloadedAt)}</td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                                                        <button className="btn-outline" disabled={!canEdit || isBusy(selectedDevice.id)} style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => void runCacheAction(selectedDevice, "force-sync")}>
+                                                            <RefreshCw size={14} /> Force Device Sync
+                                                        </button>
+                                                        <button className="btn-outline" disabled={!canEdit || isBusy(selectedDevice.id)} style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => void runCacheAction(selectedDevice, "redownload")}>
+                                                            <Download size={14} /> Redownload Playlist
+                                                        </button>
+                                                        <button className="btn-outline" disabled={!canEdit || isBusy(selectedDevice.id)} style={{ display: "flex", alignItems: "center", gap: 6, borderColor: "#f87171", color: "#f87171" }} onClick={() => void runCacheAction(selectedDevice, "clear")}>
+                                                            <Trash2 size={14} /> Clear Cache
+                                                        </button>
+                                                    </div>
+                                                </>
+                                            ) : (
+                                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
+                                                    <CloudOff size={16} /> Cache data unavailable for this device.
+                                                </p>
+                                            )}
+                                        </div>
 
                                         <div style={{ display: "flex", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
                                             <div style={{ display: "flex", gap: 10 }}>

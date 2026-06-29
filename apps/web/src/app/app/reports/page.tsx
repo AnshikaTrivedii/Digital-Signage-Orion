@@ -1,10 +1,10 @@
 "use client";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
     Activity, Eye, Download, Search, ArrowUpRight, Monitor, FileText,
     RefreshCw, AlertTriangle, CheckCircle, XCircle, TrendingUp, Clock,
-    ChevronLeft, ChevronRight, ChevronDown, ChevronRight as ChevronRightIcon,
+    ChevronLeft, ChevronRight,
     Folder,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -109,60 +109,6 @@ const formatDuration = (seconds: number | null) => {
     return `${minutes}m ${remainder}s`;
 };
 
-type DeviceLogGroup = {
-    key: string;
-    deviceName: string;
-    deviceIsActive?: boolean;
-    logs: PopLog[];
-};
-
-const deviceGroupKey = (log: PopLog) => log.deviceId ?? `name:${log.device}`;
-
-const groupLogsByDevice = (logs: PopLog[]): DeviceLogGroup[] => {
-    const groups = new Map<string, DeviceLogGroup>();
-    for (const log of logs) {
-        const key = deviceGroupKey(log);
-        const existing = groups.get(key);
-        if (existing) {
-            existing.logs.push(log);
-        } else {
-            groups.set(key, {
-                key,
-                deviceName: log.device,
-                deviceIsActive: log.deviceIsActive,
-                logs: [log],
-            });
-        }
-    }
-    return Array.from(groups.values());
-};
-
-type CampaignLogGroup = {
-    key: string;
-    campaignName: string;
-    logs: PopLog[];
-};
-
-const campaignGroupKey = (log: PopLog) => log.campaignId ?? `name:${log.campaignName ?? "__uncategorized__"}`;
-
-const groupLogsByCampaign = (logs: PopLog[]): CampaignLogGroup[] => {
-    const groups = new Map<string, CampaignLogGroup>();
-    for (const log of logs) {
-        const key = campaignGroupKey(log);
-        const existing = groups.get(key);
-        if (existing) {
-            existing.logs.push(log);
-        } else {
-            groups.set(key, {
-                key,
-                campaignName: log.campaignName ?? "Uncategorized",
-                logs: [log],
-            });
-        }
-    }
-    return Array.from(groups.values());
-};
-
 const thStyle = {
     textAlign: "left" as const,
     padding: "12px 16px",
@@ -191,8 +137,8 @@ const renderLogStatus = (log: PopLog) => {
 
 const renderLogRowCells = (log: PopLog) => (
     <>
+        <td style={{ ...tdStyle, fontWeight: 600 }}>{log.device}</td>
         <td style={tdStyle}>{log.playlistName ?? "—"}</td>
-        <td style={tdStyle}>{log.campaignName ?? "—"}</td>
         <td style={tdStyle}>{log.assetName}</td>
         <td style={{ ...tdStyle, fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.startTime)}</td>
         <td style={{ ...tdStyle, fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.endTime)}</td>
@@ -217,7 +163,6 @@ export default function ReportsPage() {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [isExporting, setIsExporting] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
     const filterKey = useMemo(
         () => JSON.stringify({ dateRange, customStart, customEnd, logSearch, statusFilter, groupBy, deviceFilter, campaignFilter }),
@@ -243,7 +188,6 @@ export default function ReportsPage() {
 
     const handleGroupByChange = (mode: GroupBy) => {
         setGroupBy(mode);
-        setCollapsedGroups(new Set());
         if (mode === "device") setCampaignFilter("");
         else setDeviceFilter("");
     };
@@ -337,9 +281,8 @@ export default function ReportsPage() {
     const maxImpressions = Math.max(...chartData.map((d) => d.impressions), 1);
     const filteredLogs = reportData?.proofOfPlay ?? [];
     const meta = reportData?.proofOfPlayMeta;
-    const isGroupedView = groupBy === "device" ? !deviceFilter : !campaignFilter;
     const tableColumnCount = 7;
-    const tableHeaders = ["Playlist Name", "Campaign Name", "Asset Name", "Start Time", "End Time", "Duration", "Status"];
+    const tableHeaders = ["Device", "Playlist", "Asset", "Start Time", "End Time", "Duration", "Status"];
     const selectedDeviceName = deviceFilter
         ? (reportData?.devices ?? []).find((device) => device.id === deviceFilter)?.name
         : null;
@@ -348,17 +291,6 @@ export default function ReportsPage() {
             ? "Uncategorized"
             : (reportData?.campaigns ?? []).find((campaign) => campaign.id === campaignFilter)?.name
         : null;
-    const deviceGroups = useMemo(() => groupLogsByDevice(filteredLogs), [filteredLogs]);
-    const campaignGroups = useMemo(() => groupLogsByCampaign(filteredLogs), [filteredLogs]);
-
-    const toggleGroup = (key: string) => {
-        setCollapsedGroups((prev) => {
-            const next = new Set(prev);
-            if (next.has(key)) next.delete(key);
-            else next.add(key);
-            return next;
-        });
-    };
 
     const kpiCards = useMemo(() => [
         {
@@ -464,7 +396,7 @@ export default function ReportsPage() {
                 <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-warning), 0.35)" }}>
                     <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Active devices with no proof-of-play in this date range</p>
                     <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
-                        These paired devices are online but have not submitted playback logs. Ensure the Android player calls POST /api/player/pop-logs or sends currentContent in heartbeats.
+                        These paired devices are online but have not submitted playback logs. Ensure the Android player calls POST /api/player/pop-logs.
                     </p>
                     <p style={{ fontSize: "0.8rem" }}>
                         {(meta?.activeDevicesWithoutPop ?? []).map((device) => device.name).join(" • ")}
@@ -570,14 +502,12 @@ export default function ReportsPage() {
                             <FileText size={18} /> Proof-of-Play Logs
                         </h2>
                         <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
-                            Showing page {meta?.page ?? 1} of {meta?.totalPages ?? 1} • {meta?.total ?? 0} total records
+                            Showing page {meta?.page ?? 1} of {meta?.totalPages ?? 1} • {meta?.total ?? 0} playback events
                             {selectedDeviceName
                                 ? ` • Filtered to ${selectedDeviceName}`
                                 : selectedCampaignName
                                     ? ` • Filtered to ${selectedCampaignName}`
-                                    : groupBy === "device"
-                                        ? " • Grouped by device"
-                                        : " • Grouped by campaign"}
+                                    : ""}
                         </p>
                     </div>
                     <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -650,86 +580,11 @@ export default function ReportsPage() {
                                     </td>
                                 </tr>
                             )}
-                            {isGroupedView && groupBy === "device" ? deviceGroups.map((group) => {
-                                const expanded = !collapsedGroups.has(group.key);
-                                const recordLabel = group.logs.length === 1 ? "Record" : "Records";
-                                return (
-                                    <Fragment key={group.key}>
-                                        <tr
-                                            onClick={() => toggleGroup(group.key)}
-                                            style={{
-                                                borderBottom: "1px solid hsla(var(--border-subtle), 0.15)",
-                                                background: "hsla(var(--bg-base), 0.45)",
-                                                cursor: "pointer",
-                                            }}
-                                        >
-                                            <td colSpan={tableColumnCount} style={{ padding: "14px 16px" }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                                                    {expanded ? (
-                                                        <ChevronDown size={16} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
-                                                    ) : (
-                                                        <ChevronRightIcon size={16} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
-                                                    )}
-                                                    <Monitor size={14} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
-                                                    <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{group.deviceName}</span>
-                                                    {group.deviceIsActive === false ? (
-                                                        <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>(removed)</span>
-                                                    ) : null}
-                                                    <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 600 }}>
-                                                        ({group.logs.length} {recordLabel})
-                                                    </span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                        {expanded ? group.logs.map((log) => (
-                                            <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                                {renderLogRowCells(log)}
-                                            </tr>
-                                        )) : null}
-                                    </Fragment>
-                                );
-                            }) : null}
-                            {isGroupedView && groupBy === "campaign" ? campaignGroups.map((group) => {
-                                const expanded = !collapsedGroups.has(group.key);
-                                const recordLabel = group.logs.length === 1 ? "Record" : "Records";
-                                return (
-                                    <Fragment key={group.key}>
-                                        <tr
-                                            onClick={() => toggleGroup(group.key)}
-                                            style={{
-                                                borderBottom: "1px solid hsla(var(--border-subtle), 0.15)",
-                                                background: "hsla(var(--bg-base), 0.45)",
-                                                cursor: "pointer",
-                                            }}
-                                        >
-                                            <td colSpan={tableColumnCount} style={{ padding: "14px 16px" }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                                                    {expanded ? (
-                                                        <ChevronDown size={16} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
-                                                    ) : (
-                                                        <ChevronRightIcon size={16} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
-                                                    )}
-                                                    <Folder size={14} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
-                                                    <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{group.campaignName}</span>
-                                                    <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", fontWeight: 600 }}>
-                                                        ({group.logs.length} {recordLabel})
-                                                    </span>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                        {expanded ? group.logs.map((log) => (
-                                            <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
-                                                {renderLogRowCells(log)}
-                                            </tr>
-                                        )) : null}
-                                    </Fragment>
-                                );
-                            }) : null}
-                            {!isGroupedView ? filteredLogs.map((log) => (
+                            {filteredLogs.map((log) => (
                                 <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
                                     {renderLogRowCells(log)}
                                 </tr>
-                            )) : null}
+                            ))}
                         </tbody>
                     </table>
                 </div>

@@ -20,6 +20,77 @@ export function normalizeAssetName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+const MULTIPLE_TOLERANCE = 0.15;
+
+function resolveSinglePlaybackDuration(
+  log: {
+    startTime: Date;
+    endTime?: Date | null;
+    durationSeconds?: number | null;
+  },
+  slotDurationSeconds: number | null,
+): { durationSeconds: number | null; endTime: Date | null } {
+  let durationSeconds =
+    typeof log.durationSeconds === 'number' && log.durationSeconds > 0
+      ? Math.floor(log.durationSeconds)
+      : null;
+  let endTime = log.endTime ?? null;
+
+  if (!durationSeconds && slotDurationSeconds) {
+    durationSeconds = slotDurationSeconds;
+  }
+  if (!endTime && durationSeconds) {
+    endTime = new Date(log.startTime.getTime() + durationSeconds * 1000);
+  }
+  if (!durationSeconds && endTime) {
+    durationSeconds = Math.max(
+      1,
+      Math.round((endTime.getTime() - log.startTime.getTime()) / 1000),
+    );
+  }
+
+  return { durationSeconds, endTime };
+}
+
+/**
+ * When a single stored log covers multiple loop iterations (e.g. 60s for six
+ * 10s slots), expand it into one event per configured slot duration.
+ */
+export function expandPopLogPlaybackEvents<
+  T extends {
+    startTime: Date;
+    endTime?: Date | null;
+    durationSeconds?: number | null;
+  },
+>(log: T, slotDurationSeconds: number | null): T[] {
+  const { durationSeconds, endTime } = resolveSinglePlaybackDuration(log, slotDurationSeconds);
+  const normalized = { ...log, durationSeconds, endTime };
+
+  if (!durationSeconds || !slotDurationSeconds || slotDurationSeconds < 1) {
+    return [normalized];
+  }
+
+  const ratio = durationSeconds / slotDurationSeconds;
+  const estimatedPlays = Math.round(ratio);
+  const isCleanMultiple =
+    estimatedPlays > 1 && Math.abs(ratio - estimatedPlays) <= MULTIPLE_TOLERANCE;
+
+  if (!isCleanMultiple) {
+    return [normalized];
+  }
+
+  return Array.from({ length: estimatedPlays }, (_, index) => {
+    const startTime = new Date(log.startTime.getTime() + index * slotDurationSeconds * 1000);
+    const eventEndTime = new Date(startTime.getTime() + slotDurationSeconds * 1000);
+    return {
+      ...log,
+      startTime,
+      endTime: eventEndTime,
+      durationSeconds: slotDurationSeconds,
+    };
+  });
+}
+
 export function enrichPopLogFields(
   log: {
     assetName: string;
@@ -34,25 +105,8 @@ export function enrichPopLogFields(
   const playlistName = log.playlistName?.trim() || context?.playlistName || null;
   const campaignName = log.campaignName?.trim() || context?.campaignName || null;
   const campaignId = context?.campaignId ?? null;
-
-  let durationSeconds =
-    typeof log.durationSeconds === 'number' && log.durationSeconds > 0
-      ? Math.floor(log.durationSeconds)
-      : null;
-  let endTime = log.endTime ?? null;
-
-  if (!durationSeconds && context?.durationSeconds) {
-    durationSeconds = context.durationSeconds;
-  }
-  if (!endTime && durationSeconds) {
-    endTime = new Date(log.startTime.getTime() + durationSeconds * 1000);
-  }
-  if (!durationSeconds && endTime) {
-    durationSeconds = Math.max(
-      1,
-      Math.round((endTime.getTime() - log.startTime.getTime()) / 1000),
-    );
-  }
+  const slotDurationSeconds = context?.durationSeconds ?? null;
+  const { durationSeconds, endTime } = resolveSinglePlaybackDuration(log, slotDurationSeconds);
 
   return { playlistName, campaignName, campaignId, endTime, durationSeconds };
 }

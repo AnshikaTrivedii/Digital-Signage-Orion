@@ -5,6 +5,7 @@ import type { Prisma } from '@prisma/client';
 import {
   AssetStatus,
   AssetType,
+  DeviceCacheCommandType,
   DeviceStatus,
   LayoutResolution,
   LayoutStatus,
@@ -21,7 +22,8 @@ import {
   ZoneType,
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
-import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
@@ -48,6 +50,7 @@ export class ClientDataService {
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
     private readonly playlistSync: PlaylistSyncService,
+    private readonly deviceCache: DeviceCacheService,
   ) {}
 
   async dashboard(actor: RequestActor) {
@@ -843,6 +846,57 @@ export class ClientDataService {
     return this.serializeDevice(updated);
   }
 
+  async getDeviceCacheStatus(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    return this.deviceCache.getCacheStatus(deviceId, organizationId);
+  }
+
+  async getDeviceCachedAssets(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    return this.deviceCache.getCachedAssets(deviceId, organizationId);
+  }
+
+  async refreshDeviceCacheStatus(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const status = await this.deviceCache.getCacheStatus(deviceId, organizationId);
+    const assets = await this.deviceCache.getCachedAssets(deviceId, organizationId);
+    return { ...status, assets };
+  }
+
+  async forceDeviceSync(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    return this.deviceCache.queueCommand(
+      deviceId,
+      organizationId,
+      DeviceCacheCommandType.FORCE_SYNC,
+      actor.userId,
+    );
+  }
+
+  async clearDeviceCache(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    return this.deviceCache.queueCommand(
+      deviceId,
+      organizationId,
+      DeviceCacheCommandType.CLEAR_CACHE,
+      actor.userId,
+    );
+  }
+
+  async redownloadDevicePlaylist(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    return this.deviceCache.queueCommand(
+      deviceId,
+      organizationId,
+      DeviceCacheCommandType.REDOWNLOAD_PLAYLIST,
+      actor.userId,
+    );
+  }
+
   /**
    * Pair a draft device using a 6-digit pairing code.
    * Called from the CMS dashboard by an authenticated user.
@@ -925,6 +979,12 @@ export class ClientDataService {
     lastSync: string;
     os: string;
     currentContent: string | null;
+    cachedAssetCount?: number;
+    expectedAssetCount?: number;
+    cacheUsedBytes?: number;
+    pendingDownloadCount?: number;
+    cacheLastReportedAt?: Date | null;
+    syncReportStatus?: string | null;
     currentPlaylist?: { name: string } | null;
   }) {
     return {
@@ -941,6 +1001,18 @@ export class ClientDataService {
       lastSync: device.lastSync,
       os: device.os,
       currentContent: device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',
+      cache: {
+        cachedAssetCount: device.cachedAssetCount ?? 0,
+        expectedAssetCount: device.expectedAssetCount ?? 0,
+        storageUsedBytes: device.cacheUsedBytes ?? 0,
+        storageUsedLabel: this.deviceCache.formatBytes(device.cacheUsedBytes ?? 0),
+        pendingDownloads: device.pendingDownloadCount ?? 0,
+        lastReportedAt: device.cacheLastReportedAt?.toISOString() ?? null,
+        reportStatus: device.syncReportStatus?.toLowerCase() ?? 'unknown',
+        isStale: device.cacheLastReportedAt
+          ? Date.now() - device.cacheLastReportedAt.getTime() > 15 * 60 * 1000
+          : true,
+      },
     };
   }
 
@@ -1255,8 +1327,9 @@ export class ClientDataService {
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(organizationId);
     const devicePlaylistById = new Map(devices.map((device) => [device.id, device.currentPlaylistId]));
-    const enrichLog = <
+    const expandPopLogs = <
       T extends {
+        id: string;
         assetName: string;
         content: string;
         deviceId?: string | null;
@@ -1268,29 +1341,40 @@ export class ClientDataService {
         status: ProofOfPlayStatus;
       },
     >(
-      log: T,
-    ) => {
-      const assetName = log.assetName || log.content;
-      const playbackContext = contextIndex.resolve(
-        assetName,
-        log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
-      );
-      const enriched = enrichPopLogFields(
-        {
+      sourceLogs: T[],
+    ) =>
+      sourceLogs.flatMap((log) => {
+        const assetName = log.assetName || log.content;
+        const playbackContext = contextIndex.resolve(
           assetName,
-          playlistName: log.playlistName,
-          campaignName: log.campaignName,
-          startTime: log.startTime,
-          endTime: log.endTime,
-          durationSeconds: log.durationSeconds,
-        },
-        playbackContext,
-      );
-      return { ...log, ...enriched };
-    };
+          log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
+        );
+        const enriched = enrichPopLogFields(
+          {
+            assetName,
+            playlistName: log.playlistName,
+            campaignName: log.campaignName,
+            startTime: log.startTime,
+            endTime: log.endTime,
+            durationSeconds: log.durationSeconds,
+          },
+          playbackContext,
+        );
+        return expandPopLogPlaybackEvents(
+          { ...log, ...enriched },
+          playbackContext?.durationSeconds ?? null,
+        ).map((entry, index, events) => ({
+          ...entry,
+          id: events.length > 1 ? `${log.id}#${index + 1}` : log.id,
+        }));
+      });
 
-    const enrichedAggregateLogs = aggregateLogs.map(enrichLog);
-    const enrichedLogs = logs.map(enrichLog);
+    const enrichedAggregateLogs = expandPopLogs(aggregateLogs);
+    const enrichedLogs = expandPopLogs(logs);
+    const playbackEventCount =
+      totalLogs > 0 && totalLogs <= AGGREGATE_CAP
+        ? enrichedAggregateLogs.length
+        : totalLogs;
     const chartData =
       totalLogs <= AGGREGATE_CAP
         ? this.buildReportChartData(enrichedAggregateLogs, range, rangeStart, rangeEnd)
@@ -1450,7 +1534,7 @@ export class ClientDataService {
       devices: reportDeviceOptions,
       campaigns,
       kpis: {
-        billedImpressions: totalLogs,
+        billedImpressions: playbackEventCount,
         avgEngagement,
         playbackFidelity:
           Math.round((verifiedCount / Math.max(totalLogs, 1)) * 10000) / 100,
@@ -1465,10 +1549,10 @@ export class ClientDataService {
       topContent,
       proofOfPlay: enrichedLogs.map((log) => this.serializePopLog(log, deviceNameSet, deviceIdSet)),
       proofOfPlayMeta: {
-        total: totalLogs,
+        total: playbackEventCount,
         page,
         limit,
-        totalPages: Math.max(1, Math.ceil(totalLogs / limit)),
+        totalPages: Math.max(1, Math.ceil(playbackEventCount / limit)),
         aggregatesTruncated: totalLogs > AGGREGATE_CAP,
         distinctDevicesInRange: reportingDevices.length,
         activeDevicesWithoutPop,
@@ -1492,8 +1576,7 @@ export class ClientDataService {
   ) {
     const organizationId = this.getOrgId(actor);
     const { where } = await this.buildPopLogWhere(organizationId, query);
-    const [organization, logs, devices] = await Promise.all([
-      this.prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
+    const [logs, devices] = await Promise.all([
       this.prisma.proofOfPlayLog.findMany({
         where,
         orderBy: { startTime: 'desc' },
@@ -1507,11 +1590,9 @@ export class ClientDataService {
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Proof of Play');
     sheet.columns = [
-      { header: 'Organization', key: 'organization', width: 28 },
-      { header: 'Device Name', key: 'device', width: 24 },
-      { header: 'Playlist Name', key: 'playlistName', width: 24 },
-      { header: 'Campaign Name', key: 'campaignName', width: 24 },
-      { header: 'Asset Name', key: 'assetName', width: 28 },
+      { header: 'Device', key: 'device', width: 24 },
+      { header: 'Playlist', key: 'playlistName', width: 24 },
+      { header: 'Asset', key: 'assetName', width: 28 },
       { header: 'Start Time', key: 'startTime', width: 24 },
       { header: 'End Time', key: 'endTime', width: 24 },
       { header: 'Duration', key: 'duration', width: 14 },
@@ -1519,7 +1600,7 @@ export class ClientDataService {
     ];
     sheet.getRow(1).font = { bold: true };
 
-    for (const log of logs) {
+    const expandedLogs = logs.flatMap((log) => {
       const assetName = log.assetName || log.content;
       const playbackContext = contextIndex.resolve(
         assetName,
@@ -1536,15 +1617,21 @@ export class ClientDataService {
         },
         playbackContext,
       );
+      return expandPopLogPlaybackEvents(
+        { ...log, ...enriched },
+        playbackContext?.durationSeconds ?? null,
+      );
+    });
+
+    for (const log of expandedLogs) {
+      const assetName = log.assetName || log.content;
       sheet.addRow({
-        organization: organization?.name ?? 'Organization',
         device: log.device,
-        playlistName: enriched.playlistName ?? '',
-        campaignName: enriched.campaignName ?? '',
+        playlistName: log.playlistName ?? '',
         assetName,
         startTime: log.startTime.toISOString(),
-        endTime: enriched.endTime ? enriched.endTime.toISOString() : '',
-        duration: enriched.durationSeconds ?? '',
+        endTime: log.endTime ? log.endTime.toISOString() : '',
+        duration: log.durationSeconds ?? '',
         status: this.toTitleStatus(log.status),
       });
     }

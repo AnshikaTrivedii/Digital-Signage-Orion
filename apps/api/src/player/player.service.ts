@@ -1,9 +1,15 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { Device, DeviceStatus, ProofOfPlayStatus, TickerBroadcastScope, TickerStatus, ZoneType } from '@prisma/client';
 import { randomBytes } from 'crypto';
-import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
+import {
+  enrichPopLogFields,
+  expandPopLogPlaybackEvents,
+  PopLogContextIndex,
+} from '../common/pop-log-enrichment';
+import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import type { CacheReportDto } from './dto/cache-report.dto';
 import type { SyncQueryDto } from './dto/sync-query.dto';
 
 /** Device resolved from a valid paired token — organizationId is guaranteed. */
@@ -60,6 +66,7 @@ export class PlayerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly deviceCache: DeviceCacheService,
   ) {}
 
   /**
@@ -284,49 +291,7 @@ export class PlayerService {
       },
     });
 
-    if (data.currentContent?.trim()) {
-      await this.recordHeartbeatPopSample(device.id, device.organizationId, device.name, data.currentContent.trim());
-    }
-
     return { status: 'ok' };
-  }
-
-  /**
-   * Fallback PoP when the player has not flushed pop-logs yet.
-   * Creates at most one sample per asset every 5 minutes per device.
-   */
-  private async recordHeartbeatPopSample(
-    deviceId: string,
-    organizationId: string,
-    deviceName: string,
-    assetName: string,
-  ) {
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const recent = await this.prisma.proofOfPlayLog.findFirst({
-      where: {
-        deviceId,
-        assetName,
-        startTime: { gte: fiveMinutesAgo },
-      },
-      select: { id: true },
-    });
-    if (recent) return;
-
-    const now = new Date();
-    await this.prisma.proofOfPlayLog.create({
-      data: {
-        organizationId,
-        deviceId,
-        device: deviceName,
-        content: assetName,
-        assetName,
-        status: ProofOfPlayStatus.VERIFIED,
-        timestamp: now,
-        startTime: now,
-        durationSeconds: 60,
-        endTime: new Date(now.getTime() + 60_000),
-      },
-    });
   }
 
   /**
@@ -338,10 +303,26 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     const syncContext = this.buildSyncAssetContext(query);
 
-    if (device.currentLayoutId) {
-      return this.syncLayout(device, query, syncContext);
-    }
+    const payload = device.currentLayoutId
+      ? await this.syncLayout(device, query, syncContext)
+      : await this.buildPlaylistSyncResponse(device, query, syncContext);
 
+    return {
+      ...payload,
+      cacheCommand: (await this.deviceCache.deliverPendingCommand(device.id)) ?? null,
+    };
+  }
+
+  async reportCache(authHeader: string | undefined, report: CacheReportDto) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    return this.deviceCache.ingestCacheReport(device.id, device.organizationId, report);
+  }
+
+  private async buildPlaylistSyncResponse(
+    device: PairedDevice,
+    query: SyncQueryDto,
+    syncContext: SyncAssetContext,
+  ) {
     const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
 
     if (!device.currentPlaylistId) {
@@ -848,22 +829,27 @@ export class PlayerService {
           ? ProofOfPlayStatus.VERIFIED
           : ProofOfPlayStatus.FAILED;
 
-      return [
-        {
-          organizationId: device.organizationId,
-          deviceId: device.id,
-          device: device.name,
-          content: assetName,
-          assetName,
-          playlistName: enriched.playlistName,
-          campaignName: enriched.campaignName,
-          status: normalizedStatus,
-          timestamp: startTime,
-          startTime,
-          endTime: enriched.endTime,
-          durationSeconds: enriched.durationSeconds,
-        },
-      ];
+      const baseRow = {
+        organizationId: device.organizationId,
+        deviceId: device.id,
+        device: device.name,
+        content: assetName,
+        assetName,
+        playlistName: enriched.playlistName,
+        campaignName: enriched.campaignName,
+        status: normalizedStatus,
+        timestamp: startTime,
+        startTime,
+        endTime: enriched.endTime,
+        durationSeconds: enriched.durationSeconds,
+      };
+
+      return expandPopLogPlaybackEvents(baseRow, playbackContext?.durationSeconds ?? null).map(
+        (entry) => ({
+          ...entry,
+          timestamp: entry.startTime,
+        }),
+      );
     });
 
     if (!rows.length) {

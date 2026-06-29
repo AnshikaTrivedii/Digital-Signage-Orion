@@ -82,6 +82,37 @@ enum DeviceStatus {
   WARNING
 }
 
+enum DeviceCacheDownloadStatus {
+  DOWNLOADED
+  PENDING
+  FAILED
+}
+
+enum DeviceCacheLocalStatus {
+  PRESENT
+  MISSING
+  CORRUPT
+}
+
+enum DeviceSyncReportStatus {
+  OK
+  PARTIAL
+  FAILED
+}
+
+enum DeviceCacheCommandType {
+  FORCE_SYNC
+  CLEAR_CACHE
+  REDOWNLOAD_PLAYLIST
+}
+
+enum DeviceCacheCommandStatus {
+  PENDING
+  ACKNOWLEDGED
+  COMPLETED
+  FAILED
+}
+
 enum TickerSpeed {
   SLOW
   NORMAL
@@ -179,6 +210,7 @@ model User {
   sentInvitations  Invitation[]             @relation("InvitationSender")
   uploadedAssets   Asset[]                  @relation("AssetUploader")
   auditLogs        AuditLog[]               @relation("AuditActor")
+  deviceCacheCommands DeviceCacheCommand[]  @relation("DeviceCacheCommandRequester")
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
 }
@@ -342,6 +374,22 @@ model Device {
   lastAckedPlaylistVersion Int?
   lastAckedLayoutVersion   Int?
 
+  cachePlaylistName        String?
+  cachePlaylistVersion     Int?
+  cacheLayoutName          String?
+  cacheLayoutVersion       Int?
+  cacheTotalBytes          Int          @default(0)
+  cacheUsedBytes           Int          @default(0)
+  cacheStorageTotalBytes   Int          @default(0)
+  cachedAssetCount         Int          @default(0)
+  expectedAssetCount       Int          @default(0)
+  pendingDownloadCount     Int          @default(0)
+  cacheLastReportedAt      DateTime?
+  lastSuccessfulSyncAt     DateTime?
+  lastFailedSyncAt         DateTime?
+  lastSyncError            String?
+  syncReportStatus         DeviceSyncReportStatus?
+
   // Pairing fields
   pairingCode    String?      @unique
   pairingSecret  String?
@@ -357,6 +405,8 @@ model Device {
   currentLayout   Layout?          @relation(fields: [currentLayoutId], references: [id], onDelete: SetNull)
   proofOfPlayLogs ProofOfPlayLog[]
   tickerTargets   TickerDevice[]
+  cachedAssets    DeviceCachedAsset[]
+  cacheCommands   DeviceCacheCommand[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, currentPlaylistId])
@@ -540,8 +590,51 @@ model Asset {
   uploadedBy       User          @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   playlistAssets   PlaylistAsset[]
   layoutZones      LayoutZone[]
+  deviceCacheEntries DeviceCachedAsset[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, type])
   @@index([organizationId, folderId])
+}
+
+model DeviceCachedAsset {
+  id               String                    @id @default(cuid())
+  deviceId         String
+  assetId          String
+  assetName        String
+  assetType        String
+  mimeType         String                    @default("")
+  playlistId       String?
+  playlistName     String?
+  fileSize         Int                       @default(0)
+  assetVersion     Int                       @default(1)
+  contentHash      String?
+  downloadStatus   DeviceCacheDownloadStatus @default(PENDING)
+  localCacheStatus DeviceCacheLocalStatus    @default(MISSING)
+  downloadedAt     DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  asset  Asset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@unique([deviceId, assetId])
+  @@index([deviceId])
+}
+
+model DeviceCacheCommand {
+  id             String                   @id @default(cuid())
+  deviceId       String
+  command        DeviceCacheCommandType
+  status         DeviceCacheCommandStatus @default(PENDING)
+  requestedById  String?
+  errorMessage   String?
+  createdAt      DateTime                 @default(now())
+  acknowledgedAt DateTime?
+  completedAt    DateTime?
+
+  device      Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  requestedBy User?  @relation("DeviceCacheCommandRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([deviceId, status])
 }
