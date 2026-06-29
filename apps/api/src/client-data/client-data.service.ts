@@ -2118,10 +2118,7 @@ export class ClientDataService {
           ],
         },
       },
-      include: {
-        zones: { orderBy: { zIndex: 'asc' } },
-        devices: { select: { id: true, name: true } },
-      },
+      include: this.layoutReadinessInclude(),
     });
 
     return this.serializeLayout(layout, this.computeLayoutReadiness(layout));
@@ -2145,10 +2142,7 @@ export class ClientDataService {
     const layout = await this.prisma.layout.update({
       where: { id: layoutId },
       data,
-      include: {
-        zones: { orderBy: { zIndex: 'asc' }, include: { playlist: { select: { id: true, name: true } }, asset: { select: { id: true, name: true } } } },
-        devices: { select: { id: true, name: true } },
-      },
+      include: this.layoutReadinessInclude(),
     });
 
     if (body.resolution !== undefined || body.status !== undefined) {
@@ -2360,7 +2354,7 @@ export class ClientDataService {
       assetId: string | null;
       playlist?: {
         name: string;
-        playlistAssets: { asset: { id: string; name: string; status: AssetStatus; type: string; s3Key: string | null; url: string | null } }[];
+        playlistAssets?: { asset: { id: string; name: string; status: AssetStatus; type: string; s3Key: string | null; url: string | null } }[];
       } | null;
       asset?: { id: string; name: string; status: AssetStatus; type: string; s3Key: string | null; url: string | null } | null;
     }[];
@@ -2373,11 +2367,11 @@ export class ClientDataService {
           warnings.push(`Zone "${zone.name}" has no playlist assigned`);
           continue;
         }
-        if (zone.playlist.playlistAssets.length === 0) {
+        if ((zone.playlist.playlistAssets ?? []).length === 0) {
           warnings.push(`Zone "${zone.name}" playlist "${zone.playlist.name}" has no assets`);
           continue;
         }
-        for (const playlistAsset of zone.playlist.playlistAssets) {
+        for (const playlistAsset of zone.playlist.playlistAssets ?? []) {
           if (!this.isAssetPlaybackReady(playlistAsset.asset)) {
             const reason =
               playlistAsset.asset.status !== AssetStatus.READY
