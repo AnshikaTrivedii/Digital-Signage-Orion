@@ -1,5 +1,9 @@
 import Image from "next/image";
 
+/** Natural dimensions of `/public/orion-logo.png` */
+const LOGO_WIDTH = 513;
+const LOGO_HEIGHT = 542;
+
 type OrionLogoProps = {
     height?: number;
     className?: string;
@@ -7,15 +11,23 @@ type OrionLogoProps = {
 };
 
 export function OrionLogo({ height = 72, className, priority = false }: OrionLogoProps) {
+    const width = Math.round(height * (LOGO_WIDTH / LOGO_HEIGHT));
+
     return (
         <Image
             src="/orion-logo.png"
             alt="Orion LED"
-            width={Math.round(height * 0.48)}
+            width={width}
             height={height}
             priority={priority}
             className={className}
-            style={{ height, width: "auto", maxWidth: "100%", objectFit: "contain", display: "block" }}
+            style={{
+                width,
+                height,
+                maxWidth: "100%",
+                objectFit: "contain",
+                display: "block",
+            }}
         />
     );
 }

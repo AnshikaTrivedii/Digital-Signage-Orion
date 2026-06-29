@@ -12,6 +12,7 @@ import {
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { apiRequest, ApiError } from "@/lib/api";
+import { formatReportDateTime } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 
 interface Device {
@@ -194,12 +195,7 @@ export default function DevicesPage() {
         return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
     };
 
-    const formatDateTime = (value: string | null) => {
-        if (!value) return "—";
-        const date = new Date(value);
-        if (Number.isNaN(date.getTime())) return value;
-        return date.toLocaleString();
-    };
+    const formatDateTime = (value: string | null) => formatReportDateTime(value);
 
     const runCacheAction = async (device: Device, action: "force-sync" | "clear" | "redownload") => {
         if (!canEdit || !activeOrganizationId) return;

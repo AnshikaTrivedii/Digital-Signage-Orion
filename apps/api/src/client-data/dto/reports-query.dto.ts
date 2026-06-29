@@ -45,4 +45,9 @@ export class ReportsQueryDto {
   @Min(1)
   @Max(500)
   limit?: number;
+
+  /** IANA timezone for export formatting, e.g. Asia/Kolkata */
+  @IsOptional()
+  @IsString()
+  timezone?: string;
 }

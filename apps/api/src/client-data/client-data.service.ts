@@ -23,6 +23,7 @@ import {
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { formatReportDateTime } from '../common/format-datetime';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
@@ -1572,9 +1573,11 @@ export class ClientDataService {
       folderId?: string;
       search?: string;
       status?: 'all' | 'verified' | 'failed';
+      timezone?: string;
     } = {},
   ) {
     const organizationId = this.getOrgId(actor);
+    const exportTimeZone = query.timezone?.trim() || 'UTC';
     const { where } = await this.buildPopLogWhere(organizationId, query);
     const [logs, devices] = await Promise.all([
       this.prisma.proofOfPlayLog.findMany({
@@ -1629,9 +1632,9 @@ export class ClientDataService {
         device: log.device,
         playlistName: log.playlistName ?? '',
         assetName,
-        startTime: log.startTime.toISOString(),
-        endTime: log.endTime ? log.endTime.toISOString() : '',
-        duration: log.durationSeconds ?? '',
+        startTime: formatReportDateTime(log.startTime, exportTimeZone),
+        endTime: formatReportDateTime(log.endTime, exportTimeZone),
+        duration: log.durationSeconds != null ? `${log.durationSeconds}s` : '',
         status: this.toTitleStatus(log.status),
       });
     }

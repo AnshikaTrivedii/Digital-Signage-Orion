@@ -114,9 +114,11 @@ export default function LoginPage() {
 
     return (
         <div style={{ 
-            minHeight: "100vh", width: "100vw", background: "hsl(var(--bg-base))", color: "hsl(var(--text-primary))", 
-            display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", 
-            position: "relative", fontFamily: "'Inter', sans-serif"
+            minHeight: "100vh", width: "100%", background: "hsl(var(--bg-base))", color: "hsl(var(--text-primary))", 
+            display: "flex", alignItems: "center", justifyContent: "center",
+            overflowX: "hidden", overflowY: "auto",
+            padding: "48px 20px",
+            position: "relative", fontFamily: "'Inter', sans-serif", boxSizing: "border-box",
         }}>
             {/* Animated Floating Orbs */}
             {floatingOrbs.map(orb => (
@@ -158,16 +160,16 @@ export default function LoginPage() {
                 }}
             />
 
-            <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 460, padding: 20 }}>
+            <div style={{ position: "relative", zIndex: 1, width: "100%", maxWidth: 460, margin: "auto" }}>
                 {/* Branding */}
                 <motion.div 
-                    initial={{ opacity: 0, y: -30 }} 
+                    initial={{ opacity: 0, y: 12 }} 
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ duration: 0.8, ease: "easeOut" }}
-                    style={{ textAlign: "center", marginBottom: 48 }}
+                    style={{ textAlign: "center", marginBottom: 40 }}
                 >
-                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
-                        <OrionLogo height={200} priority />
+                    <div style={{ display: "flex", justifyContent: "center", marginBottom: 24, overflow: "visible" }}>
+                        <OrionLogo height={168} priority />
                     </div>
                     <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.9rem", letterSpacing: "0.15em", textTransform: "uppercase", fontWeight: 500 }}>Enterprise Digital Signage</p>
                     

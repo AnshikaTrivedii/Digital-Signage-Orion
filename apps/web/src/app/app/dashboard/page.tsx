@@ -12,6 +12,7 @@ import {
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/api";
+import { formatReportDateTime } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 
 const AnimatedGlobe = dynamic(() => import("@/components/AnimatedGlobe"), { ssr: false });
@@ -100,7 +101,7 @@ export default function ClientDashboardPage() {
         () =>
             (dashboardData?.recentActivityLog ?? []).map((entry) => ({
                 ...entry,
-                time: new Date(entry.time).toLocaleTimeString(),
+                time: formatReportDateTime(entry.time),
             })),
         [dashboardData],
     );

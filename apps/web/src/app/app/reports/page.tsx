@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ApiError, API_BASE, apiRequest } from "@/lib/api";
+import { formatReportDateTime, getUserTimeZone } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 import { ACTIVE_ORGANIZATION_STORAGE_KEY, AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
 
@@ -96,11 +97,6 @@ const describeError = (error: unknown): string => {
     return "Something went wrong while loading reports.";
 };
 
-const formatDateTime = (value: string | null) => {
-    if (!value) return "—";
-    return new Date(value).toLocaleString();
-};
-
 const formatDuration = (seconds: number | null) => {
     if (!seconds || seconds < 1) return "—";
     if (seconds < 60) return `${seconds}s`;
@@ -140,8 +136,8 @@ const renderLogRowCells = (log: PopLog) => (
         <td style={{ ...tdStyle, fontWeight: 600 }}>{log.device}</td>
         <td style={tdStyle}>{log.playlistName ?? "—"}</td>
         <td style={tdStyle}>{log.assetName}</td>
-        <td style={{ ...tdStyle, fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.startTime)}</td>
-        <td style={{ ...tdStyle, fontSize: "0.8rem", fontFamily: "monospace" }}>{formatDateTime(log.endTime)}</td>
+        <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{formatReportDateTime(log.startTime)}</td>
+        <td style={{ ...tdStyle, fontSize: "0.8rem" }}>{formatReportDateTime(log.endTime)}</td>
         <td style={tdStyle}>{formatDuration(log.durationSeconds)}</td>
         <td style={tdStyle}>{renderLogStatus(log)}</td>
     </>
@@ -246,7 +242,7 @@ export default function ReportsPage() {
             const organizationId = typeof window !== "undefined"
                 ? window.localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY) ?? activeOrganizationId
                 : activeOrganizationId;
-            const exportQuery = buildQuery(page).replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "");
+            const exportQuery = `${buildQuery(page).replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "")}&timezone=${encodeURIComponent(getUserTimeZone())}`;
             const response = await fetch(
                 `${API_BASE}/api/client-data/reports/export?${exportQuery}`,
                 {
@@ -339,7 +335,7 @@ export default function ReportsPage() {
                     </p>
                     {lastLogAt && (
                         <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.8rem", marginTop: 6 }}>
-                            Last log received: {lastLogAt.toLocaleString()}
+                            Last log received: {formatReportDateTime(lastLogAt)}
                             {reportData?.lastLogDevice ? ` from ${reportData.lastLogDevice}` : ""}
                             {" "}• Android players sync logs every ~5 minutes
                         </p>
@@ -410,7 +406,7 @@ export default function ReportsPage() {
                     <div style={{ flex: 1 }}>
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>No logs in this date range</p>
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>
-                            The most recent playback log is from {lastLogAt?.toLocaleString()}.
+                            The most recent playback log is from {formatReportDateTime(lastLogAt)}.
                             Try &quot;Last 7 days&quot; or &quot;All records&quot;, or wait a few minutes after playback on a paired Android device.
                             Logs are only submitted by the player app, not from browser previews.
                         </p>
