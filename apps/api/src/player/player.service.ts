@@ -1,4 +1,12 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Device, DeviceStatus, ProofOfPlayStatus, TickerBroadcastScope, TickerStatus, ZoneType } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import {
@@ -6,7 +14,12 @@ import {
   expandPopLogPlaybackEvents,
   PopLogContextIndex,
 } from '../common/pop-log-enrichment';
-import { formatPlaylistOrderLog, sortPlaylistAssetsBySequence } from '../common/playlist-order';
+import {
+  buildManifestSequenceSignature,
+  formatPlaylistOrderLog,
+  isSequentialManifest,
+  sortPlaylistAssetsBySequence,
+} from '../common/playlist-order';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
@@ -325,8 +338,13 @@ export class PlayerService {
 
   /**
    * Return the active playlist manifest with incremental sync support.
-   * Skips the manifest only when the client reports a matching playlist version
-   * and already has the current assets cached locally.
+   *
+   * Stable polling: when the client reports the current playlistVersion and already
+   * has every asset cached, returns unchanged=true with the full manifest inline
+   * so the player can keep playing without applying a partial update.
+   *
+   * Playlist edits bump syncVersion; the next sync returns unchanged=false with a
+   * complete manifest (never partial, never empty while CMS assets exist).
    */
   async syncPlaylist(authHeader: string | undefined, query: SyncQueryDto = {}) {
     const device = await this.resolveDeviceByToken(authHeader);
@@ -402,9 +420,14 @@ export class PlayerService {
       throw new ForbiddenException('Playlist does not belong to this device organization');
     }
 
-    const manifest = await this.buildPlaylistManifest(playlist, syncContext);
+    const orderedAssets = sortPlaylistAssetsBySequence(playlist.playlistAssets);
+    const manifest = await this.buildPlaylistManifest({ playlistAssets: orderedAssets }, syncContext);
+    this.ensureCompletePlaylistManifest(playlist.id, orderedAssets.length, manifest);
+
     const currentAssetIds = manifest.map((entry) => entry.id);
     const removedAssetIds = syncContext.knownAssetIds.filter((id) => !currentAssetIds.includes(id));
+    const sequenceSignature = buildManifestSequenceSignature(manifest);
+    const manifestComplete = manifest.length === orderedAssets.length;
 
     const clientReportedVersion = query.playlistVersion;
     const playlistVersionMatches =
@@ -413,7 +436,8 @@ export class PlayerService {
     const clientHasPendingDownloads = manifest.some((entry) => entry.requiresDownload);
     const contentUnchanged =
       playlistVersionMatches &&
-      syncContext.knownAssetIds.length > 0 &&
+      manifestComplete &&
+      (orderedAssets.length === 0 || syncContext.knownAssetIds.length > 0) &&
       !clientMissingAssets &&
       !clientHasPendingDownloads &&
       !syncContext.recoverCache &&
@@ -429,10 +453,13 @@ export class PlayerService {
 
     this.logger.log(
       `Playlist sync playlistId=${playlist.id} deviceId=${device.id} ` +
+        `syncType=${contentUnchanged ? 'stable' : 'update'} ` +
         `playlistVersion=${playlist.syncVersion} assetCount=${manifest.length} ` +
+        `sequence=${sequenceSignature} ` +
         `previousVersion=${clientReportedVersion ?? 'none'} newVersion=${playlist.syncVersion} ` +
         `updatedAt=${playlist.updatedAt.toISOString()} ` +
         `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged} ` +
+        `manifestComplete=${manifestComplete} ` +
         `returnedOrder=${formatPlaylistOrderLog(manifest)}`,
     );
 
@@ -448,6 +475,9 @@ export class PlayerService {
       unchanged: contentUnchanged,
       playlistVersion: playlist.syncVersion,
       updatedAt: playlist.updatedAt.toISOString(),
+      assetCount: manifest.length,
+      manifestComplete,
+      sequenceSignature,
       playlist: { id: playlist.id, name: playlist.name },
       assets: manifest,
       currentAssetIds,
@@ -883,6 +913,33 @@ export class PlayerService {
     }
 
     return manifest;
+  }
+
+  /**
+   * Reject partial manifests — the player must never receive an incomplete playlist during updates.
+   */
+  private ensureCompletePlaylistManifest(
+    playlistId: string,
+    expectedAssetCount: number,
+    manifest: ManifestEntry[],
+  ): void {
+    if (expectedAssetCount === 0) {
+      return;
+    }
+
+    if (manifest.length !== expectedAssetCount) {
+      this.logger.error(
+        `Incomplete playlist manifest playlistId=${playlistId} expected=${expectedAssetCount} actual=${manifest.length}`,
+      );
+      throw new InternalServerErrorException('Playlist manifest incomplete');
+    }
+
+    if (!isSequentialManifest(manifest)) {
+      this.logger.error(
+        `Invalid playlist sequence playlistId=${playlistId} positions=${manifest.map((entry) => entry.position).join(',')}`,
+      );
+      throw new InternalServerErrorException('Playlist manifest sequence invalid');
+    }
   }
 
   private parseCommaSeparatedIds(value?: string): string[] {
