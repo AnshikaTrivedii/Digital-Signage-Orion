@@ -123,7 +123,7 @@ export class PopLogContextIndex {
       where: { organizationId },
       include: {
         playlistAssets: {
-          orderBy: { position: 'asc' },
+          orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
           include: { asset: true },
         },
       },

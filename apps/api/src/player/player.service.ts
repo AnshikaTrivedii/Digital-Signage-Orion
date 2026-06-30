@@ -6,6 +6,7 @@ import {
   expandPopLogPlaybackEvents,
   PopLogContextIndex,
 } from '../common/pop-log-enrichment';
+import { formatPlaylistOrderLog, sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
@@ -374,7 +375,7 @@ export class PlayerService {
       where: { id: device.currentPlaylistId },
       include: {
         playlistAssets: {
-          orderBy: { position: 'asc' },
+          orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
           include: { asset: true },
         },
       },
@@ -428,9 +429,11 @@ export class PlayerService {
 
     this.logger.log(
       `Playlist sync playlistId=${playlist.id} deviceId=${device.id} ` +
+        `playlistVersion=${playlist.syncVersion} assetCount=${manifest.length} ` +
         `previousVersion=${clientReportedVersion ?? 'none'} newVersion=${playlist.syncVersion} ` +
-        `updatedAt=${playlist.updatedAt.toISOString()} assetsReturned=${manifest.length} ` +
-        `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged}`,
+        `updatedAt=${playlist.updatedAt.toISOString()} ` +
+        `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged} ` +
+        `returnedOrder=${formatPlaylistOrderLog(manifest)}`,
     );
 
     await this.prisma.device.update({
@@ -471,7 +474,7 @@ export class PlayerService {
             playlist: {
               include: {
                 playlistAssets: {
-                  orderBy: { position: 'asc' },
+                  orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
                   include: { asset: true },
                 },
               },
@@ -858,21 +861,22 @@ export class PlayerService {
   private async buildPlaylistManifest(
     playlist: {
       playlistAssets: {
+        position: number;
         durationSeconds: number;
         asset: ManifestAssetInput;
       }[];
     },
     syncContext: SyncAssetContext,
   ): Promise<ManifestEntry[]> {
+    const orderedAssets = sortPlaylistAssetsBySequence(playlist.playlistAssets);
     const manifest: ManifestEntry[] = [];
 
-    let globalPosition = 0;
-    for (const playlistAsset of playlist.playlistAssets) {
+    for (const [sequence, playlistAsset] of orderedAssets.entries()) {
       manifest.push(
         await this.buildAssetManifestEntry(
           playlistAsset.asset,
           playlistAsset.durationSeconds,
-          globalPosition++,
+          sequence,
           syncContext,
         ),
       );

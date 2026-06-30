@@ -23,6 +23,7 @@ import {
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
 import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import { formatReportDateTime } from '../common/format-datetime';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -125,11 +126,13 @@ export class ClientDataService {
 
   async getPlaylistAssets(actor: RequestActor, playlistId: string) {
     const organizationId = this.getOrgId(actor);
-    const playlistAssets = await this.prisma.playlistAsset.findMany({
-      where: { playlistId, playlist: { organizationId } },
-      orderBy: { position: 'asc' },
-      include: { asset: true },
-    });
+    const playlistAssets = sortPlaylistAssetsBySequence(
+      await this.prisma.playlistAsset.findMany({
+        where: { playlistId, playlist: { organizationId } },
+        orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
+        include: { asset: true },
+      }),
+    );
 
     return Promise.all(
       playlistAssets.map(async (pa) => ({
@@ -242,8 +245,11 @@ export class ClientDataService {
       throw new NotFoundException('Playlist asset not found');
     }
 
-    await this.prisma.playlistAsset.delete({
-      where: { id: pa.id },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.playlistAsset.delete({
+        where: { id: pa.id },
+      });
+      await this.compactPlaylistAssetPositions(playlistId, tx);
     });
 
     await this.playlistSync.bumpPlaylist(playlistId);
@@ -1961,6 +1967,29 @@ export class ClientDataService {
     return this.s3.generateDownloadUrl(asset.s3Key);
   }
 
+  private async compactPlaylistAssetPositions(
+    playlistId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const playlistAssets = sortPlaylistAssetsBySequence(
+      await tx.playlistAsset.findMany({
+        where: { playlistId },
+        orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
+        select: { id: true, position: true, assetId: true },
+      }),
+    );
+
+    await Promise.all(
+      playlistAssets.map((playlistAsset, index) => {
+        if (playlistAsset.position === index) return Promise.resolve();
+        return tx.playlistAsset.update({
+          where: { id: playlistAsset.id },
+          data: { position: index },
+        });
+      }),
+    );
+  }
+
   private normalizeDurationSeconds(durationSeconds: number) {
     const normalized = Math.floor(Number(durationSeconds));
     if (!Number.isFinite(normalized) || normalized < 1) {
@@ -2518,10 +2547,13 @@ export class ClientDataService {
       }
 
       if (zoneType === ZoneType.PLAYLIST && zone.playlistId) {
-        const playlistAssets = await this.prisma.playlistAsset.findMany({
-          where: { playlistId: zone.playlistId, playlist: { organizationId } },
-          include: { asset: true },
-        });
+        const playlistAssets = sortPlaylistAssetsBySequence(
+          await this.prisma.playlistAsset.findMany({
+            where: { playlistId: zone.playlistId, playlist: { organizationId } },
+            orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
+            include: { asset: true },
+          }),
+        );
         if (playlistAssets.length === 0) {
           errors.push(`Zone "${zone.name}": assigned playlist has no assets`);
         }
