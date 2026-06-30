@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import * as ExcelJS from 'exceljs';
 import type { Prisma } from '@prisma/client';
@@ -48,6 +54,8 @@ type PlaylistDto = {
 
 @Injectable()
 export class ClientDataService {
+  private readonly logger = new Logger(ClientDataService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
@@ -210,13 +218,20 @@ export class ClientDataService {
       throw new NotFoundException('Playlist asset not found');
     }
 
+    const previousDuration = playlistAsset.durationSeconds;
+
     const updated = await this.prisma.playlistAsset.update({
       where: { id: playlistAsset.id },
       data: { durationSeconds: normalizedDuration },
       include: { asset: true },
     });
 
-    await this.playlistSync.bumpPlaylist(playlistId);
+    await this.playlistSync.bumpPlaylist(playlistId, 'duration-updated');
+
+    this.logger.log(
+      `Playlist asset duration updated playlistId=${playlistId} assetId=${assetId} ` +
+        `previousDuration=${previousDuration}s newDuration=${updated.durationSeconds}s position=${updated.position}`,
+    );
 
     return {
       id: updated.asset.id,
