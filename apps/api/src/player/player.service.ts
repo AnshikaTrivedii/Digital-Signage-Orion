@@ -59,6 +59,13 @@ type ManifestEntry = {
   fileSize: number;
 };
 
+type ContentRevisionState = {
+  revision: string;
+  updatedAt: string | null;
+  playlistVersion: number | null;
+  layoutVersion: number | null;
+};
+
 @Injectable()
 export class PlayerService {
   private readonly logger = new Logger(PlayerService.name);
@@ -272,6 +279,7 @@ export class PlayerService {
     data: { cpu: number; ram: number; temp: number; currentContent?: string },
   ) {
     const device = await this.resolveDeviceByToken(authHeader);
+    const contentRevision = await this.getDeviceContentRevision(device);
 
     const nextStatus =
       data.cpu > 85 || data.temp > 80
@@ -291,7 +299,27 @@ export class PlayerService {
       },
     });
 
-    return { status: 'ok' };
+    const syncRequired = this.computeSyncRequired(device, contentRevision);
+
+    return {
+      status: 'ok',
+      contentRevision: contentRevision.revision,
+      syncRequired,
+    };
+  }
+
+  /**
+   * Lightweight revision check polled by Android every ~5 seconds.
+   * Changes whenever the assigned playlist or layout manifest is bumped.
+   */
+  async getSyncRevision(authHeader: string | undefined) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    const contentRevision = await this.getDeviceContentRevision(device);
+
+    return {
+      revision: contentRevision.revision,
+      updatedAt: contentRevision.updatedAt,
+    };
   }
 
   /**
@@ -377,8 +405,9 @@ export class PlayerService {
     const currentAssetIds = manifest.map((entry) => entry.id);
     const removedAssetIds = syncContext.knownAssetIds.filter((id) => !currentAssetIds.includes(id));
 
+    const clientReportedVersion = query.playlistVersion;
     const playlistVersionMatches =
-      query.playlistVersion !== undefined && query.playlistVersion === playlist.syncVersion;
+      clientReportedVersion !== undefined && clientReportedVersion === playlist.syncVersion;
     const clientMissingAssets = currentAssetIds.some((id) => !syncContext.knownAssetIds.includes(id));
     const clientHasPendingDownloads = manifest.some((entry) => entry.requiresDownload);
     const contentUnchanged =
@@ -389,17 +418,33 @@ export class PlayerService {
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
 
+    const shouldAckPlaylistVersion =
+      contentUnchanged ||
+      (clientReportedVersion !== undefined && clientReportedVersion === playlist.syncVersion);
+
+    const assignedDeviceCount = await this.prisma.device.count({
+      where: { currentPlaylistId: playlist.id },
+    });
+
+    this.logger.log(
+      `Playlist sync playlistId=${playlist.id} deviceId=${device.id} ` +
+        `previousVersion=${clientReportedVersion ?? 'none'} newVersion=${playlist.syncVersion} ` +
+        `updatedAt=${playlist.updatedAt.toISOString()} assetsReturned=${manifest.length} ` +
+        `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged}`,
+    );
+
     await this.prisma.device.update({
       where: { id: device.id },
       data: {
         lastSync: new Date().toISOString(),
-        lastAckedPlaylistVersion: playlist.syncVersion,
+        ...(shouldAckPlaylistVersion ? { lastAckedPlaylistVersion: playlist.syncVersion } : {}),
       },
     });
 
     return {
       unchanged: contentUnchanged,
       playlistVersion: playlist.syncVersion,
+      updatedAt: playlist.updatedAt.toISOString(),
       playlist: { id: playlist.id, name: playlist.name },
       assets: manifest,
       currentAssetIds,
@@ -545,8 +590,9 @@ export class PlayerService {
     const currentAssetIds = aggregatedAssets.map((entry) => entry.id);
     const removedAssetIds = knownAssetIds.filter((id) => !currentAssetIds.includes(id));
     const hasTickerZone = layout.zones.some((zone) => zone.type === ZoneType.TICKER);
+    const clientReportedLayoutVersion = query.layoutVersion;
     const layoutVersionMatches =
-      query.layoutVersion !== undefined && query.layoutVersion === layout.syncVersion;
+      clientReportedLayoutVersion !== undefined && clientReportedLayoutVersion === layout.syncVersion;
     const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
     const clientHasPendingDownloads = aggregatedAssets.some((entry) => entry.requiresDownload);
     const contentUnchanged =
@@ -557,12 +603,27 @@ export class PlayerService {
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
 
+    const shouldAckLayoutVersion =
+      contentUnchanged ||
+      (clientReportedLayoutVersion !== undefined && clientReportedLayoutVersion === layout.syncVersion);
+
+    const assignedDeviceCount = await this.prisma.device.count({
+      where: { currentLayoutId: layout.id },
+    });
+
+    this.logger.log(
+      `Layout sync layoutId=${layout.id} deviceId=${device.id} ` +
+        `previousVersion=${clientReportedLayoutVersion ?? 'none'} newVersion=${layout.syncVersion} ` +
+        `updatedAt=${layout.updatedAt.toISOString()} assetsReturned=${aggregatedAssets.length} ` +
+        `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged}`,
+    );
+
     await this.prisma.device.update({
       where: { id: device.id },
       data: {
         lastSync: new Date().toISOString(),
-        lastAckedLayoutVersion: layout.syncVersion,
-        lastAckedPlaylistVersion: null,
+        ...(shouldAckLayoutVersion ? { lastAckedLayoutVersion: layout.syncVersion } : {}),
+        ...(shouldAckLayoutVersion ? { lastAckedPlaylistVersion: null } : {}),
       },
     });
 
@@ -576,6 +637,7 @@ export class PlayerService {
     return {
       unchanged: contentUnchanged,
       layoutVersion: layout.syncVersion,
+      updatedAt: layout.updatedAt.toISOString(),
       layout: layoutPayload,
       playlistVersion: null,
       playlist: null,
@@ -584,6 +646,80 @@ export class PlayerService {
       removedAssetIds,
       tickers: hasTickerZone ? [] : activeTickers,
     };
+  }
+
+  private async getDeviceContentRevision(device: PairedDevice): Promise<ContentRevisionState> {
+    if (device.currentLayoutId) {
+      const layout = await this.prisma.layout.findUnique({
+        where: { id: device.currentLayoutId },
+        select: { id: true, syncVersion: true, updatedAt: true },
+      });
+      if (!layout) {
+        return {
+          revision: 'none',
+          updatedAt: null,
+          playlistVersion: null,
+          layoutVersion: null,
+        };
+      }
+
+      return {
+        revision: `ly:${layout.id}:v${layout.syncVersion}:${layout.updatedAt.getTime()}`,
+        updatedAt: layout.updatedAt.toISOString(),
+        playlistVersion: null,
+        layoutVersion: layout.syncVersion,
+      };
+    }
+
+    if (device.currentPlaylistId) {
+      const playlist = await this.prisma.playlist.findUnique({
+        where: { id: device.currentPlaylistId },
+        select: { id: true, syncVersion: true, updatedAt: true },
+      });
+      if (!playlist) {
+        return {
+          revision: 'none',
+          updatedAt: null,
+          playlistVersion: null,
+          layoutVersion: null,
+        };
+      }
+
+      return {
+        revision: `pl:${playlist.id}:v${playlist.syncVersion}:${playlist.updatedAt.getTime()}`,
+        updatedAt: playlist.updatedAt.toISOString(),
+        playlistVersion: playlist.syncVersion,
+        layoutVersion: null,
+      };
+    }
+
+    return {
+      revision: 'none',
+      updatedAt: null,
+      playlistVersion: null,
+      layoutVersion: null,
+    };
+  }
+
+  private computeSyncRequired(device: PairedDevice, content: ContentRevisionState): boolean {
+    if (content.revision === 'none') return false;
+
+    if (device.currentLayoutId) {
+      return (
+        content.layoutVersion != null &&
+        (device.lastAckedLayoutVersion == null || device.lastAckedLayoutVersion !== content.layoutVersion)
+      );
+    }
+
+    if (device.currentPlaylistId) {
+      return (
+        content.playlistVersion != null &&
+        (device.lastAckedPlaylistVersion == null ||
+          device.lastAckedPlaylistVersion !== content.playlistVersion)
+      );
+    }
+
+    return false;
   }
 
   private async fetchActiveTickers(organizationId: string, deviceId: string) {

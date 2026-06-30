@@ -71,6 +71,14 @@ export class PlayerController {
   }
 
   /**
+   * Lightweight content revision polled by Android for near-real-time update detection.
+   */
+  @Get('sync-revision')
+  getSyncRevision(@Headers('authorization') authHeader: string | undefined) {
+    return this.playerService.getSyncRevision(authHeader);
+  }
+
+  /**
    * Device reports its offline cache inventory and sync health.
    */
   @Post('cache-report')

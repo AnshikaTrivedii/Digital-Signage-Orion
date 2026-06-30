@@ -418,7 +418,13 @@ export class ClientDataService {
       if (deviceIds.length > 0) {
         await tx.device.updateMany({
           where: { organizationId, id: { in: deviceIds } },
-          data: { currentPlaylistId: playlistId, currentLayoutId: null, currentContent: playlist.name },
+          data: {
+            currentPlaylistId: playlistId,
+            currentLayoutId: null,
+            currentContent: playlist.name,
+            lastAckedPlaylistVersion: null,
+            lastAckedLayoutVersion: null,
+          },
         });
       }
 
