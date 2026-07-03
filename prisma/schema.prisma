@@ -423,8 +423,8 @@ model Device {
   timezone            String    @default("UTC")
 
   // Health telemetry
-  storageTotalBytes     Int     @default(0)
-  storageFreeBytes      Int     @default(0)
+  storageTotalBytes     BigInt  @default(0)
+  storageFreeBytes      BigInt  @default(0)
   networkStatus         String  @default("UNKNOWN")
   wifiSignalStrength    Int     @default(0)
   currentAsset          String?

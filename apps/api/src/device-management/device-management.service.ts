@@ -6,6 +6,11 @@ import {
   DeviceSystemLogCategory,
   Prisma,
 } from '@prisma/client';
+import {
+  clampPrismaInt,
+  normalizeStorageBytes,
+  storageBytesToNumber,
+} from '../common/device-storage.utils';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -75,7 +80,9 @@ export class DeviceManagementService {
 
   getDeviceHealth(device: DeviceWithPlaylist) {
     const status = this.resolveEffectiveStatus(device);
-    const storageUsed = Math.max(0, device.storageTotalBytes - device.storageFreeBytes);
+    const totalBytes = storageBytesToNumber(device.storageTotalBytes);
+    const freeBytes = storageBytesToNumber(device.storageFreeBytes);
+    const storageUsed = Math.max(0, totalBytes - freeBytes);
     return {
       deviceId: device.id,
       status: status.toLowerCase(),
@@ -83,11 +90,11 @@ export class DeviceManagementService {
       ram: device.ram,
       temp: device.temp,
       storage: {
-        totalBytes: device.storageTotalBytes,
-        freeBytes: device.storageFreeBytes,
+        totalBytes,
+        freeBytes,
         usedBytes: storageUsed,
-        totalLabel: this.deviceCache.formatBytes(device.storageTotalBytes),
-        freeLabel: this.deviceCache.formatBytes(device.storageFreeBytes),
+        totalLabel: this.deviceCache.formatBytes(totalBytes),
+        freeLabel: this.deviceCache.formatBytes(freeBytes),
         usedLabel: this.deviceCache.formatBytes(storageUsed),
       },
       cacheSizeBytes: device.cacheUsedBytes,
@@ -296,9 +303,9 @@ export class DeviceManagementService {
     if (report.currentAsset !== undefined) data.currentAsset = report.currentAsset;
     if (report.currentPlaylistName !== undefined) data.currentPlaylistName = report.currentPlaylistName;
     if (report.playbackStatus !== undefined) data.playbackStatus = report.playbackStatus;
-    if (report.playbackUptimeSeconds !== undefined) data.playbackUptimeSeconds = report.playbackUptimeSeconds;
     if (report.playbackUptimeSeconds !== undefined) {
-      data.uptime = this.formatUptimeSeconds(report.playbackUptimeSeconds);
+      data.playbackUptimeSeconds = clampPrismaInt(report.playbackUptimeSeconds);
+      data.uptime = this.formatUptimeSeconds(data.playbackUptimeSeconds as number);
     }
     if (report.ip !== undefined) data.ip = report.ip;
     if (report.macAddress !== undefined) data.macAddress = report.macAddress;
@@ -321,8 +328,12 @@ export class DeviceManagementService {
         data.lastSuccessfulSyncAt = parsed;
       }
     }
-    if (report.storageTotalBytes !== undefined) data.storageTotalBytes = report.storageTotalBytes;
-    if (report.storageFreeBytes !== undefined) data.storageFreeBytes = report.storageFreeBytes;
+    if (report.storageTotalBytes !== undefined) {
+      data.storageTotalBytes = normalizeStorageBytes(report.storageTotalBytes);
+    }
+    if (report.storageFreeBytes !== undefined) {
+      data.storageFreeBytes = normalizeStorageBytes(report.storageFreeBytes);
+    }
     if (report.networkStatus !== undefined) data.networkStatus = report.networkStatus;
     if (report.wifiSignalStrength !== undefined) data.wifiSignalStrength = report.wifiSignalStrength;
     if (report.brightness !== undefined) data.brightness = report.brightness;

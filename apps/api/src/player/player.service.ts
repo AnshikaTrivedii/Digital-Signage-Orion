@@ -260,6 +260,7 @@ export class PlayerService {
     if (body.playerVersion?.trim()) data.playerVersion = body.playerVersion.trim();
     if (body.manufacturer?.trim()) data.manufacturer = body.manufacturer.trim();
     if (body.deviceModel?.trim()) data.deviceModel = body.deviceModel.trim();
+    if (body.deviceName?.trim()) data.name = body.deviceName.trim();
     if (body.ip?.trim()) data.ip = body.ip.trim();
     if (body.macAddress?.trim()) data.macAddress = body.macAddress.trim();
     if (body.resolution?.trim()) data.resolution = body.resolution.trim();
@@ -346,6 +347,15 @@ export class PlayerService {
     return { ...device, organizationId: device.organizationId };
   }
 
+  private formatPlayerCommandPayload(
+    pendingCommand: { id: string; command: string } | null,
+  ) {
+    const commands = pendingCommand
+      ? [{ id: pendingCommand.id, type: pendingCommand.command, params: {} }]
+      : [];
+    return { pendingCommand, cacheCommand: pendingCommand, commands };
+  }
+
   /**
    * Receive heartbeat telemetry from a device.
    */
@@ -392,12 +402,18 @@ export class PlayerService {
     },
   ) {
     const device = await this.resolveDeviceByToken(authHeader);
+    if (process.env.PLAYER_HEARTBEAT_LOG !== 'false') {
+      this.logger.log(
+        `Heartbeat accepted deviceId=${device.id} playerVersion=${data.playerVersion ?? 'unknown'} storageTotal=${data.storageTotalBytes ?? 'n/a'}`,
+      );
+    }
     await this.deviceManagement.ingestTelemetry(device.id, data);
     const contentRevision = await this.getDeviceContentRevision(device);
     const refreshed = await this.prisma.device.findUnique({ where: { id: device.id } });
     const syncRequired = this.computeSyncRequired(device, contentRevision);
     const pendingCommand = await this.deviceCache.deliverPendingCommand(device.id);
     const playerConfig = this.deviceManagement.getPlayerConfig(refreshed ?? device);
+    const commandPayload = this.formatPlayerCommandPayload(pendingCommand);
 
     return {
       status: 'ok',
@@ -405,8 +421,7 @@ export class PlayerService {
       syncRequired,
       configVersion: playerConfig.configVersion,
       features: playerConfig.features,
-      pendingCommand,
-      cacheCommand: pendingCommand,
+      ...commandPayload,
     };
   }
 
@@ -481,13 +496,13 @@ export class PlayerService {
     const refreshed = await this.prisma.device.findUnique({ where: { id: device.id } });
     const pendingCommand = await this.deviceCache.deliverPendingCommand(device.id);
     const playerConfig = this.deviceManagement.getPlayerConfig(refreshed ?? device);
+    const commandPayload = this.formatPlayerCommandPayload(pendingCommand);
 
     return {
       received: true,
       configVersion: playerConfig.configVersion,
       features: playerConfig.features,
-      pendingCommand,
-      cacheCommand: pendingCommand,
+      ...commandPayload,
     };
   }
 

@@ -32,6 +32,7 @@ import type { RequestActor } from '../common/interfaces/request-with-actor.inter
 import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import { formatReportDateTime } from '../common/format-datetime';
+import { storageBytesToNumber } from '../common/device-storage.utils';
 import { getPreviewKind } from '../assets/asset-media.utils';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { DeviceManagementService } from '../device-management/device-management.service';
@@ -1109,8 +1110,8 @@ export class ClientDataService {
     currentPlaylistName?: string | null;
     playbackStatus?: string;
     playbackUptimeSeconds?: number;
-    storageTotalBytes?: number;
-    storageFreeBytes?: number;
+    storageTotalBytes?: bigint | number;
+    storageFreeBytes?: bigint | number;
     lastScreenshotUrl?: string | null;
     lastScreenshotAt?: Date | null;
     lastSuccessfulSyncAt?: Date | null;
@@ -1124,7 +1125,10 @@ export class ClientDataService {
     currentPlaylist?: { name: string } | null;
     currentLayout?: { name: string } | null;
   }) {
-    const effectiveStatus = this.deviceManagement.resolveEffectiveStatus(device as import('@prisma/client').Device);
+    const effectiveStatus = this.deviceManagement.resolveEffectiveStatus({
+      lastSeenAt: device.lastSeenAt ?? null,
+      status: device.status,
+    } as import('@prisma/client').Device);
     return {
       id: device.id,
       name: device.name,
@@ -1157,8 +1161,8 @@ export class ClientDataService {
       currentPlaylist: device.currentPlaylistName ?? device.currentPlaylist?.name ?? device.currentLayout?.name ?? '—',
       playbackStatus: device.playbackStatus ?? 'UNKNOWN',
       playbackUptimeSeconds: device.playbackUptimeSeconds ?? 0,
-      storageTotalBytes: device.storageTotalBytes ?? 0,
-      storageFreeBytes: device.storageFreeBytes ?? 0,
+      storageTotalBytes: storageBytesToNumber(device.storageTotalBytes),
+      storageFreeBytes: storageBytesToNumber(device.storageFreeBytes),
       lastScreenshotUrl: device.lastScreenshotUrl ?? null,
       lastScreenshotAt: device.lastScreenshotAt?.toISOString() ?? null,
       currentContent: device.currentLayout?.name ?? device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',

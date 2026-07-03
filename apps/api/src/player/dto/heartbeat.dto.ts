@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   Max,
@@ -48,16 +49,19 @@ export class DevicePermissionsDto {
 }
 
 export class HeartbeatDto {
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(100)
   cpu!: number;
 
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(100)
   ram!: number;
 
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(120)
@@ -79,8 +83,10 @@ export class HeartbeatDto {
   @IsString()
   playbackStatus?: string;
 
+  /** Devices run 24/7 — must not use @IsInt() (rejects or truncates large values). */
   @IsOptional()
-  @IsInt()
+  @Type(() => Number)
+  @IsNumber()
   @Min(0)
   playbackUptimeSeconds?: number;
 
@@ -128,13 +134,16 @@ export class HeartbeatDto {
   @IsString()
   lastSyncTime?: string;
 
+  /** Large Android storage values exceed Int32 — use @IsNumber(), persist as BigInt. */
   @IsOptional()
-  @IsInt()
+  @Type(() => Number)
+  @IsNumber()
   @Min(0)
   storageTotalBytes?: number;
 
   @IsOptional()
-  @IsInt()
+  @Type(() => Number)
+  @IsNumber()
   @Min(0)
   storageFreeBytes?: number;
 
@@ -143,24 +152,28 @@ export class HeartbeatDto {
   networkStatus?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(-100)
   @Max(0)
   wifiSignalStrength?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(100)
   brightness?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   @Max(100)
   volume?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(0)
   screenTimeoutSeconds?: number;

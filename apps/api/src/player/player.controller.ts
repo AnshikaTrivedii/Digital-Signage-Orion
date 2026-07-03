@@ -6,12 +6,17 @@ import { HeartbeatDto } from './dto/heartbeat.dto';
 import { SubmitPopLogsDto } from './dto/pop-log.dto';
 import { PairingStatusQueryDto } from './dto/pairing-status-query.dto';
 import { SyncQueryDto } from './dto/sync-query.dto';
+import {
+  deviceReportValidationPipe,
+  heartbeatValidationPipe,
+} from './player-validation.pipe';
 import { PlayerService } from './player.service';
 
 const playerValidationPipe = new ValidationPipe({
   whitelist: true,
   transform: true,
   forbidNonWhitelisted: false,
+  transformOptions: { enableImplicitConversion: true },
 });
 
 /**
@@ -20,7 +25,6 @@ const playerValidationPipe = new ValidationPipe({
  * authenticates via its device token after pairing.
  */
 @Controller('player')
-@UsePipes(playerValidationPipe)
 export class PlayerController {
   constructor(private readonly playerService: PlayerService) {}
 
@@ -29,6 +33,7 @@ export class PlayerController {
    * Creates a draft device and returns a 6-digit pairing code.
    */
   @Post('init-pairing')
+  @UsePipes(playerValidationPipe)
   initPairing(@Body() body: InitPairingDto) {
     return this.playerService.initPairing(body);
   }
@@ -38,6 +43,7 @@ export class PlayerController {
    * Requires pairingSecret from init-pairing to retrieve deviceToken after CMS pair.
    */
   @Get('pairing-status/:hardwareId')
+  @UsePipes(playerValidationPipe)
   getPairingStatus(
     @Param('hardwareId') hardwareId: string,
     @Query() query: PairingStatusQueryDto,
@@ -52,6 +58,7 @@ export class PlayerController {
    * Device authenticates via its device token in the Authorization header.
    */
   @Post('heartbeat')
+  @UsePipes(heartbeatValidationPipe)
   heartbeat(
     @Headers('authorization') authHeader: string | undefined,
     @Body() body: HeartbeatDto,
@@ -64,6 +71,7 @@ export class PlayerController {
    * Device authenticates via its device token in the Authorization header.
    */
   @Get('sync')
+  @UsePipes(playerValidationPipe)
   sync(
     @Headers('authorization') authHeader: string | undefined,
     @Query() query: SyncQueryDto,
@@ -83,6 +91,7 @@ export class PlayerController {
    * Device reports its offline cache inventory and sync health.
    */
   @Post('cache-report')
+  @UsePipes(playerValidationPipe)
   reportCache(
     @Headers('authorization') authHeader: string | undefined,
     @Body() body: CacheReportDto,
@@ -95,6 +104,7 @@ export class PlayerController {
    * Device authenticates via its device token in the Authorization header.
    */
   @Post('pop-logs')
+  @UsePipes(playerValidationPipe)
   submitPopLogs(
     @Headers('authorization') authHeader: string | undefined,
     @Body() body: SubmitPopLogsDto,
@@ -106,6 +116,7 @@ export class PlayerController {
    * Full device status report with optional command completion.
    */
   @Post('device-report')
+  @UsePipes(deviceReportValidationPipe)
   submitDeviceReport(
     @Headers('authorization') authHeader: string | undefined,
     @Body() body: DeviceReportDto,
@@ -117,6 +128,7 @@ export class PlayerController {
    * Device submits system logs (boot, crash, sync, errors, etc.).
    */
   @Post('system-logs')
+  @UsePipes(playerValidationPipe)
   submitSystemLogs(
     @Headers('authorization') authHeader: string | undefined,
     @Body() body: SubmitSystemLogsDto,
