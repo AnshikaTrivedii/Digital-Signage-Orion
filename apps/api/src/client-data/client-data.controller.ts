@@ -28,6 +28,8 @@ import { CreateTickerDto } from './dto/create-ticker.dto';
 import { UpdateTickerDto } from './dto/update-ticker.dto';
 import { ReportsQueryDto } from './dto/reports-query.dto';
 import { AssignLayoutDto } from './dto/assign-layout.dto';
+import { DeviceLogsQueryDto } from '../device-management/dto/device-logs-query.dto';
+import { UpdateDeviceFeaturesDto } from '../device-management/dto/update-device-features.dto';
 import { CreateLayoutDto } from './dto/create-layout.dto';
 import { SaveLayoutZonesDto } from './dto/save-layout-zones.dto';
 import { UpdateLayoutDto } from './dto/update-layout.dto';
@@ -286,6 +288,68 @@ export class ClientDataController {
   @Post('devices/:deviceId/cache/redownload')
   redownloadDevicePlaylist(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
     return this.clientDataService.redownloadDevicePlaylist(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/status')
+  getDeviceStatus(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDeviceStatus(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/health')
+  getDeviceHealth(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDeviceHealth(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/permissions')
+  getDevicePermissions(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDevicePermissions(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/settings')
+  getDeviceSettings(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDeviceSettings(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/features')
+  getDeviceFeatures(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.getDeviceFeatures(actor, deviceId);
+  }
+
+  @Patch('devices/:deviceId/features')
+  updateDeviceFeatures(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Body() body: UpdateDeviceFeaturesDto,
+  ) {
+    return this.clientDataService.updateDeviceFeatures(actor, deviceId, body);
+  }
+
+  @Get('devices/:deviceId/logs')
+  getDeviceLogs(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Query() query: DeviceLogsQueryDto,
+  ) {
+    return this.clientDataService.getDeviceLogs(actor, deviceId, query.category, query.limit);
+  }
+
+  @Post('devices/:deviceId/actions/:action')
+  executeDeviceAction(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Param('action') action: string,
+  ) {
+    return this.clientDataService.executeDeviceAction(actor, deviceId, action);
+  }
+
+  @Post('devices/:deviceId/restart-player')
+  restartPlayer(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.restartPlayer(actor, deviceId);
+  }
+
+  @Post('devices/:deviceId/upload-logs')
+  uploadDeviceLogs(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.executeDeviceAction(actor, deviceId, 'upload-logs');
   }
 
   @Get('tickers')

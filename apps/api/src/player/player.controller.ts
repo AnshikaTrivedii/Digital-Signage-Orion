@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { CacheReportDto } from './dto/cache-report.dto';
+import { DeviceReportDto, SubmitSystemLogsDto } from './dto/device-report.dto';
 import { InitPairingDto } from './dto/init-pairing.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
 import { SubmitPopLogsDto } from './dto/pop-log.dto';
@@ -99,5 +100,27 @@ export class PlayerController {
     @Body() body: SubmitPopLogsDto,
   ) {
     return this.playerService.submitPopLogs(authHeader, body.logs);
+  }
+
+  /**
+   * Full device status report with optional command completion.
+   */
+  @Post('device-report')
+  submitDeviceReport(
+    @Headers('authorization') authHeader: string | undefined,
+    @Body() body: DeviceReportDto,
+  ) {
+    return this.playerService.submitDeviceReport(authHeader, body);
+  }
+
+  /**
+   * Device submits system logs (boot, crash, sync, errors, etc.).
+   */
+  @Post('system-logs')
+  submitSystemLogs(
+    @Headers('authorization') authHeader: string | undefined,
+    @Body() body: SubmitSystemLogsDto,
+  ) {
+    return this.playerService.submitSystemLogs(authHeader, body.logs);
   }
 }

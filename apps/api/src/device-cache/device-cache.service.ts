@@ -56,6 +56,10 @@ export class DeviceCacheService {
       await tx.deviceCachedAsset.deleteMany({ where: { deviceId } });
 
       if (report.assets?.length) {
+        const maxDownloadedAt = report.assets
+          .map((a) => (a.downloadedAt ? new Date(a.downloadedAt).getTime() : 0))
+          .reduce((max, t) => Math.max(max, t), 0);
+
         await tx.deviceCachedAsset.createMany({
           data: report.assets.map((asset) => ({
             deviceId,
@@ -73,6 +77,13 @@ export class DeviceCacheService {
             downloadedAt: asset.downloadedAt ? new Date(asset.downloadedAt) : null,
           })),
         });
+
+        if (maxDownloadedAt > 0) {
+          await tx.device.update({
+            where: { id: deviceId },
+            data: { lastDownloadAt: new Date(maxDownloadedAt) },
+          });
+        }
       }
 
       if (report.completedCommandId) {
@@ -290,13 +301,17 @@ export class DeviceCacheService {
   }
 
   private commandMessage(command: DeviceCacheCommandType) {
-    if (command === DeviceCacheCommandType.FORCE_SYNC) {
-      return 'Force sync queued. The player will sync on its next poll.';
-    }
-    if (command === DeviceCacheCommandType.CLEAR_CACHE) {
-      return 'Clear cache queued. The player will wipe local files on its next poll.';
-    }
-    return 'Redownload playlist queued. The player will refresh all assigned assets.';
+    const messages: Partial<Record<DeviceCacheCommandType, string>> = {
+      [DeviceCacheCommandType.FORCE_SYNC]: 'Force sync queued. The player will sync on its next poll.',
+      [DeviceCacheCommandType.CLEAR_CACHE]: 'Clear cache queued. The player will wipe local files on its next poll.',
+      [DeviceCacheCommandType.REDOWNLOAD_PLAYLIST]: 'Redownload playlist queued. The player will refresh all assigned assets.',
+      [DeviceCacheCommandType.RESTART_PLAYER]: 'Restart player queued. The player app will restart on its next poll.',
+      [DeviceCacheCommandType.RESTART_DEVICE]: 'Restart device queued. The device will reboot on its next poll.',
+      [DeviceCacheCommandType.UPLOAD_LOGS]: 'Upload logs queued. The player will send system logs on its next poll.',
+      [DeviceCacheCommandType.TAKE_SCREENSHOT]: 'Screenshot queued. The player will capture and upload on its next poll.',
+      [DeviceCacheCommandType.REFRESH_STATUS]: 'Refresh status queued. The player will report full telemetry on its next poll.',
+    };
+    return messages[command] ?? 'Remote command queued.';
   }
 
   private parseSyncStatus(value?: string): DeviceSyncReportStatus | null {

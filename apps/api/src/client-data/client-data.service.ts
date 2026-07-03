@@ -13,6 +13,7 @@ import {
   AssetType,
   DeviceCacheCommandType,
   DeviceStatus,
+  DeviceSystemLogCategory,
   LayoutResolution,
   LayoutStatus,
   PlaylistStatus,
@@ -32,6 +33,7 @@ import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } fr
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import { formatReportDateTime } from '../common/format-datetime';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
+import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
@@ -61,6 +63,7 @@ export class ClientDataService {
     private readonly s3: S3Service,
     private readonly playlistSync: PlaylistSyncService,
     private readonly deviceCache: DeviceCacheService,
+    private readonly deviceManagement: DeviceManagementService,
   ) {}
 
   async dashboard(actor: RequestActor) {
@@ -687,7 +690,10 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const devices = await this.prisma.device.findMany({
       where: { organizationId, isPaired: true },
-      include: { currentPlaylist: { select: { name: true } } },
+      include: {
+        currentPlaylist: { select: { name: true } },
+        currentLayout: { select: { name: true } },
+      },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -811,18 +817,24 @@ export class ClientDataService {
     const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
     if (!device) throw new NotFoundException('Device not found');
 
-    // Real-device reboot would be dispatched via the worker/socket channel here.
-    // For now we record the request and mark the device as warning until next sync.
-    const updated = await this.prisma.device.update({
+    await this.deviceManagement.queueRemoteAction(
+      deviceId,
+      organizationId,
+      'restart-device',
+      actor.userId,
+    );
+    await this.deviceManagement.recordSystemLog(
+      deviceId,
+      DeviceSystemLogCategory.RESTART,
+      'Device restart requested from CMS',
+    );
+
+    const updated = await this.prisma.device.findFirst({
       where: { id: deviceId },
-      data: {
-        status: DeviceStatus.WARNING,
-        lastSync: `Reboot requested at ${new Date().toISOString()}`,
-      },
       include: { currentPlaylist: { select: { name: true } } },
     });
 
-    return this.serializeDevice(updated);
+    return this.serializeDevice(updated!);
   }
 
   async captureDeviceScreenshot(actor: RequestActor, deviceId: string) {
@@ -832,12 +844,21 @@ export class ClientDataService {
     const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
     if (!device) throw new NotFoundException('Device not found');
 
-    // Screenshot capture is delegated to the player agent in production.
+    const result = await this.deviceManagement.queueRemoteAction(
+      deviceId,
+      organizationId,
+      'screenshot',
+      actor.userId,
+    );
+
     return {
       deviceId: device.id,
+      commandId: result.commandId,
       requestedAt: new Date().toISOString(),
       status: 'queued' as const,
-      message: 'Screenshot request queued — it will appear in reports once the player responds.',
+      message: result.message,
+      lastScreenshotUrl: device.lastScreenshotUrl,
+      lastScreenshotAt: device.lastScreenshotAt?.toISOString() ?? null,
     };
   }
 
@@ -848,30 +869,90 @@ export class ClientDataService {
     const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
     if (!device) throw new NotFoundException('Device not found');
 
-    // Simulated telemetry pull. The real player agent would push these numbers.
-    const cpu = Math.min(99, Math.max(2, Math.round(device.cpu + (Math.random() * 20 - 10))));
-    const ram = Math.min(99, Math.max(5, Math.round(device.ram + (Math.random() * 20 - 10))));
-    const temp = Math.min(95, Math.max(25, Math.round(device.temp + (Math.random() * 10 - 5))));
-    const nextStatus =
-      device.status === DeviceStatus.OFFLINE
-        ? DeviceStatus.ONLINE
-        : cpu > 85 || temp > 80
-          ? DeviceStatus.WARNING
-          : DeviceStatus.ONLINE;
+    await this.deviceManagement.queueRemoteAction(
+      deviceId,
+      organizationId,
+      'refresh-status',
+      actor.userId,
+    );
 
-    const updated = await this.prisma.device.update({
+    const updated = await this.prisma.device.findFirst({
       where: { id: deviceId },
-      data: {
-        cpu,
-        ram,
-        temp,
-        status: nextStatus,
-        lastSync: new Date().toISOString(),
-      },
-      include: { currentPlaylist: { select: { name: true } } },
+      include: { currentPlaylist: { select: { name: true } }, currentLayout: { select: { name: true } } },
     });
 
-    return this.serializeDevice(updated);
+    return this.serializeDevice(updated!);
+  }
+
+  async getDeviceStatus(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    const device = await this.deviceManagement.findDevice(deviceId, organizationId);
+    return this.deviceManagement.getDeviceStatus(device);
+  }
+
+  async getDeviceHealth(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    const device = await this.deviceManagement.findDevice(deviceId, organizationId);
+    return this.deviceManagement.getDeviceHealth(device);
+  }
+
+  async getDevicePermissions(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    const device = await this.deviceManagement.findDevice(deviceId, organizationId);
+    return this.deviceManagement.getDevicePermissions(device);
+  }
+
+  async getDeviceSettings(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    const device = await this.deviceManagement.findDevice(deviceId, organizationId);
+    return this.deviceManagement.getDeviceSettings(device);
+  }
+
+  async getDeviceFeatures(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    const device = await this.deviceManagement.findDevice(deviceId, organizationId);
+    return this.deviceManagement.getDeviceFeatures(device);
+  }
+
+  async updateDeviceFeatures(
+    actor: RequestActor,
+    deviceId: string,
+    body: {
+      autoSync?: boolean;
+      offlinePlayback?: boolean;
+      proofOfPlay?: boolean;
+      ticker?: boolean;
+      watchdog?: boolean;
+      crashRecovery?: boolean;
+      backgroundSync?: boolean;
+      autoDownload?: boolean;
+      remoteLogs?: boolean;
+    },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    return this.deviceManagement.updateDeviceFeatures(deviceId, organizationId, body);
+  }
+
+  async getDeviceLogs(
+    actor: RequestActor,
+    deviceId: string,
+    category?: string,
+    limit?: number,
+  ) {
+    const organizationId = this.getOrgId(actor);
+    const parsedCategory = category?.trim().toUpperCase() as import('@prisma/client').DeviceSystemLogCategory | undefined;
+    return this.deviceManagement.getDeviceLogs(deviceId, organizationId, parsedCategory, limit);
+  }
+
+  async executeDeviceAction(actor: RequestActor, deviceId: string, action: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    return this.deviceManagement.queueRemoteAction(deviceId, organizationId, action, actor.userId);
+  }
+
+  async restartPlayer(actor: RequestActor, deviceId: string) {
+    return this.executeDeviceAction(actor, deviceId, 'restart-player');
   }
 
   async getDeviceCacheStatus(actor: RequestActor, deviceId: string) {
@@ -1007,18 +1088,41 @@ export class ClientDataService {
     lastSync: string;
     os: string;
     currentContent: string | null;
+    hardwareId?: string | null;
+    playerVersion?: string;
+    androidVersion?: string;
+    lastSeenAt?: Date | null;
+    macAddress?: string;
+    deviceModel?: string;
+    manufacturer?: string;
+    orientation?: string;
+    timezone?: string;
+    networkStatus?: string;
+    wifiSignalStrength?: number;
+    currentAsset?: string | null;
+    currentPlaylistName?: string | null;
+    playbackStatus?: string;
+    playbackUptimeSeconds?: number;
+    storageTotalBytes?: number;
+    storageFreeBytes?: number;
+    lastScreenshotUrl?: string | null;
+    lastScreenshotAt?: Date | null;
+    lastSuccessfulSyncAt?: Date | null;
     cachedAssetCount?: number;
     expectedAssetCount?: number;
     cacheUsedBytes?: number;
     pendingDownloadCount?: number;
     cacheLastReportedAt?: Date | null;
     syncReportStatus?: string | null;
+    lastDownloadAt?: Date | null;
     currentPlaylist?: { name: string } | null;
+    currentLayout?: { name: string } | null;
   }) {
+    const effectiveStatus = this.deviceManagement.resolveEffectiveStatus(device as import('@prisma/client').Device);
     return {
       id: device.id,
       name: device.name,
-      status: this.toLowerStatus(device.status),
+      status: this.toLowerStatus(effectiveStatus),
       location: device.location,
       ip: device.ip,
       resolution: device.resolution,
@@ -1027,8 +1131,29 @@ export class ClientDataService {
       ram: device.ram,
       temp: device.temp,
       lastSync: device.lastSync,
-      os: device.os,
-      currentContent: device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',
+      os: device.androidVersion || device.os,
+      deviceId: device.id,
+      hardwareId: device.hardwareId ?? null,
+      androidVersion: device.androidVersion || device.os,
+      playerVersion: device.playerVersion ?? '',
+      lastSeen: device.lastSeenAt?.toISOString() ?? null,
+      lastSyncTime: device.lastSuccessfulSyncAt?.toISOString() ?? device.cacheLastReportedAt?.toISOString() ?? null,
+      macAddress: device.macAddress ?? '',
+      deviceModel: device.deviceModel ?? '',
+      manufacturer: device.manufacturer ?? '',
+      orientation: device.orientation ?? 'LANDSCAPE',
+      timezone: device.timezone ?? 'UTC',
+      networkStatus: device.networkStatus ?? 'UNKNOWN',
+      wifiSignalStrength: device.wifiSignalStrength ?? 0,
+      currentAsset: device.currentAsset ?? device.currentContent ?? '—',
+      currentPlaylist: device.currentPlaylistName ?? device.currentPlaylist?.name ?? device.currentLayout?.name ?? '—',
+      playbackStatus: device.playbackStatus ?? 'UNKNOWN',
+      playbackUptimeSeconds: device.playbackUptimeSeconds ?? 0,
+      storageTotalBytes: device.storageTotalBytes ?? 0,
+      storageFreeBytes: device.storageFreeBytes ?? 0,
+      lastScreenshotUrl: device.lastScreenshotUrl ?? null,
+      lastScreenshotAt: device.lastScreenshotAt?.toISOString() ?? null,
+      currentContent: device.currentLayout?.name ?? device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',
       cache: {
         cachedAssetCount: device.cachedAssetCount ?? 0,
         expectedAssetCount: device.expectedAssetCount ?? 0,
@@ -1036,6 +1161,7 @@ export class ClientDataService {
         storageUsedLabel: this.deviceCache.formatBytes(device.cacheUsedBytes ?? 0),
         pendingDownloads: device.pendingDownloadCount ?? 0,
         lastReportedAt: device.cacheLastReportedAt?.toISOString() ?? null,
+        lastDownloadAt: device.lastDownloadAt?.toISOString() ?? null,
         reportStatus: device.syncReportStatus?.toLowerCase() ?? 'unknown',
         isStale: device.cacheLastReportedAt
           ? Date.now() - device.cacheLastReportedAt.getTime() > 15 * 60 * 1000

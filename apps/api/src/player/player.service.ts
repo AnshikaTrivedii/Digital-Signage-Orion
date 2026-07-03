@@ -7,7 +7,15 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Device, DeviceStatus, ProofOfPlayStatus, TickerBroadcastScope, TickerStatus, ZoneType } from '@prisma/client';
+import {
+  Device,
+  DeviceCacheCommandStatus,
+  DeviceStatus,
+  ProofOfPlayStatus,
+  TickerBroadcastScope,
+  TickerStatus,
+  ZoneType,
+} from '@prisma/client';
 import { randomBytes } from 'crypto';
 import {
   enrichPopLogFields,
@@ -21,6 +29,7 @@ import {
   sortPlaylistAssetsBySequence,
 } from '../common/playlist-order';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
+import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import type { CacheReportDto } from './dto/cache-report.dto';
@@ -88,6 +97,7 @@ export class PlayerService {
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
     private readonly deviceCache: DeviceCacheService,
+    private readonly deviceManagement: DeviceManagementService,
   ) {}
 
   /**
@@ -290,36 +300,148 @@ export class PlayerService {
    */
   async heartbeat(
     authHeader: string | undefined,
-    data: { cpu: number; ram: number; temp: number; currentContent?: string },
+    data: {
+      cpu: number;
+      ram: number;
+      temp: number;
+      currentContent?: string;
+      currentAsset?: string;
+      currentPlaylistName?: string;
+      playbackStatus?: string;
+      playbackUptimeSeconds?: number;
+      ip?: string;
+      macAddress?: string;
+      resolution?: string;
+      orientation?: string;
+      timezone?: string;
+      androidVersion?: string;
+      playerVersion?: string;
+      deviceModel?: string;
+      manufacturer?: string;
+      storageTotalBytes?: number;
+      storageFreeBytes?: number;
+      networkStatus?: string;
+      wifiSignalStrength?: number;
+      brightness?: number;
+      volume?: number;
+      screenTimeoutSeconds?: number;
+      permissions?: {
+        internet?: boolean;
+        storage?: boolean;
+        foregroundService?: boolean;
+        bootReceiver?: boolean;
+        wakeLock?: boolean;
+        notification?: boolean;
+        batteryOptimizationDisabled?: boolean;
+        autoStart?: boolean;
+        kioskMode?: boolean;
+      };
+    },
   ) {
     const device = await this.resolveDeviceByToken(authHeader);
+    await this.deviceManagement.ingestTelemetry(device.id, data);
     const contentRevision = await this.getDeviceContentRevision(device);
-
-    const nextStatus =
-      data.cpu > 85 || data.temp > 80
-        ? DeviceStatus.WARNING
-        : DeviceStatus.ONLINE;
-
-    await this.prisma.device.update({
-      where: { id: device.id },
-      data: {
-        cpu: data.cpu,
-        ram: data.ram,
-        temp: data.temp,
-        status: nextStatus,
-        lastSync: new Date().toISOString(),
-        uptime: this.calculateUptime(device.createdAt),
-        ...(data.currentContent ? { currentContent: data.currentContent } : {}),
-      },
-    });
-
+    const refreshed = await this.prisma.device.findUnique({ where: { id: device.id } });
     const syncRequired = this.computeSyncRequired(device, contentRevision);
+    const pendingCommand = await this.deviceCache.deliverPendingCommand(device.id);
+    const playerConfig = this.deviceManagement.getPlayerConfig(refreshed ?? device);
 
     return {
       status: 'ok',
       contentRevision: contentRevision.revision,
       syncRequired,
+      configVersion: playerConfig.configVersion,
+      features: playerConfig.features,
+      pendingCommand,
+      cacheCommand: pendingCommand,
     };
+  }
+
+  /**
+   * Full device status report (telemetry + optional command completion).
+   */
+  async submitDeviceReport(
+    authHeader: string | undefined,
+    report: {
+      cpu: number;
+      ram: number;
+      temp: number;
+      currentContent?: string;
+      currentAsset?: string;
+      currentPlaylistName?: string;
+      playbackStatus?: string;
+      playbackUptimeSeconds?: number;
+      ip?: string;
+      macAddress?: string;
+      resolution?: string;
+      orientation?: string;
+      timezone?: string;
+      androidVersion?: string;
+      playerVersion?: string;
+      deviceModel?: string;
+      manufacturer?: string;
+      storageTotalBytes?: number;
+      storageFreeBytes?: number;
+      networkStatus?: string;
+      wifiSignalStrength?: number;
+      brightness?: number;
+      volume?: number;
+      screenTimeoutSeconds?: number;
+      screenshotUrl?: string;
+      completedCommandId?: string;
+      commandFailed?: boolean;
+      commandError?: string;
+      permissions?: {
+        internet?: boolean;
+        storage?: boolean;
+        foregroundService?: boolean;
+        bootReceiver?: boolean;
+        wakeLock?: boolean;
+        notification?: boolean;
+        batteryOptimizationDisabled?: boolean;
+        autoStart?: boolean;
+        kioskMode?: boolean;
+      };
+    },
+  ) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    await this.deviceManagement.ingestTelemetry(device.id, report);
+
+    if (report.completedCommandId) {
+      await this.prisma.deviceCacheCommand.updateMany({
+        where: {
+          id: report.completedCommandId,
+          deviceId: device.id,
+        },
+        data: {
+          status: report.commandFailed
+            ? DeviceCacheCommandStatus.FAILED
+            : DeviceCacheCommandStatus.COMPLETED,
+          completedAt: new Date(),
+          errorMessage: report.commandError ?? null,
+        },
+      });
+    }
+
+    const refreshed = await this.prisma.device.findUnique({ where: { id: device.id } });
+    const pendingCommand = await this.deviceCache.deliverPendingCommand(device.id);
+    const playerConfig = this.deviceManagement.getPlayerConfig(refreshed ?? device);
+
+    return {
+      received: true,
+      configVersion: playerConfig.configVersion,
+      features: playerConfig.features,
+      pendingCommand,
+      cacheCommand: pendingCommand,
+    };
+  }
+
+  async submitSystemLogs(
+    authHeader: string | undefined,
+    logs: { category: string; message: string; metadata?: Record<string, unknown> }[],
+  ) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    return this.deviceManagement.ingestSystemLogs(device.id, logs);
   }
 
   /**
@@ -354,9 +476,13 @@ export class PlayerService {
       ? await this.syncLayout(device, query, syncContext)
       : await this.buildPlaylistSyncResponse(device, query, syncContext);
 
+    const pendingCommand = (await this.deviceCache.deliverPendingCommand(device.id)) ?? null;
+
     return {
       ...payload,
-      cacheCommand: (await this.deviceCache.deliverPendingCommand(device.id)) ?? null,
+      cacheCommand: pendingCommand,
+      pendingCommand,
+      ...this.deviceManagement.getPlayerConfig(device),
     };
   }
 

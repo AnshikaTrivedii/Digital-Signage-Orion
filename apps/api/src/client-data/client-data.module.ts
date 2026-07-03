@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DeviceCacheModule } from '../device-cache/device-cache.module';
+import { DeviceManagementModule } from '../device-management/device-management.module';
 import { S3Module } from '../s3/s3.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
@@ -8,7 +9,7 @@ import { ClientDataController } from './client-data.controller';
 import { ClientDataService } from './client-data.service';
 
 @Module({
-  imports: [PrismaModule, AuthModule, AuditModule, S3Module, DeviceCacheModule],
+  imports: [PrismaModule, AuthModule, AuditModule, S3Module, DeviceCacheModule, DeviceManagementModule],
   controllers: [ClientDataController],
   providers: [ClientDataService],
 })

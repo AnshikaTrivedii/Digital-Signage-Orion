@@ -104,6 +104,21 @@ enum DeviceCacheCommandType {
   FORCE_SYNC
   CLEAR_CACHE
   REDOWNLOAD_PLAYLIST
+  RESTART_PLAYER
+  RESTART_DEVICE
+  UPLOAD_LOGS
+  TAKE_SCREENSHOT
+  REFRESH_STATUS
+}
+
+enum DeviceSystemLogCategory {
+  BOOT
+  CRASH
+  RESTART
+  SYNC
+  DOWNLOAD
+  PROOF_OF_PLAY
+  ERROR
 }
 
 enum DeviceCacheCommandStatus {
@@ -397,6 +412,59 @@ model Device {
   hardwareId     String?      @unique
   isPaired       Boolean      @default(false)
 
+  // Enterprise device identity
+  playerVersion       String    @default("")
+  androidVersion      String    @default("")
+  lastSeenAt          DateTime?
+  macAddress          String    @default("")
+  deviceModel         String    @default("")
+  manufacturer        String    @default("")
+  orientation         String    @default("LANDSCAPE")
+  timezone            String    @default("UTC")
+
+  // Health telemetry
+  storageTotalBytes     Int     @default(0)
+  storageFreeBytes      Int     @default(0)
+  networkStatus         String  @default("UNKNOWN")
+  wifiSignalStrength    Int     @default(0)
+  currentAsset          String?
+  currentPlaylistName   String?
+  playbackStatus        String  @default("UNKNOWN")
+  playbackUptimeSeconds Int     @default(0)
+  lastDownloadAt        DateTime?
+
+  // Permission status (reported by player)
+  permInternet              Boolean @default(false)
+  permStorage               Boolean @default(false)
+  permForegroundService     Boolean @default(false)
+  permBootReceiver          Boolean @default(false)
+  permWakeLock              Boolean @default(false)
+  permNotification          Boolean @default(false)
+  permBatteryOptDisabled    Boolean @default(false)
+  permAutoStart             Boolean @default(false)
+  permKioskMode             Boolean @default(false)
+
+  // Device settings (reported + CMS-managed)
+  brightness            Int     @default(100)
+  volume                Int     @default(100)
+  screenTimeoutSeconds  Int     @default(300)
+
+  // Player features (CMS-managed, synced to player)
+  featureAutoSync         Boolean @default(true)
+  featureOfflinePlayback  Boolean @default(true)
+  featureProofOfPlay      Boolean @default(true)
+  featureTicker           Boolean @default(true)
+  featureWatchdog         Boolean @default(true)
+  featureCrashRecovery    Boolean @default(true)
+  featureBackgroundSync   Boolean @default(true)
+  featureAutoDownload     Boolean @default(true)
+  featureRemoteLogs       Boolean @default(true)
+  configVersion           Int     @default(1)
+
+  // Screenshot
+  lastScreenshotUrl String?
+  lastScreenshotAt  DateTime?
+
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -407,6 +475,7 @@ model Device {
   tickerTargets   TickerDevice[]
   cachedAssets    DeviceCachedAsset[]
   cacheCommands   DeviceCacheCommand[]
+  systemLogs      DeviceSystemLog[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, currentPlaylistId])
@@ -637,4 +706,18 @@ model DeviceCacheCommand {
   requestedBy User?  @relation("DeviceCacheCommandRequester", fields: [requestedById], references: [id], onDelete: SetNull)
 
   @@index([deviceId, status])
+}
+
+model DeviceSystemLog {
+  id        String                  @id @default(cuid())
+  deviceId  String
+  category  DeviceSystemLogCategory
+  message   String
+  metadata  Json?
+  createdAt DateTime                @default(now())
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, createdAt])
+  @@index([deviceId, category])
 }

@@ -14,6 +14,7 @@ import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { apiRequest, ApiError } from "@/lib/api";
 import { formatReportDateTime } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
+import { DeviceDetailPanel } from "@/components/devices/DeviceDetailPanel";
 
 interface Device {
     id: string;
@@ -29,6 +30,18 @@ interface Device {
     lastSync: string;
     os: string;
     currentContent: string;
+    hardwareId?: string | null;
+    androidVersion?: string;
+    playerVersion?: string;
+    lastSeen?: string | null;
+    lastSyncTime?: string | null;
+    macAddress?: string;
+    deviceModel?: string;
+    manufacturer?: string;
+    orientation?: string;
+    timezone?: string;
+    lastScreenshotUrl?: string | null;
+    lastScreenshotAt?: string | null;
     cache?: {
         cachedAssetCount: number;
         expectedAssetCount: number;
@@ -36,6 +49,7 @@ interface Device {
         storageUsedLabel: string;
         pendingDownloads: number;
         lastReportedAt: string | null;
+        lastDownloadAt?: string | null;
         reportStatus: string;
         isStale: boolean;
     };
@@ -161,6 +175,13 @@ export default function DevicesPage() {
     useEffect(() => {
         void loadDevices();
     }, [loadDevices]);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (activeOrganizationId) void loadDevices();
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [activeOrganizationId, loadDevices]);
 
     const loadDeviceCache = useCallback(async (deviceId: string) => {
         if (!activeOrganizationId) return;
@@ -471,6 +492,48 @@ export default function DevicesPage() {
             toast.success(`${device.name} telemetry refreshed`);
         } catch (error) {
             toast.error(describeError(error, "Failed to refresh telemetry"));
+        } finally {
+            setPendingAction(null);
+            setPendingDeviceId(null);
+        }
+    };
+
+    const runRemoteAction = async (action: string) => {
+        if (!canControl || !activeOrganizationId || !selectedDevice) return;
+        setPendingAction(action);
+        setPendingDeviceId(selectedDevice.id);
+        try {
+            const path =
+                action === "force-sync"
+                    ? `${selectedDevice.id}/cache/force-sync`
+                    : action === "clear-cache"
+                        ? `${selectedDevice.id}/cache/clear`
+                        : action === "redownload-playlist"
+                            ? `${selectedDevice.id}/cache/redownload`
+                            : action === "restart-device"
+                                ? `${selectedDevice.id}/reboot`
+                                : action === "screenshot"
+                                    ? `${selectedDevice.id}/screenshot`
+                                    : action === "restart-player"
+                                        ? `${selectedDevice.id}/restart-player`
+                                        : action === "upload-logs"
+                                            ? `${selectedDevice.id}/upload-logs`
+                                            : action === "refresh-status"
+                                                ? `${selectedDevice.id}/refresh-status`
+                                                : `${selectedDevice.id}/actions/${action}`;
+            const response = await apiRequest<{ message?: string }>(
+                `/api/client-data/devices/${path}`,
+                { method: "POST", headers: orgHeaders },
+            );
+            toast.success(response.message ?? `${action} queued`);
+            await loadDevices();
+            if (selectedDevice) {
+                const list = await apiRequest<Device[]>("/api/client-data/devices", { headers: orgHeaders });
+                const match = list.find((d) => d.id === selectedDevice.id);
+                if (match) setSelectedDevice(match);
+            }
+        } catch (error) {
+            toast.error(describeError(error, "Remote action failed"));
         } finally {
             setPendingAction(null);
             setPendingDeviceId(null);
@@ -812,357 +875,61 @@ export default function DevicesPage() {
                 </div>
             )}
 
-            {/* Detail Modal */}
+            {/* Device Detail Panel */}
             <AnimatePresence>
-                {selectedDevice && (
+                {selectedDevice && !isEditing && (
+                    <DeviceDetailPanel
+                        device={selectedDevice}
+                        canEdit={canEdit}
+                        canControl={canControl}
+                        orgHeaders={orgHeaders}
+                        onClose={() => {
+                            setSelectedDevice(null);
+                            setIsEditing(false);
+                        }}
+                        onDeviceUpdated={(updated) => {
+                            setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+                            setSelectedDevice(updated);
+                        }}
+                        isBusy={isBusy(selectedDevice.id)}
+                        pendingAction={pendingAction}
+                        onRunAction={runRemoteAction}
+                    />
+                )}
+                {selectedDevice && isEditing && (
                     <motion.div
-                        key="detail"
+                        key="edit"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         style={{
-                            position: "fixed",
-                            inset: 0,
+                            position: "fixed", inset: 0,
                             background: "hsla(var(--overlay-base), 0.78)",
-                            backdropFilter: "blur(16px)",
-                            zIndex: 100,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            padding: 20,
+                            backdropFilter: "blur(16px)", zIndex: 100,
+                            display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
                         }}
-                        onClick={() => {
-                            setSelectedDevice(null);
-                            setIsEditing(false);
-                        }}
+                        onClick={() => setIsEditing(false)}
                     >
                         <motion.div
                             initial={{ scale: 0.9, y: 20 }}
                             animate={{ scale: 1, y: 0 }}
-                            exit={{ scale: 0.9, y: 20 }}
                             className="glass-panel"
-                            style={{ width: "100%", maxWidth: 960, maxHeight: "90vh", overflow: "auto" }}
+                            style={{ width: "100%", maxWidth: 520, padding: 32 }}
                             onClick={(e) => e.stopPropagation()}
                         >
-                            <div
-                                style={{
-                                    padding: "24px 32px",
-                                    borderBottom: "1px solid hsla(var(--border-subtle), 0.3)",
-                                    display: "flex",
-                                    justifyContent: "space-between",
-                                    alignItems: "center",
-                                }}
-                            >
-                                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                                    <div style={statusDot(selectedDevice.status)} />
-                                    <div>
-                                        <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedDevice.name}</h2>
-                                        <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
-                                            {selectedDevice.location}
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    className="btn-icon-soft"
-                                    onClick={() => {
-                                        setSelectedDevice(null);
-                                        setIsEditing(false);
-                                    }}
-                                >
-                                    <X size={24} />
+                            <h3 style={{ fontSize: "1rem", fontWeight: 700, marginBottom: 20 }}>Edit Device</h3>
+                            <DeviceFormFields form={editForm} setForm={setEditForm} />
+                            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
+                                <button className="btn-outline" onClick={() => setIsEditing(false)} disabled={pendingAction === "edit"}>Cancel</button>
+                                <button className="btn-primary" onClick={() => void submitEdit()} disabled={pendingAction === "edit"} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <Save size={16} /> {pendingAction === "edit" ? "Saving..." : "Save changes"}
                                 </button>
-                            </div>
-
-                            <div style={{ padding: 32 }}>
-                                {!isEditing ? (
-                                    <>
-                                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20, marginBottom: 32 }}>
-                                            {[
-                                                { label: "IP Address", value: selectedDevice.ip },
-                                                { label: "Resolution", value: selectedDevice.resolution },
-                                                { label: "OS Version", value: selectedDevice.os },
-                                                { label: "Uptime", value: selectedDevice.uptime },
-                                                { label: "Last Sync", value: selectedDevice.lastSync },
-                                                { label: "Now Playing", value: selectedDevice.currentContent },
-                                            ].map((item) => (
-                                                <div key={item.label}>
-                                                    <p
-                                                        style={{
-                                                            fontSize: "0.65rem",
-                                                            color: "hsl(var(--text-muted))",
-                                                            textTransform: "uppercase",
-                                                            fontWeight: 700,
-                                                            marginBottom: 6,
-                                                        }}
-                                                    >
-                                                        {item.label}
-                                                    </p>
-                                                    <p style={{ fontSize: "0.95rem", fontWeight: 600, wordBreak: "break-word" }}>
-                                                        {item.value}
-                                                    </p>
-                                                </div>
-                                            ))}
-                                        </div>
-
-                                        {selectedDevice.status !== "offline" && (
-                                            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 32 }}>
-                                                <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "hsl(var(--text-muted))" }}>
-                                                    PERFORMANCE
-                                                </h3>
-                                                {[
-                                                    { label: "CPU Usage", value: selectedDevice.cpu, color: "hsl(var(--accent-primary))" },
-                                                    { label: "Memory Usage", value: selectedDevice.ram, color: "hsl(var(--accent-secondary))" },
-                                                    { label: "Temperature", value: selectedDevice.temp, color: "hsl(var(--status-warning))" },
-                                                ].map((m) => (
-                                                    <div key={m.label}>
-                                                        <div className="flex-between" style={{ marginBottom: 6 }}>
-                                                            <span style={{ fontSize: "0.8rem", fontWeight: 500 }}>{m.label}</span>
-                                                            <span
-                                                                style={{
-                                                                    fontSize: "0.8rem",
-                                                                    fontWeight: 700,
-                                                                    color:
-                                                                        m.value > 80 ? "hsl(var(--status-danger))" : m.color,
-                                                                }}
-                                                            >
-                                                                {m.label === "Temperature" ? `${m.value}°C` : `${m.value}%`}
-                                                            </span>
-                                                        </div>
-                                                        <div style={{ height: 6, borderRadius: 3, background: "hsla(var(--border-subtle), 0.2)" }}>
-                                                            <motion.div
-                                                                initial={{ width: 0 }}
-                                                                animate={{ width: `${m.value}%` }}
-                                                                transition={{ duration: 0.8 }}
-                                                                style={{
-                                                                    height: "100%",
-                                                                    background:
-                                                                        m.value > 80
-                                                                            ? "hsl(var(--status-danger))"
-                                                                            : m.color,
-                                                                    borderRadius: 3,
-                                                                }}
-                                                            />
-                                                        </div>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        <div style={{ marginBottom: 32 }}>
-                                            <div className="flex-between" style={{ marginBottom: 16 }}>
-                                                <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "hsl(var(--text-muted))", display: "flex", alignItems: "center", gap: 8 }}>
-                                                    <Database size={16} /> OFFLINE CACHE
-                                                </h3>
-                                                <button
-                                                    className="btn-outline"
-                                                    disabled={!canEdit || isCacheLoading || isBusy(selectedDevice.id)}
-                                                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", padding: "6px 12px" }}
-                                                    onClick={() => void loadDeviceCache(selectedDevice.id)}
-                                                >
-                                                    <RefreshCw size={14} className={isCacheLoading ? "spin" : ""} />
-                                                    Refresh Cache Status
-                                                </button>
-                                            </div>
-
-                                            {isCacheLoading && !deviceCache ? (
-                                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>Loading cache report...</p>
-                                            ) : deviceCache ? (
-                                                <>
-                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
-                                                        {[
-                                                            { label: "Current Playlist", value: deviceCache.offlineCache.currentPlaylist },
-                                                            { label: "Playlist Version", value: deviceCache.offlineCache.playlistVersion ?? "—" },
-                                                            { label: "Last Sync Time", value: formatDateTime(deviceCache.offlineCache.lastSyncTime) },
-                                                            { label: "Total Cache Size", value: formatBytes(deviceCache.offlineCache.totalCacheBytes) },
-                                                            { label: "Cached Assets", value: `${deviceCache.offlineCache.cachedAssetCount} / ${deviceCache.offlineCache.expectedAssetCount}` },
-                                                            { label: "Storage Used", value: `${formatBytes(deviceCache.offlineCache.storageUsedBytes)}${deviceCache.offlineCache.storageTotalBytes ? ` / ${formatBytes(deviceCache.offlineCache.storageTotalBytes)}` : ""}` },
-                                                        ].map((item) => (
-                                                            <div key={item.label} style={{ padding: 12, borderRadius: 12, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
-                                                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
-                                                                <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{item.value}</p>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-
-                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
-                                                        {[
-                                                            { label: "Online", value: deviceCache.syncStatus.online ? "Yes" : "No", color: deviceCache.syncStatus.online ? "#4ade80" : "#f87171" },
-                                                            { label: "Last Successful Sync", value: formatDateTime(deviceCache.syncStatus.lastSuccessfulSync) },
-                                                            { label: "Last Failed Sync", value: formatDateTime(deviceCache.syncStatus.lastFailedSync) },
-                                                            { label: "Pending Downloads", value: deviceCache.syncStatus.pendingDownloads },
-                                                        ].map((item) => (
-                                                            <div key={item.label}>
-                                                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
-                                                                <p style={{ fontSize: "0.85rem", fontWeight: 600, color: item.color ?? "inherit" }}>{item.value}</p>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-
-                                                    {deviceCache.syncStatus.lastSyncError && (
-                                                        <div style={{ marginBottom: 16, padding: 12, borderRadius: 10, background: "hsla(var(--status-danger), 0.08)", border: "1px solid hsla(var(--status-danger), 0.25)", color: "hsl(var(--status-danger))", fontSize: "0.85rem" }}>
-                                                            Last sync error: {deviceCache.syncStatus.lastSyncError}
-                                                        </div>
-                                                    )}
-
-                                                    <div style={{ marginBottom: 16 }}>
-                                                        <h4 style={{ fontSize: "0.8rem", fontWeight: 700, color: "hsl(var(--text-muted))", marginBottom: 10 }}>DOWNLOADED ASSETS</h4>
-                                                        {(deviceCache.assets ?? []).length === 0 ? (
-                                                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
-                                                                No cache report from this device yet. The player should POST to <code>/api/player/cache-report</code> periodically.
-                                                            </p>
-                                                        ) : (
-                                                            <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
-                                                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
-                                                                    <thead>
-                                                                        <tr style={{ background: "hsla(var(--bg-base), 0.45)", textAlign: "left" }}>
-                                                                            {["Asset", "Type", "Playlist", "Size", "Download", "Local", "Downloaded"].map((head) => (
-                                                                                <th key={head} style={{ padding: "10px 12px", color: "hsl(var(--text-muted))", fontWeight: 700 }}>{head}</th>
-                                                                            ))}
-                                                                        </tr>
-                                                                    </thead>
-                                                                    <tbody>
-                                                                        {(deviceCache.assets ?? []).map((asset) => (
-                                                                            <tr key={asset.id} style={{ borderTop: "1px solid hsla(var(--border-subtle), 0.25)" }}>
-                                                                                <td style={{ padding: "10px 12px", fontWeight: 600 }}>{asset.assetName}</td>
-                                                                                <td style={{ padding: "10px 12px" }}>{asset.assetType}</td>
-                                                                                <td style={{ padding: "10px 12px" }}>{asset.playlist}</td>
-                                                                                <td style={{ padding: "10px 12px" }}>{asset.fileSizeLabel}</td>
-                                                                                <td style={{ padding: "10px 12px", textTransform: "capitalize" }}>{asset.downloadStatus}</td>
-                                                                                <td style={{ padding: "10px 12px", textTransform: "capitalize", color: asset.localCacheStatus === "present" ? "#4ade80" : asset.localCacheStatus === "corrupt" ? "#f87171" : "#fbbf24" }}>{asset.localCacheStatus}</td>
-                                                                                <td style={{ padding: "10px 12px" }}>{formatDateTime(asset.downloadedAt)}</td>
-                                                                            </tr>
-                                                                        ))}
-                                                                    </tbody>
-                                                                </table>
-                                                            </div>
-                                                        )}
-                                                    </div>
-
-                                                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                                                        <button className="btn-outline" disabled={!canEdit || isBusy(selectedDevice.id)} style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => void runCacheAction(selectedDevice, "force-sync")}>
-                                                            <RefreshCw size={14} /> Force Device Sync
-                                                        </button>
-                                                        <button className="btn-outline" disabled={!canEdit || isBusy(selectedDevice.id)} style={{ display: "flex", alignItems: "center", gap: 6 }} onClick={() => void runCacheAction(selectedDevice, "redownload")}>
-                                                            <Download size={14} /> Redownload Playlist
-                                                        </button>
-                                                        <button className="btn-outline" disabled={!canEdit || isBusy(selectedDevice.id)} style={{ display: "flex", alignItems: "center", gap: 6, borderColor: "#f87171", color: "#f87171" }} onClick={() => void runCacheAction(selectedDevice, "clear")}>
-                                                            <Trash2 size={14} /> Clear Cache
-                                                        </button>
-                                                    </div>
-                                                </>
-                                            ) : (
-                                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem", display: "flex", alignItems: "center", gap: 8 }}>
-                                                    <CloudOff size={16} /> Cache data unavailable for this device.
-                                                </p>
-                                            )}
-                                        </div>
-
-                                        <div style={{ display: "flex", gap: 12, justifyContent: "space-between", flexWrap: "wrap" }}>
-                                            <div style={{ display: "flex", gap: 10 }}>
-                                                <button
-                                                    className="btn-outline"
-                                                    disabled={!canEdit || isBusy(selectedDevice.id)}
-                                                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                                                    onClick={() => void refreshDevice(selectedDevice)}
-                                                >
-                                                    <RefreshCw
-                                                        size={16}
-                                                        className={
-                                                            isBusy(selectedDevice.id) && pendingAction === "refresh" ? "spin" : ""
-                                                        }
-                                                    />
-                                                    Refresh
-                                                </button>
-                                                <button
-                                                    className="btn-outline"
-                                                    disabled={!canControl || isBusy(selectedDevice.id)}
-                                                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                                                    onClick={() => void captureScreenshot(selectedDevice)}
-                                                >
-                                                    <Eye size={16} /> Screenshot
-                                                </button>
-                                                <button
-                                                    className="btn-outline"
-                                                    disabled={!canEdit || isBusy(selectedDevice.id)}
-                                                    style={{ display: "flex", alignItems: "center", gap: 8 }}
-                                                    onClick={() => startEdit(selectedDevice)}
-                                                >
-                                                    <Pencil size={16} /> Edit
-                                                </button>
-                                            </div>
-                                            <div style={{ display: "flex", gap: 10 }}>
-                                                <button
-                                                    className="btn-outline"
-                                                    disabled={!canControl || isBusy(selectedDevice.id)}
-                                                    style={{
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 8,
-                                                        borderColor: "#fbbf24",
-                                                        color: "#fbbf24",
-                                                        opacity: canControl ? 1 : 0.55,
-                                                        cursor: canControl ? "pointer" : "not-allowed",
-                                                    }}
-                                                    onClick={() => void rebootDevice(selectedDevice)}
-                                                >
-                                                    <RefreshCw
-                                                        size={16}
-                                                        className={
-                                                            isBusy(selectedDevice.id) && pendingAction === "reboot" ? "spin" : ""
-                                                        }
-                                                    />{" "}
-                                                    Reboot
-                                                </button>
-                                                <button
-                                                    className="btn-outline"
-                                                    disabled={!canControl || isBusy(selectedDevice.id)}
-                                                    style={{
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 8,
-                                                        borderColor: "hsl(var(--status-danger))",
-                                                        color: "hsl(var(--status-danger))",
-                                                        opacity: canControl ? 1 : 0.55,
-                                                        cursor: canControl ? "pointer" : "not-allowed",
-                                                    }}
-                                                    onClick={() => void deleteDevice(selectedDevice)}
-                                                >
-                                                    <Trash2 size={16} /> Unregister
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                                        <h3 style={{ fontSize: "0.9rem", fontWeight: 700, color: "hsl(var(--text-muted))" }}>
-                                            EDIT DEVICE
-                                        </h3>
-                                        <DeviceFormFields form={editForm} setForm={setEditForm} />
-                                        <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
-                                            <button
-                                                className="btn-outline"
-                                                onClick={() => setIsEditing(false)}
-                                                disabled={pendingAction === "edit"}
-                                            >
-                                                Cancel
-                                            </button>
-                                            <button
-                                                className="btn-primary"
-                                                onClick={() => void submitEdit()}
-                                                disabled={pendingAction === "edit"}
-                                                style={{ display: "flex", alignItems: "center", gap: 8 }}
-                                            >
-                                                <Save size={16} />
-                                                {pendingAction === "edit" ? "Saving..." : "Save changes"}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                         </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>
+
 
             {/* Pairing / Add Device Modal */}
             <AnimatePresence>
