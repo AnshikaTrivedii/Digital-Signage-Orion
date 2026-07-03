@@ -138,12 +138,26 @@ export class PlayerService {
    * Called by the Android player on first boot.
    * Creates (or updates) a draft Device with a pairing code.
    */
-  async initPairing(hardwareId: string) {
+  async initPairing(body: {
+    hardwareId: string;
+    androidVersion?: string;
+    playerVersion?: string;
+    manufacturer?: string;
+    deviceModel?: string;
+    deviceName?: string;
+    ip?: string;
+    macAddress?: string;
+    resolution?: string;
+    orientation?: string;
+    timezone?: string;
+  }) {
+    const hardwareId = body.hardwareId;
     if (!hardwareId?.trim()) {
       throw new BadRequestException('hardwareId is required');
     }
 
     const trimmedId = hardwareId.trim();
+    const registrationMetadata = this.buildRegistrationMetadata(body);
 
     // Check if device already exists with this hardwareId
     const existing = await this.prisma.device.findUnique({
@@ -151,6 +165,13 @@ export class PlayerService {
     });
 
     if (existing) {
+      if (Object.keys(registrationMetadata).length > 0) {
+        await this.prisma.device.update({
+          where: { id: existing.id },
+          data: registrationMetadata,
+        });
+      }
+
       // Already paired — return token info
       if (existing.isPaired && existing.deviceToken) {
         return {
@@ -182,6 +203,7 @@ export class PlayerService {
           pairingSecret,
           isPaired: false,
           deviceToken: null,
+          ...registrationMetadata,
         },
       });
 
@@ -199,11 +221,12 @@ export class PlayerService {
     await this.prisma.device.create({
       data: {
         hardwareId: trimmedId,
-        name: `Device-${trimmedId.slice(0, 8)}`,
+        name: body.deviceName?.trim() || `Device-${trimmedId.slice(0, 8)}`,
         pairingCode,
         pairingSecret,
         isPaired: false,
         status: DeviceStatus.OFFLINE,
+        ...registrationMetadata,
       },
     });
 
@@ -215,6 +238,34 @@ export class PlayerService {
       pairingCode,
       pairingSecret,
     };
+  }
+
+  private buildRegistrationMetadata(body: {
+    androidVersion?: string;
+    playerVersion?: string;
+    manufacturer?: string;
+    deviceModel?: string;
+    deviceName?: string;
+    ip?: string;
+    macAddress?: string;
+    resolution?: string;
+    orientation?: string;
+    timezone?: string;
+  }) {
+    const data: Record<string, string> = {};
+    if (body.androidVersion?.trim()) {
+      data.androidVersion = body.androidVersion.trim();
+      data.os = body.androidVersion.trim();
+    }
+    if (body.playerVersion?.trim()) data.playerVersion = body.playerVersion.trim();
+    if (body.manufacturer?.trim()) data.manufacturer = body.manufacturer.trim();
+    if (body.deviceModel?.trim()) data.deviceModel = body.deviceModel.trim();
+    if (body.ip?.trim()) data.ip = body.ip.trim();
+    if (body.macAddress?.trim()) data.macAddress = body.macAddress.trim();
+    if (body.resolution?.trim()) data.resolution = body.resolution.trim();
+    if (body.orientation?.trim()) data.orientation = body.orientation.trim();
+    if (body.timezone?.trim()) data.timezone = body.timezone.trim();
+    return data;
   }
 
   /**
@@ -318,6 +369,8 @@ export class PlayerService {
       playerVersion?: string;
       deviceModel?: string;
       manufacturer?: string;
+      deviceName?: string;
+      lastSyncTime?: string;
       storageTotalBytes?: number;
       storageFreeBytes?: number;
       networkStatus?: string;
@@ -380,6 +433,8 @@ export class PlayerService {
       playerVersion?: string;
       deviceModel?: string;
       manufacturer?: string;
+      deviceName?: string;
+      lastSyncTime?: string;
       storageTotalBytes?: number;
       storageFreeBytes?: number;
       networkStatus?: string;

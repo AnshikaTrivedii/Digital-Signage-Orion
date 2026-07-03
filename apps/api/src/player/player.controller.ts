@@ -30,7 +30,7 @@ export class PlayerController {
    */
   @Post('init-pairing')
   initPairing(@Body() body: InitPairingDto) {
-    return this.playerService.initPairing(body.hardwareId);
+    return this.playerService.initPairing(body);
   }
 
   /**

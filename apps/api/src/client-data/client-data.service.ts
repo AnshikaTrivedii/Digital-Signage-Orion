@@ -1137,7 +1137,9 @@ export class ClientDataService {
       androidVersion: device.androidVersion || device.os,
       playerVersion: device.playerVersion ?? '',
       lastSeen: device.lastSeenAt?.toISOString() ?? null,
-      lastSyncTime: device.lastSuccessfulSyncAt?.toISOString() ?? device.cacheLastReportedAt?.toISOString() ?? null,
+      lastSyncTime: device.lastSuccessfulSyncAt?.toISOString()
+        ?? device.cacheLastReportedAt?.toISOString()
+        ?? (device.lastSync !== 'Awaiting first sync' ? device.lastSync : null),
       macAddress: device.macAddress ?? '',
       deviceModel: device.deviceModel ?? '',
       manufacturer: device.manufacturer ?? '',

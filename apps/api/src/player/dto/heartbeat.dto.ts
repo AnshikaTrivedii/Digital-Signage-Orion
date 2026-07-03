@@ -121,6 +121,14 @@ export class HeartbeatDto {
   manufacturer?: string;
 
   @IsOptional()
+  @IsString()
+  deviceName?: string;
+
+  @IsOptional()
+  @IsString()
+  lastSyncTime?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(0)
   storageTotalBytes?: number;

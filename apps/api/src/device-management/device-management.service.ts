@@ -65,7 +65,9 @@ export class DeviceManagementService {
       manufacturer: device.manufacturer,
       lastSeen: device.lastSeenAt?.toISOString() ?? null,
       lastSync: device.lastSync,
-      lastSyncTime: device.lastSuccessfulSyncAt?.toISOString() ?? device.cacheLastReportedAt?.toISOString() ?? null,
+      lastSyncTime: device.lastSuccessfulSyncAt?.toISOString()
+        ?? device.cacheLastReportedAt?.toISOString()
+        ?? this.parseLastSyncFallback(device.lastSync),
       uptime: device.uptime,
       currentContent: device.currentLayout?.name ?? device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',
     };
@@ -211,7 +213,7 @@ export class DeviceManagementService {
         ...(category ? { category } : {}),
       },
       orderBy: { createdAt: 'desc' },
-      take: Math.min(limit, 500),
+      take: Math.min(Math.max(1, limit ?? 100), 500),
     });
 
     return {
@@ -310,6 +312,15 @@ export class DeviceManagementService {
     if (report.playerVersion !== undefined) data.playerVersion = report.playerVersion;
     if (report.deviceModel !== undefined) data.deviceModel = report.deviceModel;
     if (report.manufacturer !== undefined) data.manufacturer = report.manufacturer;
+    if (report.deviceName !== undefined && report.deviceName.trim()) {
+      data.name = report.deviceName.trim();
+    }
+    if (report.lastSyncTime !== undefined) {
+      const parsed = new Date(report.lastSyncTime);
+      if (!Number.isNaN(parsed.getTime())) {
+        data.lastSuccessfulSyncAt = parsed;
+      }
+    }
     if (report.storageTotalBytes !== undefined) data.storageTotalBytes = report.storageTotalBytes;
     if (report.storageFreeBytes !== undefined) data.storageFreeBytes = report.storageFreeBytes;
     if (report.networkStatus !== undefined) data.networkStatus = report.networkStatus;
@@ -385,6 +396,12 @@ export class DeviceManagementService {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
   }
+
+  private parseLastSyncFallback(lastSync: string | null | undefined): string | null {
+    if (!lastSync || lastSync === 'Awaiting first sync') return null;
+    const parsed = new Date(lastSync);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
 }
 
 export type DeviceTelemetryReport = {
@@ -405,6 +422,8 @@ export type DeviceTelemetryReport = {
   playerVersion?: string;
   deviceModel?: string;
   manufacturer?: string;
+  deviceName?: string;
+  lastSyncTime?: string;
   storageTotalBytes?: number;
   storageFreeBytes?: number;
   networkStatus?: string;

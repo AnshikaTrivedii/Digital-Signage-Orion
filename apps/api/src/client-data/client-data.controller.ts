@@ -330,7 +330,7 @@ export class ClientDataController {
     @Param('deviceId') deviceId: string,
     @Query() query: DeviceLogsQueryDto,
   ) {
-    return this.clientDataService.getDeviceLogs(actor, deviceId, query.category, query.limit);
+    return this.clientDataService.getDeviceLogs(actor, deviceId, query.category, query.limit ?? 100);
   }
 
   @Post('devices/:deviceId/actions/:action')

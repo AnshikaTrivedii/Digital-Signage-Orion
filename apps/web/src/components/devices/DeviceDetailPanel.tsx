@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { apiRequest, ApiError } from "@/lib/api";
 import { formatReportDateTime } from "@/lib/format-datetime";
+import { buildDeviceLogsQuery } from "@/lib/pagination";
 
 type Tab = "overview" | "health" | "permissions" | "settings" | "features" | "cache" | "logs" | "actions";
 
@@ -250,7 +251,7 @@ export function DeviceDetailPanel({
                 apiRequest<DeviceSettings>(`${base}/settings`, { headers: orgHeaders }),
                 apiRequest<DeviceFeatures>(`${base}/features`, { headers: orgHeaders }),
                 apiRequest<DeviceCacheStatus>(`${base}/cache/refresh-status`, { method: "POST", headers: orgHeaders }),
-                apiRequest<{ logs: DeviceLog[] }>(`${base}/logs?limit=50`, { headers: orgHeaders }),
+                apiRequest<{ logs: DeviceLog[] }>(`${base}/logs${buildDeviceLogsQuery({ limit: 50 })}`, { headers: orgHeaders }),
             ]);
             setStatusInfo(status);
             setHealth(healthData);
@@ -280,8 +281,10 @@ export function DeviceDetailPanel({
     const loadLogs = async (category: string) => {
         setLogCategory(category);
         try {
-            const query = category === "all" ? "?limit=100" : `?category=${category.toUpperCase()}&limit=100`;
-            const data = await apiRequest<{ logs: DeviceLog[] }>(`${base}/logs${query}`, { headers: orgHeaders });
+            const data = await apiRequest<{ logs: DeviceLog[] }>(
+                `${base}/logs${buildDeviceLogsQuery({ category, limit: 100 })}`,
+                { headers: orgHeaders },
+            );
             setLogs(data.logs);
         } catch (error) {
             toast.error(describeError(error, "Failed to load logs"));
