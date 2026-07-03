@@ -647,6 +647,8 @@ model Asset {
   width                  Int?
   height                 Int?
   durationMs             Int?
+  thumbnailS3Key         String?
+  documentFormat         String?
   uploadedById           String
   tags                   String[]      @default([])
   contentVersion         Int           @default(1)

@@ -13,6 +13,8 @@ import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { useAuth } from "@/components/AuthProvider";
 import { API_BASE, apiRequest } from "@/lib/api";
 import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
+import { ASSET_UPLOAD_ACCEPT, resolveFileMimeType, SUPPORTED_UPLOAD_LABEL } from "@/lib/asset-media";
+import { AssetPreview } from "@/components/assets/AssetPreview";
 
 interface Asset {
     id: string;
@@ -25,6 +27,11 @@ interface Asset {
     fileSize: number;
     url?: string | null;
     defaultDurationSeconds?: number | null;
+    documentFormat?: string | null;
+    previewKind?: string | null;
+    thumbnailUrl?: string | null;
+    fileUrl?: string | null;
+    durationSeconds?: number | null;
     width: number | null;
     height: number | null;
     durationMs: number | null;
@@ -91,6 +98,7 @@ const TAB_TO_TYPE: Record<string, string | undefined> = {
     Videos: "VIDEO",
     HTML: "HTML",
     Docs: "DOCUMENT",
+    Documents: "DOCUMENT",
     URLs: "URL",
 };
 
@@ -379,13 +387,14 @@ export default function AssetsPage() {
             setUploadProgress(Math.round(((i) / files.length) * 100));
 
             try {
+                const mimeType = resolveFileMimeType(file);
                 const { asset, uploadUrl } = await apiRequest<{ asset: Asset; uploadUrl: string }>(
                     `/api/organizations/${orgId}/assets/upload-url`,
                     {
                         method: "POST",
                         body: JSON.stringify({
                             filename: file.name,
-                            mimeType: file.type || "application/octet-stream",
+                            mimeType,
                             fileSize: file.size,
                             folderId: currentFolderId,
                         }),
@@ -395,7 +404,7 @@ export default function AssetsPage() {
                 await new Promise<void>((resolve, reject) => {
                     const xhr = new XMLHttpRequest();
                     xhr.open("PUT", uploadUrl, true);
-                    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+                    xhr.setRequestHeader("Content-Type", mimeType);
                     if (uploadUrl.startsWith(API_BASE)) {
                         const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
                         if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
@@ -621,7 +630,7 @@ export default function AssetsPage() {
 
             <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 6, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
-                    {["All", "Images", "Videos", "HTML", "Docs", "URLs"].map(tab => (
+                    {["All", "Images", "Videos", "HTML", "Documents", "URLs"].map(tab => (
                         <button key={tab} onClick={() => setActiveTab(tab)} style={{
                             padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: "0.85rem", fontWeight: 500,
                             background: activeTab === tab ? "hsla(var(--accent-primary), 0.15)" : "transparent",
@@ -734,14 +743,9 @@ export default function AssetsPage() {
                                     className="glass-card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
                                     <div style={{ height: 160, position: "relative", background: "hsla(var(--bg-base), 0.4)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
                                         <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at center, ${getGlowColor(asset.type)}15, transparent 70%)`, pointerEvents: "none" }} />
-                                        {asset.downloadUrl && asset.type === "IMAGE" ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img src={asset.downloadUrl} alt={asset.name} style={{ width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }} />
-                                        ) : asset.downloadUrl && asset.type === "VIDEO" ? (
-                                            <video src={asset.downloadUrl} style={{ width: "100%", height: "100%", objectFit: "cover", zIndex: 1 }} />
-                                        ) : (
-                                            <motion.div style={{ zIndex: 1 }} whileHover={{ scale: 1.15, rotate: 2 }} transition={{ type: "spring", stiffness: 300 }}>{getIcon(asset.type, 48)}</motion.div>
-                                        )}
+                                        <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
+                                            <AssetPreview asset={asset} size="card" iconSize={48} />
+                                        </div>
                                         <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.58)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s", zIndex: 2 }}>
                                             <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleViewAsset(asset)}><Eye size={18} /></button>
                                         </div>
@@ -919,7 +923,7 @@ export default function AssetsPage() {
                                     borderColor: dragActive ? "hsl(var(--accent-primary))" : "hsla(var(--border-strong), 0.6)",
                                     background: dragActive ? "hsla(var(--accent-primary), 0.1)" : "hsla(var(--bg-base), 0.4)"
                                 }}>
-                                <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={e => handleFileUpload(e.target.files)} />
+                                <input ref={fileInputRef} type="file" multiple accept={ASSET_UPLOAD_ACCEPT} style={{ display: "none" }} onChange={e => handleFileUpload(e.target.files)} />
                                 <div style={{ width: 64, height: 64, borderRadius: "50%", background: "hsla(var(--bg-surface-elevated), 0.8)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "hsl(var(--accent-primary))" }}>
                                     <UploadCloud size={32} />
                                 </div>
@@ -928,7 +932,7 @@ export default function AssetsPage() {
                             </div>
                             <div style={{ marginTop: 24, padding: "12px 16px", background: "hsla(var(--status-info), 0.1)", borderRadius: 10, display: "flex", gap: 12, alignItems: "flex-start" }}>
                                 <AlertCircle size={18} style={{ color: "hsl(var(--status-info))", flexShrink: 0, marginTop: 2 }} />
-                                <p style={{ fontSize: "0.75rem", color: "hsl(var(--status-info))", lineHeight: 1.4 }}>Max file size: 500MB. Supported: MP4, MOV, WebM, JPG, PNG, WEBP, GIF, SVG, HTML, PDF.</p>
+                                <p style={{ fontSize: "0.75rem", color: "hsl(var(--status-info))", lineHeight: 1.4 }}>Max file size: 500MB. Supported: {SUPPORTED_UPLOAD_LABEL}.</p>
                             </div>
                             <div style={{ marginTop: 32, display: "flex", justifyContent: "flex-end", gap: 12 }}>
                                 <button className="btn-outline" onClick={() => setIsUploadOpen(false)}>Cancel</button>
@@ -952,15 +956,8 @@ export default function AssetsPage() {
                                 <button className="btn-icon-soft" onClick={() => setSelectedAsset(null)}><X size={24} /></button>
                             </div>
 
-                            <div style={{ height: 220, background: "hsla(var(--bg-base), 0.85)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 24, overflow: "hidden" }}>
-                                {selectedAsset.downloadUrl && selectedAsset.type === "IMAGE" ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={selectedAsset.downloadUrl} alt={selectedAsset.name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
-                                ) : selectedAsset.downloadUrl && selectedAsset.type === "VIDEO" ? (
-                                    <video src={selectedAsset.downloadUrl} controls style={{ maxWidth: "100%", maxHeight: "100%" }} />
-                                ) : (
-                                    getIcon(selectedAsset.type, 64)
-                                )}
+                            <div style={{ height: 220, background: "hsla(var(--bg-base), 0.85)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
+                                <AssetPreview asset={selectedAsset} size="inspector" iconSize={64} />
                             </div>
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
@@ -970,7 +967,13 @@ export default function AssetsPage() {
                                     { label: "Size", value: formatFileSize(selectedAsset.fileSize) },
                                     { label: "Dimensions", value: selectedAsset.width && selectedAsset.height ? `${selectedAsset.width}×${selectedAsset.height}` : "N/A" },
                                     { label: "Uploaded", value: formatDate(selectedAsset.createdAt) },
-                                    { label: "Duration", value: selectedAsset.type === "URL" ? `${selectedAsset.defaultDurationSeconds ?? 15}s default` : (formatDuration(selectedAsset.durationMs) || "N/A") },
+                                    {
+                                        label: "Duration",
+                                        value:
+                                            selectedAsset.type === "URL" || selectedAsset.type === "HTML" || selectedAsset.type === "DOCUMENT"
+                                                ? `${selectedAsset.defaultDurationSeconds ?? selectedAsset.durationSeconds ?? (selectedAsset.type === "HTML" ? 30 : 20)}s default`
+                                                : (formatDuration(selectedAsset.durationMs) || `${selectedAsset.defaultDurationSeconds ?? 10}s default`),
+                                    },
                                     ...(selectedAsset.type === "URL" ? [{ label: "Website URL", value: selectedAsset.url || "N/A" }] : []),
                                     { label: "MIME Type", value: selectedAsset.mimeType },
                                     { label: "Uploaded By", value: selectedAsset.uploadedBy?.fullName || "Unknown" },

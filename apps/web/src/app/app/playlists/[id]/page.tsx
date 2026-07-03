@@ -2,18 +2,24 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, Reorder, useDragControls } from "framer-motion";
-import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Video, FileText, Globe, Folder as FolderIcon, ChevronRight, ChevronLeft, Home } from "lucide-react";
+import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Folder as FolderIcon, ChevronRight, ChevronLeft, Home } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { apiRequest, apiDelete, ApiError } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
+import { AssetPreview, AssetTypeIcon } from "@/components/assets/AssetPreview";
 
 interface Asset {
     id: string;
     name: string;
     type: string;
     downloadUrl: string | null;
+    thumbnailUrl?: string | null;
+    fileUrl?: string | null;
     url?: string | null;
+    mimeType?: string;
+    documentFormat?: string | null;
+    previewKind?: string | null;
     defaultDurationSeconds?: number | null;
 }
 
@@ -44,7 +50,12 @@ interface PlaylistAsset {
     durationSeconds: number;
     position: number;
     downloadUrl: string | null;
+    thumbnailUrl?: string | null;
+    fileUrl?: string | null;
     url?: string | null;
+    mimeType?: string;
+    documentFormat?: string | null;
+    previewKind?: string | null;
 }
 
 type PlaylistAssetRowProps = {
@@ -114,14 +125,7 @@ function PlaylistAssetRow({
             </div>
 
             <div style={{ width: 80, height: 50, borderRadius: 8, background: "hsla(var(--bg-base), 0.8)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {asset.downloadUrl ? (
-                    asset.type === "VIDEO" ? (
-                        <video src={asset.downloadUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    ) : (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={asset.downloadUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    )
-                ) : getIcon(asset.type)}
+                <AssetPreview asset={asset} size="thumb" iconSize={22} />
             </div>
 
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -505,12 +509,9 @@ export default function PlaylistBuilderPage() {
         void saveAssetOrder(pendingOrderRef.current);
     };
 
-    const getIcon = (type: string) => {
-        if (type === "VIDEO") return <Video size={24} />;
-        if (type === "IMAGE") return <ImageIcon size={24} />;
-        if (type === "URL") return <Globe size={24} />;
-        return <FileText size={24} />;
-    };
+    const getIcon = (type: string, documentFormat?: string | null, previewKind?: string | null) => (
+        <AssetTypeIcon type={type} documentFormat={documentFormat} previewKind={previewKind} size={24} />
+    );
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ display: "flex", flexDirection: "column", height: "100%", gap: 24, paddingBottom: 40 }}>
@@ -617,15 +618,8 @@ export default function PlaylistBuilderPage() {
                                     style={{ padding: 8, display: "flex", alignItems: "center", gap: 12, cursor: canEdit ? "pointer" : "default" }}
                                     onClick={() => handleAddAsset(asset)}
                                 >
-                                    <div style={{ width: 48, height: 48, borderRadius: 8, background: "hsla(var(--bg-base), 0.8)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                        {asset.downloadUrl ? (
-                                            asset.type === "VIDEO" ? (
-                                                <video src={asset.downloadUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                            ) : (
-                                                // eslint-disable-next-line @next/next/no-img-element
-                                                <img src={asset.downloadUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                                            )
-                                        ) : getIcon(asset.type)}
+                                    <div style={{ width: 48, height: 48, borderRadius: 8, background: "hsla(var(--bg-base), 0.8)", overflow: "hidden" }}>
+                                        <AssetPreview asset={asset} size="thumb" iconSize={20} />
                                     </div>
                                     <div style={{ flex: 1, overflow: "hidden" }}>
                                         <p style={{ fontSize: "0.85rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{asset.name}</p>

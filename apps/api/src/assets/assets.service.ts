@@ -16,19 +16,10 @@ import { RequestUploadDto } from './dto/request-upload.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetTagsDto } from './dto/update-asset-tags.dto';
 import { UpdateFolderDto } from './dto/update-folder.dto';
-
-const ALLOWED_MIME_TYPES: Record<string, AssetType> = {
-  'image/jpeg': AssetType.IMAGE,
-  'image/png': AssetType.IMAGE,
-  'image/webp': AssetType.IMAGE,
-  'image/gif': AssetType.IMAGE,
-  'image/svg+xml': AssetType.IMAGE,
-  'video/mp4': AssetType.VIDEO,
-  'video/quicktime': AssetType.VIDEO,
-  'video/webm': AssetType.VIDEO,
-  'text/html': AssetType.HTML,
-  'application/pdf': AssetType.DOCUMENT,
-};
+import {
+  getPreviewKind,
+  resolveUploadMedia,
+} from './asset-media.utils';
 
 @Injectable()
 export class AssetsService {
@@ -84,31 +75,38 @@ export class AssetsService {
       metadata: { url, defaultDurationSeconds },
     });
 
-    return this.formatAsset(asset);
+    return this.enrichAssetResponse(asset);
   }
 
   async requestUpload(actor: RequestActor, organizationId: string, dto: RequestUploadDto) {
     this.ensureOrganizationAccess(actor, organizationId);
     this.assertCanEdit(actor);
 
-    const assetType = ALLOWED_MIME_TYPES[dto.mimeType];
-    if (!assetType) {
-      const allowed = Object.keys(ALLOWED_MIME_TYPES).join(', ');
-      throw new BadRequestException(`Unsupported file type: ${dto.mimeType}. Allowed: ${allowed}`);
+    let resolved;
+    try {
+      resolved = resolveUploadMedia(dto.filename, dto.mimeType);
+    } catch (error) {
+      throw new BadRequestException(
+        error instanceof Error ? error.message : 'Unsupported file type',
+      );
     }
 
     const folderId = await this.resolveFolderId(organizationId, dto.folderId);
+    const defaultDurationSeconds =
+      dto.durationSeconds ?? resolved.defaultDurationSeconds;
 
     const asset = await this.prisma.asset.create({
       data: {
         organizationId,
         folderId,
         name: dto.filename,
-        type: assetType,
+        type: resolved.assetType,
         status: AssetStatus.UPLOADING,
-        mimeType: dto.mimeType,
+        mimeType: resolved.mimeType,
         fileSize: dto.fileSize,
         s3Key: '', // placeholder, set after key is built
+        defaultDurationSeconds,
+        documentFormat: resolved.documentFormat,
         uploadedById: actor.userId,
       },
     });
@@ -122,10 +120,10 @@ export class AssetsService {
 
     const uploadUrl = this.s3.useLocalStorage
       ? this.s3.buildLocalUploadUrl(organizationId, asset.id)
-      : await this.s3.generateUploadUrl(s3Key, dto.mimeType);
+      : await this.s3.generateUploadUrl(s3Key, resolved.mimeType);
 
     return {
-      asset: this.formatAsset(updatedAsset),
+      asset: await this.enrichAssetResponse(updatedAsset),
       uploadUrl,
     };
   }
@@ -183,10 +181,7 @@ export class AssetsService {
     }
 
     if (asset.status === AssetStatus.READY) {
-      return {
-        ...this.formatAsset(asset),
-        downloadUrl: await this.resolveAssetDownloadUrl(asset),
-      };
+      return this.enrichAssetResponse(asset);
     }
 
     // Verify the file actually exists in S3
@@ -199,6 +194,8 @@ export class AssetsService {
       throw new BadRequestException('File not found in storage. Upload may have failed.');
     }
 
+    const thumbnailS3Key = asset.type === AssetType.IMAGE ? asset.s3Key : asset.thumbnailS3Key;
+
     const updatedAsset = await this.prisma.asset.update({
       where: { id: assetId },
       data: {
@@ -206,6 +203,7 @@ export class AssetsService {
         fileSize: head.contentLength || asset.fileSize,
         contentHash: head.etag ?? null,
         contentVersion: { increment: 1 },
+        thumbnailS3Key,
       },
     });
 
@@ -221,10 +219,7 @@ export class AssetsService {
       metadata: { filename: asset.name, type: asset.type, fileSize: updatedAsset.fileSize },
     });
 
-    return {
-      ...this.formatAsset(updatedAsset),
-      downloadUrl: await this.resolveAssetDownloadUrl(updatedAsset),
-    };
+    return this.enrichAssetResponse(updatedAsset);
   }
 
   async listAssets(
@@ -282,10 +277,7 @@ export class AssetsService {
     ]);
 
     const assetsWithUrls = await Promise.all(
-      assets.map(async (asset) => ({
-        ...this.formatAsset(asset),
-        downloadUrl: await this.resolveAssetDownloadUrl(asset),
-      })),
+      assets.map((asset) => this.enrichAssetResponse(asset)),
     );
 
     return {
@@ -315,10 +307,7 @@ export class AssetsService {
       throw new NotFoundException('Asset not found');
     }
 
-    return {
-      ...this.formatAsset(asset),
-      downloadUrl: await this.resolveAssetDownloadUrl(asset),
-    };
+    return this.enrichAssetResponse(asset);
   }
 
   async deleteAsset(actor: RequestActor, organizationId: string, assetId: string) {
@@ -377,10 +366,7 @@ export class AssetsService {
       data: { tags: dto.tags },
     });
 
-    return {
-      ...this.formatAsset(updated),
-      downloadUrl: await this.resolveAssetDownloadUrl(updated),
-    };
+    return this.enrichAssetResponse(updated);
   }
 
   async updateAsset(actor: RequestActor, organizationId: string, assetId: string, dto: UpdateAssetDto) {
@@ -402,18 +388,25 @@ export class AssetsService {
     if (dto.folderId !== undefined) {
       data.folderId = await this.resolveFolderId(organizationId, dto.folderId);
     }
+    if (dto.defaultDurationSeconds !== undefined) {
+      if (dto.defaultDurationSeconds < 1) {
+        throw new BadRequestException('Duration must be at least 1 second');
+      }
+      data.defaultDurationSeconds = dto.defaultDurationSeconds;
+    }
 
     if (Object.keys(data).length === 0) {
-      return {
-        ...this.formatAsset(asset),
-        downloadUrl: await this.resolveAssetDownloadUrl(asset),
-      };
+      return this.enrichAssetResponse(asset);
     }
 
     const updated = await this.prisma.asset.update({
       where: { id: assetId },
       data,
     });
+
+    if (dto.defaultDurationSeconds !== undefined) {
+      await this.playlistSync.bumpPlaylistsForAsset(assetId);
+    }
 
     await this.auditService.log({
       actorUserId: actor.userId,
@@ -422,13 +415,10 @@ export class AssetsService {
       targetType: 'asset',
       targetId: assetId,
       summary: `${actor.email} updated asset ${updated.name}`,
-      metadata: { folderId: updated.folderId ?? null },
+      metadata: { folderId: updated.folderId ?? null, defaultDurationSeconds: updated.defaultDurationSeconds },
     });
 
-    return {
-      ...this.formatAsset(updated),
-      downloadUrl: await this.resolveAssetDownloadUrl(updated),
-    };
+    return this.enrichAssetResponse(updated);
   }
 
   // --- Folders ---------------------------------------------------------------
@@ -702,6 +692,43 @@ export class AssetsService {
     throw new ForbiddenException('No access to this organization');
   }
 
+  private async enrichAssetResponse(asset: Record<string, unknown>) {
+    const typed = asset as {
+      type: AssetType;
+      status: AssetStatus;
+      s3Key: string | null;
+      url: string | null;
+      thumbnailS3Key?: string | null;
+      documentFormat?: string | null;
+      defaultDurationSeconds?: number | null;
+    };
+
+    const downloadUrl = await this.resolveAssetDownloadUrl(typed);
+    const thumbnailUrl = await this.resolveAssetThumbnailUrl(typed);
+    const fileUrl = typed.type === AssetType.URL ? typed.url : downloadUrl;
+
+    return {
+      ...this.formatAsset(asset),
+      downloadUrl,
+      thumbnailUrl,
+      fileUrl,
+      previewKind: getPreviewKind(typed.type, typed.documentFormat ?? null),
+      durationSeconds: typed.defaultDurationSeconds ?? null,
+    };
+  }
+
+  private async resolveAssetThumbnailUrl(asset: {
+    type: AssetType;
+    status: AssetStatus;
+    s3Key: string | null;
+    thumbnailS3Key?: string | null;
+  }) {
+    if (asset.status !== AssetStatus.READY) return null;
+    const key = asset.thumbnailS3Key ?? (asset.type === AssetType.IMAGE ? asset.s3Key : null);
+    if (!key) return null;
+    return this.s3.generateDownloadUrl(key);
+  }
+
   private formatAsset(asset: Record<string, unknown>) {
     return {
       id: asset.id,
@@ -714,6 +741,7 @@ export class AssetsService {
       fileSize: asset.fileSize,
       url: asset.url ?? null,
       defaultDurationSeconds: asset.defaultDurationSeconds ?? null,
+      documentFormat: asset.documentFormat ?? null,
       width: asset.width ?? null,
       height: asset.height ?? null,
       durationMs: asset.durationMs ?? null,

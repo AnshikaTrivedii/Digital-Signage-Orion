@@ -32,6 +32,7 @@ import type { RequestActor } from '../common/interfaces/request-with-actor.inter
 import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import { formatReportDateTime } from '../common/format-datetime';
+import { getPreviewKind } from '../assets/asset-media.utils';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -154,9 +155,14 @@ export class ClientDataService {
         durationSeconds: pa.durationSeconds,
         position: pa.position,
         downloadUrl: await this.resolveAssetDownloadUrl(pa.asset),
+        thumbnailUrl: await this.resolveAssetThumbnailUrl(pa.asset),
+        fileUrl: pa.asset.type === AssetType.URL ? pa.asset.url : await this.resolveAssetDownloadUrl(pa.asset),
         url: pa.asset.url ?? null,
         fileSize: pa.asset.fileSize,
         mimeType: pa.asset.mimeType,
+        documentFormat: pa.asset.documentFormat ?? null,
+        defaultDurationSeconds: pa.asset.defaultDurationSeconds ?? null,
+        previewKind: this.getAssetPreviewKind(pa.asset),
       })),
     );
   }
@@ -2108,6 +2114,25 @@ export class ClientDataService {
     if (asset.type === AssetType.URL) return null;
     if (asset.status !== AssetStatus.READY || !asset.s3Key) return null;
     return this.s3.generateDownloadUrl(asset.s3Key);
+  }
+
+  private async resolveAssetThumbnailUrl(asset: {
+    type: AssetType;
+    status: AssetStatus;
+    s3Key: string | null;
+    thumbnailS3Key?: string | null;
+  }) {
+    if (asset.status !== AssetStatus.READY) return null;
+    const key = asset.thumbnailS3Key ?? (asset.type === AssetType.IMAGE ? asset.s3Key : null);
+    if (!key) return null;
+    return this.s3.generateDownloadUrl(key);
+  }
+
+  private getAssetPreviewKind(asset: {
+    type: AssetType;
+    documentFormat?: string | null;
+  }) {
+    return getPreviewKind(asset.type, asset.documentFormat ?? null);
   }
 
   private async compactPlaylistAssetPositions(
