@@ -127,144 +127,87 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
 
     return (
         <>
-            <aside className={`app-sidebar ${isSidebarOpen ? "open" : ""}`} style={{ width: isDesktopSidebarCollapsed ? 96 : undefined }}>
-                <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24, marginTop: 4, paddingLeft: isDesktopSidebarCollapsed ? 0 : 2, gap: 8 }}>
-                        <Link href={homePath} style={{ display: "flex", flex: 1, flexDirection: "column", alignItems: isDesktopSidebarCollapsed ? "center" : "flex-start", gap: 8, textDecoration: "none", color: "inherit", minWidth: 0, paddingTop: 2 }}>
-                            <OrionLogo height={isDesktopSidebarCollapsed ? 52 : 104} />
+            <aside className={`app-sidebar ${isSidebarOpen ? "open" : ""} ${isDesktopSidebarCollapsed ? "collapsed" : ""}`}>
+                <div className="app-sidebar-inner">
+                    <div className="sidebar-brand-row">
+                        <Link href={homePath} className="sidebar-brand" title="Orion">
+                            <OrionLogo height={isDesktopSidebarCollapsed ? 40 : 72} priority />
                             {!isDesktopSidebarCollapsed && (
-                                <div style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", letterSpacing: "0.12em", whiteSpace: "nowrap", fontWeight: 600 }}>
-                                    {getPortalTitle(portal)}
-                                </div>
+                                <span className="sidebar-brand-label">{getPortalTitle(portal)}</span>
                             )}
                         </Link>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                            <button className="desktop-only btn-icon-soft" onClick={() => setDesktopSidebarCollapsed((current) => !current)}>
-                                {isDesktopSidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, marginTop: 2 }}>
+                            <button
+                                type="button"
+                                className="desktop-only btn-icon-soft"
+                                onClick={() => setDesktopSidebarCollapsed((current) => !current)}
+                                aria-label={isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+                            >
+                                {isDesktopSidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
                             </button>
-                            <button className="mobile-only btn-icon-soft" onClick={() => setSidebarOpen(false)}>
+                            <button type="button" className="mobile-only btn-icon-soft" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
                                 <Menu size={18} />
                             </button>
                         </div>
                     </div>
 
-                    <nav style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                    <nav className="sidebar-nav" aria-label="Main navigation">
                         {visibleNavItems.map((item) => {
-                            const isActive = pathname === item.path;
+                            const isActive = pathname === item.path || (item.path !== homePath && pathname.startsWith(`${item.path}/`));
                             const Icon = item.icon;
                             return (
-                                <Link key={item.path} href={item.path} onClick={() => setSidebarOpen(false)} style={{ textDecoration: "none" }}>
-                                    <div
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 12,
-                                            padding: "12px 16px",
-                                            borderRadius: 12,
-                                            background: isActive ? "hsla(var(--accent-primary), 0.12)" : "transparent",
-                                            color: isActive ? "hsl(var(--accent-primary))" : "hsl(var(--text-secondary))",
-                                            border: isActive ? "1px solid hsla(var(--accent-primary), 0.2)" : "1px solid transparent",
-                                            transition: "all 0.2s ease",
-                                            justifyContent: isDesktopSidebarCollapsed ? "center" : "flex-start",
-                                        }}
-                                    >
-                                        <Icon size={18} />
-                                        {!isDesktopSidebarCollapsed && <span style={{ fontWeight: isActive ? 700 : 500, fontSize: "0.85rem" }}>{item.name}</span>}
-                                    </div>
+                                <Link
+                                    key={item.path}
+                                    href={item.path}
+                                    onClick={() => setSidebarOpen(false)}
+                                    className={`sidebar-nav-item${isActive ? " active" : ""}`}
+                                    title={item.name}
+                                >
+                                    <Icon size={17} strokeWidth={isActive ? 2.25 : 2} />
+                                    {!isDesktopSidebarCollapsed && <span>{item.name}</span>}
                                 </Link>
                             );
                         })}
                     </nav>
 
-                    <div style={{ marginTop: "auto", borderTop: "1px solid hsla(var(--border-subtle), 1)", paddingTop: 20 }}>
-                        {/* Portal Switch Button */}
-                        {(canSwitchToPlatform || canSwitchToClient) && !isDesktopSidebarCollapsed && (
+                    <div className="sidebar-footer">
+                        {(canSwitchToPlatform || canSwitchToClient) && (
                             <Link
                                 href={canSwitchToPlatform ? "/platform" : "/app"}
                                 onClick={() => setSidebarOpen(false)}
-                                style={{ textDecoration: "none", display: "block", marginBottom: 10 }}
-                            >
-                                <div
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 10,
-                                        padding: "11px 14px",
-                                        borderRadius: 12,
-                                        border: "1px solid hsla(var(--accent-secondary), 0.35)",
-                                        background: "hsla(var(--accent-secondary), 0.08)",
-                                        color: "hsl(var(--accent-secondary))",
-                                        cursor: "pointer",
-                                        transition: "all 0.2s ease",
-                                    }}
-                                >
-                                    <ArrowRightLeft size={15} />
-                                    <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>
-                                        {canSwitchToPlatform ? "Platform Portal" : "Client Portal"}
-                                    </span>
-                                </div>
-                            </Link>
-                        )}
-                        {(canSwitchToPlatform || canSwitchToClient) && isDesktopSidebarCollapsed && (
-                            <Link
-                                href={canSwitchToPlatform ? "/platform" : "/app"}
-                                onClick={() => setSidebarOpen(false)}
+                                className="sidebar-portal-switch"
                                 title={canSwitchToPlatform ? "Switch to Platform Portal" : "Switch to Client Portal"}
-                                style={{ textDecoration: "none", display: "flex", justifyContent: "center", marginBottom: 10 }}
                             >
-                                <div
-                                    style={{
-                                        width: 40, height: 40, borderRadius: 12,
-                                        display: "flex", alignItems: "center", justifyContent: "center",
-                                        border: "1px solid hsla(var(--accent-secondary), 0.35)",
-                                        background: "hsla(var(--accent-secondary), 0.08)",
-                                        color: "hsl(var(--accent-secondary))",
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    <ArrowRightLeft size={16} />
-                                </div>
+                                <ArrowRightLeft size={15} />
+                                {!isDesktopSidebarCollapsed && (
+                                    <span>{canSwitchToPlatform ? "Platform Portal" : "Client Portal"}</span>
+                                )}
                             </Link>
                         )}
 
-                        <div className="glass-panel" style={{ padding: 14, background: "hsla(var(--bg-base), 0.4)" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                                <div style={{
-                                    width: 34, height: 34, borderRadius: 10,
-                                    background: "hsla(var(--bg-surface-elevated), 1)",
-                                    display: "flex", alignItems: "center", justifyContent: "center",
-                                    border: "1px solid hsla(var(--border-subtle), 1)",
-                                }}>
-                                    <User size={16} style={{ color: "hsl(var(--text-secondary))" }} />
+                        <div className="sidebar-user-card">
+                            <div className="sidebar-user-meta">
+                                <div className="sidebar-user-avatar" aria-hidden>
+                                    <User size={14} />
                                 </div>
                                 {!isDesktopSidebarCollapsed && (
-                                    <div style={{ minWidth: 0 }}>
-                                        <div style={{ fontSize: "0.82rem", fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.fullName}</div>
-                                        <div style={{ fontSize: "0.68rem", color: "hsl(var(--text-muted))" }}>{roleLabel}</div>
+                                    <div className="sidebar-user-text">
+                                        <div className="sidebar-user-name">{user.fullName}</div>
+                                        <div className="sidebar-user-role">{roleLabel}</div>
                                     </div>
                                 )}
                             </div>
                             {!isDesktopSidebarCollapsed && (
                                 <button
+                                    type="button"
+                                    className="sidebar-sign-out"
                                     onClick={() => {
                                         logout();
                                         router.push("/login");
                                     }}
-                                    style={{
-                                        width: "100%",
-                                        display: "flex",
-                                        alignItems: "center",
-                                        justifyContent: "center",
-                                        gap: 8,
-                                        padding: "9px 12px",
-                                        borderRadius: 10,
-                                        border: "1px solid hsla(var(--border-subtle), 0.5)",
-                                        background: "transparent",
-                                        color: "hsl(var(--status-danger))",
-                                        cursor: "pointer",
-                                    }}
                                 >
-                                    <LogOut size={14} /> Sign Out
+                                    <LogOut size={13} />
+                                    Sign Out
                                 </button>
                             )}
                         </div>
