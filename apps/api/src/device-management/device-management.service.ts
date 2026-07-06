@@ -272,6 +272,7 @@ export class DeviceManagementService {
   getPlayerConfig(device: Device) {
     return {
       configVersion: device.configVersion,
+      popLogsExpected: device.featureProofOfPlay,
       features: {
         autoSync: device.featureAutoSync,
         offlinePlayback: device.featureOfflinePlayback,
