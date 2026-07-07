@@ -120,7 +120,7 @@ export class ClientDataService {
         name: event.name,
         time: `${event.startTime}-${event.endTime}`,
         color: event.color,
-        active: event.status === ScheduleStatus.ACTIVE,
+        active: this.isScheduleActiveNow(event),
       })),
       recentAssets: assets.map((asset) => ({
         id: asset.id,
@@ -486,6 +486,10 @@ export class ClientDataService {
     const events = await this.prisma.scheduleEvent.findMany({
       where: { organizationId },
       orderBy: [{ startTime: 'asc' }, { createdAt: 'desc' }],
+      include: {
+        playlist: { select: { id: true, name: true } },
+        deviceTargets: { include: { device: { select: { id: true, name: true } } } },
+      },
     });
 
     return events.map((event) => this.serializeScheduleEvent(event));
@@ -496,10 +500,13 @@ export class ClientDataService {
     body: {
       name: string;
       campaign?: string;
+      playlistId?: string;
       startTime: string;
       endTime: string;
       days: string[];
       screens?: number;
+      broadcastScope?: string;
+      deviceIds?: string[];
       status?: string;
       priority?: string;
       recurring?: boolean;
@@ -518,23 +525,45 @@ export class ClientDataService {
       throw new BadRequestException('End time must be later than start time');
     }
 
+    const playlist = await this.resolveSchedulePlaylist(organizationId, body.playlistId);
+    const broadcastScope = this.toTickerBroadcastScope(body.broadcastScope);
+    const selectedDeviceIds = await this.resolveScheduleDeviceIds(
+      organizationId,
+      broadcastScope,
+      body.deviceIds,
+    );
+    const screens = await this.countScheduleReach(organizationId, broadcastScope, selectedDeviceIds);
+
     const count = await this.prisma.scheduleEvent.count({ where: { organizationId } });
     const event = await this.prisma.scheduleEvent.create({
       data: {
         organizationId,
         name,
-        campaign: body.campaign?.trim() || 'Unassigned',
+        campaign: body.campaign?.trim() || playlist?.name || 'Unassigned',
+        playlistId: playlist?.id ?? null,
         startTime: body.startTime,
         endTime: body.endTime,
         days: body.days,
-        screens: body.screens ?? 0,
+        screens,
+        broadcastScope,
         status: this.toScheduleStatus(body.status),
         priority: this.toSchedulePriority(body.priority),
         recurring: body.recurring ?? true,
         color: this.sanitizeHexColor(body.color, colorPalette[count % colorPalette.length]),
+        deviceTargets:
+          broadcastScope === TickerBroadcastScope.SELECTED_DEVICES
+            ? {
+                create: selectedDeviceIds.map((deviceId) => ({ deviceId })),
+              }
+            : undefined,
+      },
+      include: {
+        playlist: { select: { id: true, name: true } },
+        deviceTargets: { include: { device: { select: { id: true, name: true } } } },
       },
     });
 
+    await this.applySchedulePlaybackIfDue(organizationId, event);
     return this.serializeScheduleEvent(event);
   }
 
@@ -544,10 +573,13 @@ export class ClientDataService {
     body: {
       name?: string;
       campaign?: string;
+      playlistId?: string;
       startTime?: string;
       endTime?: string;
       days?: string[];
       screens?: number;
+      broadcastScope?: string;
+      deviceIds?: string[];
       status?: string;
       priority?: string;
       recurring?: boolean;
@@ -556,16 +588,28 @@ export class ClientDataService {
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
+    const existing = await this.prisma.scheduleEvent.findFirst({
+      where: { id: eventId, organizationId },
+      include: {
+        playlist: { select: { id: true, name: true } },
+        deviceTargets: { include: { device: { select: { id: true, name: true } } } },
+      },
+    });
     if (!existing) throw new NotFoundException('Schedule event not found');
 
-    const data: Record<string, unknown> = {};
+    const data: Prisma.ScheduleEventUpdateInput = {};
     if (body.name !== undefined) {
       const trimmed = body.name.trim();
       if (!trimmed) throw new BadRequestException('Schedule name cannot be empty');
       data.name = trimmed;
     }
-    if (body.campaign !== undefined) data.campaign = body.campaign.trim() || 'Unassigned';
+    if (body.playlistId !== undefined) {
+      const playlist = await this.resolveSchedulePlaylist(organizationId, body.playlistId || null);
+      data.playlist = playlist ? { connect: { id: playlist.id } } : { disconnect: true };
+      data.campaign = playlist?.name ?? existing.campaign;
+    } else if (body.campaign !== undefined) {
+      data.campaign = body.campaign.trim() || existing.campaign;
+    }
     if (body.startTime !== undefined) {
       if (!this.isValidTime(body.startTime)) throw new BadRequestException('startTime must be HH:MM');
       data.startTime = body.startTime;
@@ -574,8 +618,8 @@ export class ClientDataService {
       if (!this.isValidTime(body.endTime)) throw new BadRequestException('endTime must be HH:MM');
       data.endTime = body.endTime;
     }
-    const nextStart = (data.startTime as string | undefined) ?? existing.startTime;
-    const nextEnd = (data.endTime as string | undefined) ?? existing.endTime;
+    const nextStart = body.startTime ?? existing.startTime;
+    const nextEnd = body.endTime ?? existing.endTime;
     if (this.timeToMinutes(nextEnd) <= this.timeToMinutes(nextStart)) {
       throw new BadRequestException('End time must be later than start time');
     }
@@ -583,24 +627,63 @@ export class ClientDataService {
       if (!body.days.length) throw new BadRequestException('At least one day is required');
       data.days = body.days;
     }
-    if (body.screens !== undefined) data.screens = Math.max(0, body.screens);
     if (body.status !== undefined) data.status = this.toScheduleStatus(body.status);
     if (body.priority !== undefined) data.priority = this.toSchedulePriority(body.priority);
     if (body.recurring !== undefined) data.recurring = body.recurring;
     if (body.color !== undefined) data.color = this.sanitizeHexColor(body.color, existing.color);
 
+    const nextBroadcastScope =
+      body.broadcastScope !== undefined
+        ? this.toTickerBroadcastScope(body.broadcastScope)
+        : existing.broadcastScope;
+    if (body.broadcastScope !== undefined) {
+      data.broadcastScope = nextBroadcastScope;
+    }
+
+    const shouldRefreshTargets =
+      body.broadcastScope !== undefined || body.deviceIds !== undefined;
+    if (shouldRefreshTargets) {
+      const selectedDeviceIds = await this.resolveScheduleDeviceIds(
+        organizationId,
+        nextBroadcastScope,
+        body.deviceIds ?? existing.deviceTargets.map((target) => target.deviceId),
+      );
+      data.screens = await this.countScheduleReach(organizationId, nextBroadcastScope, selectedDeviceIds);
+      data.deviceTargets = {
+        deleteMany: {},
+        ...(nextBroadcastScope === TickerBroadcastScope.SELECTED_DEVICES
+          ? {
+              create: selectedDeviceIds.map((deviceId) => ({ deviceId })),
+            }
+          : {}),
+      };
+    } else if (body.screens !== undefined) {
+      data.screens = Math.max(0, body.screens);
+    }
+
     const updated = await this.prisma.scheduleEvent.update({
       where: { id: eventId },
       data,
+      include: {
+        playlist: { select: { id: true, name: true } },
+        deviceTargets: { include: { device: { select: { id: true, name: true } } } },
+      },
     });
 
+    await this.applySchedulePlaybackIfDue(organizationId, updated);
     return this.serializeScheduleEvent(updated);
   }
 
   async toggleScheduleStatus(actor: RequestActor, eventId: string) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
+    const existing = await this.prisma.scheduleEvent.findFirst({
+      where: { id: eventId, organizationId },
+      include: {
+        playlist: { select: { id: true, name: true } },
+        deviceTargets: { include: { device: { select: { id: true, name: true } } } },
+      },
+    });
     if (!existing) throw new NotFoundException('Schedule event not found');
 
     const next =
@@ -613,8 +696,13 @@ export class ClientDataService {
     const updated = await this.prisma.scheduleEvent.update({
       where: { id: eventId },
       data: { status: next },
+      include: {
+        playlist: { select: { id: true, name: true } },
+        deviceTargets: { include: { device: { select: { id: true, name: true } } } },
+      },
     });
 
+    await this.applySchedulePlaybackIfDue(organizationId, updated);
     return this.serializeScheduleEvent(updated);
   }
 
@@ -631,28 +719,155 @@ export class ClientDataService {
     id: string;
     name: string;
     campaign: string;
+    playlistId?: string | null;
     startTime: string;
     endTime: string;
     days: string[];
     screens: number;
+    broadcastScope: TickerBroadcastScope;
     status: ScheduleStatus;
     color: string;
     priority: SchedulePriority;
     recurring: boolean;
+    playlist?: { id: string; name: string } | null;
+    deviceTargets?: { device: { id: string; name: string } }[];
   }) {
+    const deviceTargets = event.deviceTargets ?? [];
     return {
       id: event.id,
       name: event.name,
       campaign: event.campaign,
+      playlistId: event.playlistId ?? event.playlist?.id ?? null,
+      playlistName: event.playlist?.name ?? null,
       startTime: event.startTime,
       endTime: event.endTime,
       days: event.days,
       screens: event.screens,
+      broadcastScope: this.toTitleStatus(event.broadcastScope),
+      deviceIds: deviceTargets.map((target) => target.device.id),
+      deviceNames: deviceTargets.map((target) => target.device.name),
       status: this.toLowerStatus(event.status),
       color: event.color,
       priority: this.toLowerStatus(event.priority),
       recurring: event.recurring,
+      isActiveNow: this.isScheduleActiveNow(event),
     };
+  }
+
+  private scheduleDayLabel(now = new Date()) {
+    return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][now.getDay()];
+  }
+
+  private isScheduleActiveNow(
+    event: {
+      days: string[];
+      startTime: string;
+      endTime: string;
+      status: ScheduleStatus;
+    },
+    now = new Date(),
+  ) {
+    if (event.status === ScheduleStatus.PAUSED || event.status === ScheduleStatus.COMPLETED) {
+      return false;
+    }
+    if (!event.days.includes(this.scheduleDayLabel(now))) {
+      return false;
+    }
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const start = this.timeToMinutes(event.startTime);
+    const end = this.timeToMinutes(event.endTime);
+    if (currentMinutes < start || currentMinutes >= end) {
+      return false;
+    }
+    return event.status === ScheduleStatus.ACTIVE || event.status === ScheduleStatus.SCHEDULED;
+  }
+
+  private async resolveSchedulePlaylist(organizationId: string, playlistId?: string | null) {
+    if (!playlistId) return null;
+    const playlist = await this.prisma.playlist.findFirst({
+      where: { id: playlistId, organizationId },
+      select: { id: true, name: true },
+    });
+    if (!playlist) {
+      throw new BadRequestException('Playlist not found for this organization');
+    }
+    return playlist;
+  }
+
+  private async resolveScheduleDeviceIds(
+    organizationId: string,
+    broadcastScope: TickerBroadcastScope,
+    deviceIds?: string[],
+  ) {
+    if (broadcastScope === TickerBroadcastScope.ALL_DEVICES) {
+      return [] as string[];
+    }
+    return this.resolveTickerDeviceIds(organizationId, broadcastScope, deviceIds);
+  }
+
+  private async countScheduleReach(
+    organizationId: string,
+    broadcastScope: TickerBroadcastScope,
+    selectedDeviceIds: string[],
+  ) {
+    return this.countTickerReach(organizationId, broadcastScope, selectedDeviceIds);
+  }
+
+  private async applySchedulePlaybackIfDue(
+    organizationId: string,
+    event: {
+      id: string;
+      playlistId: string | null;
+      broadcastScope: TickerBroadcastScope;
+      status: ScheduleStatus;
+      startTime: string;
+      endTime: string;
+      days: string[];
+      deviceTargets?: { deviceId: string }[];
+    },
+  ) {
+    if (!event.playlistId) return;
+    if (!this.isScheduleActiveNow(event)) return;
+
+    const deviceIds =
+      event.broadcastScope === TickerBroadcastScope.ALL_DEVICES
+        ? (
+            await this.prisma.device.findMany({
+              where: { organizationId, isPaired: true },
+              select: { id: true },
+            })
+          ).map((device) => device.id)
+        : (event.deviceTargets ?? []).map((target) => target.deviceId);
+
+    if (deviceIds.length === 0) return;
+
+    const playlist = await this.prisma.playlist.findFirst({
+      where: { id: event.playlistId, organizationId },
+      select: { id: true, name: true },
+    });
+    if (!playlist) return;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.device.updateMany({
+        where: { organizationId, currentPlaylistId: playlist.id, id: { notIn: deviceIds } },
+        data: { currentPlaylistId: null },
+      });
+      await tx.device.updateMany({
+        where: { organizationId, id: { in: deviceIds } },
+        data: {
+          currentPlaylistId: playlist.id,
+          currentLayoutId: null,
+          currentContent: playlist.name,
+        },
+      });
+      await tx.playlist.update({
+        where: { id: playlist.id },
+        data: {
+          screens: deviceIds.length,
+          syncVersion: { increment: 1 },
+        },
+      });
+    });
   }
 
   private toScheduleStatus(value?: string): ScheduleStatus {
