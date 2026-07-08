@@ -1657,6 +1657,7 @@ export class ClientDataService {
       durationAgg,
       logs,
       latestLog,
+      popStatsByDevice,
     ] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { name: 'asc' } }),
       this.prisma.assetFolder.findMany({
@@ -1682,6 +1683,12 @@ export class ClientDataService {
         where: { organizationId },
         orderBy: { startTime: 'desc' },
         select: { startTime: true, device: true },
+      }),
+      this.prisma.proofOfPlayLog.groupBy({
+        by: ['deviceId'],
+        where,
+        _count: { _all: true },
+        _max: { startTime: true },
       }),
     ]);
 
@@ -1879,13 +1886,47 @@ export class ClientDataService {
     const reportingDeviceKeys = new Set(
       reportingDevices.map((entry) => entry.deviceId ?? `name:${entry.device}`),
     );
-    const activeDevicesWithoutPop = devices
+    const popStatsMap = new Map(
+      popStatsByDevice
+        .filter((entry) => entry.deviceId)
+        .map((entry) => [
+          entry.deviceId!,
+          { count: entry._count._all, lastAt: entry._max.startTime },
+        ]),
+    );
+    const devicePopDiagnostics = devices
       .filter((device) => device.isPaired)
-      .filter(
-        (device) =>
-          !reportingDeviceKeys.has(device.id) && !reportingDeviceKeys.has(`name:${device.name}`),
-      )
-      .map((device) => ({ id: device.id, name: device.name, status: this.toLowerStatus(device.status) }));
+      .map((device) => {
+        const stats = popStatsMap.get(device.id);
+        const effectiveStatus = this.deviceManagement.resolveEffectiveStatus(device);
+        return {
+          deviceId: device.id,
+          deviceName: device.name,
+          status: this.toLowerStatus(effectiveStatus),
+          featureProofOfPlay: device.featureProofOfPlay,
+          popLogCountInRange: stats?.count ?? 0,
+          lastPopLogAtInRange: stats?.lastAt?.toISOString() ?? null,
+          isReportingInRange: (stats?.count ?? 0) > 0,
+          lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
+        };
+      });
+    const activeDevicesWithoutPop = devices
+      .filter((device) => device.isPaired && device.featureProofOfPlay)
+      .filter((device) => {
+        const effectiveStatus = this.deviceManagement.resolveEffectiveStatus(device);
+        const isReachable =
+          effectiveStatus === DeviceStatus.ONLINE || effectiveStatus === DeviceStatus.WARNING;
+        return (
+          isReachable &&
+          !reportingDeviceKeys.has(device.id) &&
+          !reportingDeviceKeys.has(`name:${device.name}`)
+        );
+      })
+      .map((device) => ({
+        id: device.id,
+        name: device.name,
+        status: this.toLowerStatus(this.deviceManagement.resolveEffectiveStatus(device)),
+      }));
 
     const historicalLogDevices = reportingDevices
       .filter((entry) => !entry.deviceId || !deviceIdSet.has(entry.deviceId))
@@ -1937,6 +1978,7 @@ export class ClientDataService {
         aggregatesTruncated: totalLogs > AGGREGATE_CAP,
         distinctDevicesInRange: reportingDevices.length,
         activeDevicesWithoutPop,
+        devicePopDiagnostics,
       },
       lastLogAt: latestLog?.startTime ?? null,
       lastLogDevice: latestLog?.device ?? null,
