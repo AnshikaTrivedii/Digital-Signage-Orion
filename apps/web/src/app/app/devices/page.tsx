@@ -42,6 +42,9 @@ interface Device {
     timezone?: string;
     lastScreenshotUrl?: string | null;
     lastScreenshotAt?: string | null;
+    initialSyncState?: "none" | "pending" | "timed_out";
+    pendingInitialSync?: boolean;
+    initialSyncRequestedAt?: string | null;
     cache?: {
         cachedAssetCount: number;
         expectedAssetCount: number;
@@ -780,6 +783,32 @@ export default function DevicesPage() {
                                                 >
                                                     <MapPin size={10} /> {d.location}
                                                 </p>
+                                                {(d.initialSyncState === "pending" || d.initialSyncState === "timed_out") && (
+                                                    <span
+                                                        style={{
+                                                            marginTop: 6,
+                                                            display: "inline-flex",
+                                                            alignItems: "center",
+                                                            gap: 4,
+                                                            fontSize: "0.62rem",
+                                                            fontWeight: 700,
+                                                            textTransform: "uppercase",
+                                                            letterSpacing: "0.05em",
+                                                            padding: "3px 8px",
+                                                            borderRadius: 999,
+                                                            color: d.initialSyncState === "timed_out"
+                                                                ? "hsl(var(--status-danger))"
+                                                                : "hsl(var(--status-warning))",
+                                                            background: d.initialSyncState === "timed_out"
+                                                                ? "hsla(var(--status-danger), 0.12)"
+                                                                : "hsla(var(--status-warning), 0.12)",
+                                                            border: `1px solid ${d.initialSyncState === "timed_out" ? "hsla(var(--status-danger), 0.3)" : "hsla(var(--status-warning), 0.3)"}`,
+                                                        }}
+                                                    >
+                                                        <RefreshCw size={9} className={d.initialSyncState === "pending" ? "spin" : ""} />
+                                                        {d.initialSyncState === "timed_out" ? "Initial Sync Delayed" : "Pending Initial Sync"}
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                         <div style={{ display: "flex", gap: 4 }}>

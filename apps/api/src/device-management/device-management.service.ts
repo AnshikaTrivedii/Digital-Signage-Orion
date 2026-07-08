@@ -16,6 +16,22 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
 
+/** Window a freshly onboarded device has to complete its first playlist download. */
+export const INITIAL_SYNC_TIMEOUT_SECONDS = 120;
+
+export type InitialSyncState = 'none' | 'pending' | 'timed_out';
+
+/** Resolve onboarding sync state for a device (pending, timed out after 120s, or none). */
+export function resolveInitialSyncState(device: {
+  pendingInitialSync?: boolean;
+  initialSyncRequestedAt?: Date | null;
+}): InitialSyncState {
+  if (!device.pendingInitialSync) return 'none';
+  if (!device.initialSyncRequestedAt) return 'pending';
+  const elapsedMs = Date.now() - device.initialSyncRequestedAt.getTime();
+  return elapsedMs > INITIAL_SYNC_TIMEOUT_SECONDS * 1000 ? 'timed_out' : 'pending';
+}
+
 type DeviceWithPlaylist = Device & {
   currentPlaylist?: { name: string } | null;
   currentLayout?: { name: string } | null;
@@ -290,6 +306,8 @@ export class DeviceManagementService {
       configVersion: device.configVersion,
       popLogsExpected: device.featureProofOfPlay,
       syncIntervalSeconds: this.getSyncIntervalSeconds(),
+      initialSyncPending: resolveInitialSyncState(device) === 'pending',
+      initialSyncTimeoutSeconds: INITIAL_SYNC_TIMEOUT_SECONDS,
       features: {
         autoSync: device.featureAutoSync,
         offlinePlayback: device.featureOfflinePlayback,

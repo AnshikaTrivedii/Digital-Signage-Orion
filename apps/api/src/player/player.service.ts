@@ -422,6 +422,8 @@ export class PlayerService {
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
+      initialSyncPending: playerConfig.initialSyncPending,
+      initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
       ...commandPayload,
     };
@@ -505,6 +507,8 @@ export class PlayerService {
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
+      initialSyncPending: playerConfig.initialSyncPending,
+      initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
       ...commandPayload,
     };
@@ -667,7 +671,14 @@ export class PlayerService {
       where: { id: device.id },
       data: {
         lastSync: new Date().toISOString(),
-        ...(shouldAckPlaylistVersion ? { lastAckedPlaylistVersion: playlist.syncVersion } : {}),
+        ...(shouldAckPlaylistVersion
+          ? {
+              lastAckedPlaylistVersion: playlist.syncVersion,
+              ...(device.pendingInitialSync
+                ? { pendingInitialSync: false, initialSyncRequestedAt: null }
+                : {}),
+            }
+          : {}),
       },
     });
 
@@ -857,6 +868,9 @@ export class PlayerService {
         lastSync: new Date().toISOString(),
         ...(shouldAckLayoutVersion ? { lastAckedLayoutVersion: layout.syncVersion } : {}),
         ...(shouldAckLayoutVersion ? { lastAckedPlaylistVersion: null } : {}),
+        ...(shouldAckLayoutVersion && device.pendingInitialSync
+          ? { pendingInitialSync: false, initialSyncRequestedAt: null }
+          : {}),
       },
     });
 

@@ -389,6 +389,10 @@ model Device {
   lastAckedPlaylistVersion Int?
   lastAckedLayoutVersion   Int?
 
+  // Initial onboarding sync (first playlist download after pairing)
+  pendingInitialSync       Boolean   @default(false)
+  initialSyncRequestedAt   DateTime?
+
   cachePlaylistName        String?
   cachePlaylistVersion     Int?
   cacheLayoutName          String?

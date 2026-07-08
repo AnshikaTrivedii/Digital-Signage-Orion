@@ -35,7 +35,7 @@ import { formatReportDateTime } from '../common/format-datetime';
 import { storageBytesToNumber } from '../common/device-storage.utils';
 import { getPreviewKind } from '../assets/asset-media.utils';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
-import { DeviceManagementService } from '../device-management/device-management.service';
+import { DeviceManagementService, resolveInitialSyncState } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
@@ -467,6 +467,8 @@ export class ClientDataService {
         },
       });
     });
+
+    await this.triggerInitialSync(organizationId, deviceIds, actor.userId);
 
     const updated = await this.prisma.playlist.findFirst({
       where: { id: playlistId, organizationId },
@@ -991,6 +993,47 @@ export class ClientDataService {
     );
   }
 
+  /**
+   * Mark freshly onboarded devices as "Pending Initial Sync" and queue an
+   * immediate FORCE_SYNC so the player downloads its first playlist without
+   * waiting for the normal polling interval. Only devices that have never
+   * completed a successful sync are treated as initial onboarding.
+   */
+  private async triggerInitialSync(
+    organizationId: string,
+    deviceIds: string[],
+    requestedById?: string,
+  ) {
+    if (!deviceIds.length) return;
+
+    const freshDevices = await this.prisma.device.findMany({
+      where: {
+        id: { in: deviceIds },
+        organizationId,
+        isPaired: true,
+        currentPlaylistId: { not: null },
+        lastSuccessfulSyncAt: null,
+      },
+      select: { id: true },
+    });
+
+    if (!freshDevices.length) return;
+
+    const freshIds = freshDevices.map((device) => device.id);
+    await this.prisma.device.updateMany({
+      where: { id: { in: freshIds } },
+      data: { pendingInitialSync: true, initialSyncRequestedAt: new Date() },
+    });
+
+    await Promise.all(
+      freshIds.map((deviceId) =>
+        this.deviceCache
+          .queueCommand(deviceId, organizationId, DeviceCacheCommandType.FORCE_SYNC, requestedById)
+          .catch(() => undefined),
+      ),
+    );
+  }
+
   async clearDeviceCache(actor: RequestActor, deviceId: string) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
@@ -1078,6 +1121,10 @@ export class ClientDataService {
       include: { currentPlaylist: { select: { name: true } } },
     });
 
+    if (paired.currentPlaylistId) {
+      await this.triggerInitialSync(organizationId, [paired.id], actor.userId);
+    }
+
     return this.serializeDevice(paired);
   }
 
@@ -1122,6 +1169,8 @@ export class ClientDataService {
     cacheLastReportedAt?: Date | null;
     syncReportStatus?: string | null;
     lastDownloadAt?: Date | null;
+    pendingInitialSync?: boolean;
+    initialSyncRequestedAt?: Date | null;
     currentPlaylist?: { name: string } | null;
     currentLayout?: { name: string } | null;
   }) {
@@ -1129,6 +1178,10 @@ export class ClientDataService {
       lastSeenAt: device.lastSeenAt ?? null,
       status: device.status,
     } as import('@prisma/client').Device);
+    const initialSyncState = resolveInitialSyncState({
+      pendingInitialSync: device.pendingInitialSync,
+      initialSyncRequestedAt: device.initialSyncRequestedAt ?? null,
+    });
     return {
       id: device.id,
       name: device.name,
@@ -1161,6 +1214,9 @@ export class ClientDataService {
       currentPlaylist: device.currentPlaylistName ?? device.currentPlaylist?.name ?? device.currentLayout?.name ?? '—',
       playbackStatus: device.playbackStatus ?? 'UNKNOWN',
       playbackUptimeSeconds: device.playbackUptimeSeconds ?? 0,
+      initialSyncState,
+      pendingInitialSync: initialSyncState === 'pending',
+      initialSyncRequestedAt: device.initialSyncRequestedAt?.toISOString() ?? null,
       storageTotalBytes: storageBytesToNumber(device.storageTotalBytes),
       storageFreeBytes: storageBytesToNumber(device.storageFreeBytes),
       lastScreenshotUrl: device.lastScreenshotUrl ?? null,
