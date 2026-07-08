@@ -48,7 +48,7 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
     *   **Fetch Playlist:** Call `GET /api/player/sync` (authenticated with device token). Returns the active playlist manifest with pre-signed download URLs for each asset.
     *   **Download & Cache Assets:** Do NOT stream continuously. Download all assets to local storage on first sync. Use Android's `DownloadManager` or OkHttp streams to save to internal cache.
     *   **Playback Loop:** Once the manifest and files are cached, play them seamlessly in order based on `durationSeconds` and `position`.
-    *   **Periodic Re-sync:** Re-fetch the playlist manifest every 5 minutes to detect content updates. Download only new/changed assets.
+    *   **Periodic Re-sync:** Re-fetch the playlist manifest to detect content updates, using the interval the server provides. Heartbeat, sync, and device-report responses include `syncIntervalSeconds` (server-configurable, defaults to 120s / 2 minutes). Use that value for the re-sync timer and fall back to 120s if it is missing. Download only new/changed assets.
     *   **Offline Mode:** If the internet disconnects, continue looping cached content indefinitely until connection is restored.
 
 5.  **Proof of Play (PoP) & Device Health:**

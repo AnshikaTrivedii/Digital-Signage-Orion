@@ -269,10 +269,27 @@ export class DeviceManagementService {
     return command;
   }
 
+  /**
+   * Sync polling interval (seconds) that the player should use between manifest
+   * re-fetches. Server-configurable via PLAYER_SYNC_INTERVAL_SECONDS, defaults
+   * to 120s (2 minutes). Clamped to a sane 30s–3600s range.
+   */
+  getSyncIntervalSeconds(): number {
+    const DEFAULT_SYNC_INTERVAL_SECONDS = 120;
+    const MIN_SYNC_INTERVAL_SECONDS = 30;
+    const MAX_SYNC_INTERVAL_SECONDS = 3600;
+    const raw = process.env.PLAYER_SYNC_INTERVAL_SECONDS;
+    if (raw === undefined || raw.trim() === '') return DEFAULT_SYNC_INTERVAL_SECONDS;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SYNC_INTERVAL_SECONDS;
+    return Math.min(MAX_SYNC_INTERVAL_SECONDS, Math.max(MIN_SYNC_INTERVAL_SECONDS, Math.floor(parsed)));
+  }
+
   getPlayerConfig(device: Device) {
     return {
       configVersion: device.configVersion,
       popLogsExpected: device.featureProofOfPlay,
+      syncIntervalSeconds: this.getSyncIntervalSeconds(),
       features: {
         autoSync: device.featureAutoSync,
         offlinePlayback: device.featureOfflinePlayback,

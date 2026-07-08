@@ -421,6 +421,7 @@ export class PlayerService {
       syncRequired,
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
+      syncIntervalSeconds: playerConfig.syncIntervalSeconds,
       features: playerConfig.features,
       ...commandPayload,
     };
@@ -503,6 +504,7 @@ export class PlayerService {
       received: true,
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
+      syncIntervalSeconds: playerConfig.syncIntervalSeconds,
       features: playerConfig.features,
       ...commandPayload,
     };
