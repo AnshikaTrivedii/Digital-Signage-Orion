@@ -14,42 +14,23 @@ import { useAuth } from "@/components/AuthProvider";
 
 type ScheduleStatus = "scheduled" | "active" | "paused" | "completed";
 type SchedulePriority = "low" | "normal" | "high";
-type BroadcastScope = "All Devices" | "Selected Devices";
-
-interface PlaylistOption {
-    id: string;
-    name: string;
-}
-
-interface DeviceOption {
-    id: string;
-    name: string;
-    location?: string;
-}
 
 interface ScheduleEvent {
     id: string;
     name: string;
     campaign: string;
-    playlistId: string | null;
-    playlistName: string | null;
     startTime: string;
     endTime: string;
     days: string[];
     screens: number;
-    broadcastScope: BroadcastScope;
-    deviceIds: string[];
-    deviceNames: string[];
     status: ScheduleStatus;
     color: string;
     priority: SchedulePriority;
     recurring: boolean;
-    isActiveNow?: boolean;
 }
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const COLOR_PALETTE = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa", "#facc15", "#38bdf8"];
-const currentDayLabel = () => DAYS[(new Date().getDay() + 6) % 7];
 
 const statusIcon = (s: string) => {
     if (s === "active") return <Play size={12} />;
@@ -84,12 +65,11 @@ const describeError = (error: unknown): string => {
 
 type EditorState = {
     name: string;
-    playlistId: string;
+    campaign: string;
     startTime: string;
     endTime: string;
     days: string[];
-    broadcastScope: BroadcastScope;
-    deviceIds: string[];
+    screens: number;
     status: ScheduleStatus;
     priority: SchedulePriority;
     recurring: boolean;
@@ -98,12 +78,11 @@ type EditorState = {
 
 const DEFAULT_EDITOR: EditorState = {
     name: "",
-    playlistId: "",
+    campaign: "",
     startTime: "09:00",
     endTime: "17:00",
     days: ["Mon", "Tue", "Wed", "Thu", "Fri"],
-    broadcastScope: "All Devices",
-    deviceIds: [],
+    screens: 0,
     status: "scheduled",
     priority: "normal",
     recurring: true,
@@ -115,13 +94,11 @@ export default function SchedulePage() {
     const { activeOrganizationId } = useAuth();
 
     const [events, setEvents] = useState<ScheduleEvent[]>([]);
-    const [playlists, setPlaylists] = useState<PlaylistOption[]>([]);
-    const [devices, setDevices] = useState<DeviceOption[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
-    const [selectedDay, setSelectedDay] = useState(currentDayLabel());
+    const [selectedDay, setSelectedDay] = useState("Mon");
     const [viewMode, setViewMode] = useState<"timeline" | "list">("timeline");
     const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
 
@@ -140,20 +117,10 @@ export default function SchedulePage() {
             if (!options.silent) setIsLoading(true);
             setLoadError(null);
             try {
-                const [eventsResponse, playlistsResponse, assignmentOptions] = await Promise.all([
-                    apiRequest<ScheduleEvent[]>("/api/client-data/schedule-events", {
-                        headers: { "x-organization-id": activeOrganizationId },
-                    }),
-                    apiRequest<PlaylistOption[]>("/api/client-data/playlists", {
-                        headers: { "x-organization-id": activeOrganizationId },
-                    }),
-                    apiRequest<{ devices: DeviceOption[] }>("/api/client-data/playlists/assignment-options", {
-                        headers: { "x-organization-id": activeOrganizationId },
-                    }),
-                ]);
-                setEvents(eventsResponse);
-                setPlaylists(playlistsResponse.map((playlist) => ({ id: playlist.id, name: playlist.name })));
-                setDevices(assignmentOptions.devices ?? []);
+                const response = await apiRequest<ScheduleEvent[]>("/api/client-data/schedule-events", {
+                    headers: { "x-organization-id": activeOrganizationId },
+                });
+                setEvents(response);
             } catch (error) {
                 setLoadError(describeError(error));
             } finally {
@@ -192,12 +159,11 @@ export default function SchedulePage() {
         setEditorId(event.id);
         setEditor({
             name: event.name,
-            playlistId: event.playlistId ?? "",
+            campaign: event.campaign,
             startTime: event.startTime,
             endTime: event.endTime,
             days: [...event.days],
-            broadcastScope: event.broadcastScope,
-            deviceIds: [...event.deviceIds],
+            screens: event.screens,
             status: event.status,
             priority: event.priority,
             recurring: event.recurring,
@@ -220,22 +186,9 @@ export default function SchedulePage() {
         }));
     };
 
-    const toggleEditorDevice = (deviceId: string) => {
-        setEditor((prev) => ({
-            ...prev,
-            deviceIds: prev.deviceIds.includes(deviceId)
-                ? prev.deviceIds.filter((id) => id !== deviceId)
-                : [...prev.deviceIds, deviceId],
-        }));
-    };
-
     const validateEditor = (state: EditorState): string | null => {
         if (!state.name.trim()) return "Schedule name is required";
-        if (!state.playlistId) return "Select a playlist to schedule";
         if (state.days.length === 0) return "Select at least one day";
-        if (state.broadcastScope === "Selected Devices" && state.deviceIds.length === 0) {
-            return "Select at least one device";
-        }
         const re = /^([01]\d|2[0-3]):[0-5]\d$/;
         if (!re.test(state.startTime) || !re.test(state.endTime)) return "Times must be HH:MM (24h)";
         const toMin = (t: string) => {
@@ -261,12 +214,11 @@ export default function SchedulePage() {
         try {
             const body = {
                 name: editor.name.trim(),
-                playlistId: editor.playlistId,
+                campaign: editor.campaign.trim() || undefined,
                 startTime: editor.startTime,
                 endTime: editor.endTime,
                 days: editor.days,
-                broadcastScope: editor.broadcastScope.toLowerCase(),
-                deviceIds: editor.broadcastScope === "Selected Devices" ? editor.deviceIds : [],
+                screens: editor.screens,
                 status: editor.status,
                 priority: editor.priority,
                 recurring: editor.recurring,
@@ -379,7 +331,7 @@ export default function SchedulePage() {
 
             <div className="grid-stats" style={{ marginBottom: 24 }}>
                 {[
-                    { label: "Active Now", count: events.filter((e) => e.isActiveNow).length, icon: Play, color: "var(--status-success)" },
+                    { label: "Active Now", count: events.filter((e) => e.status === "active").length, icon: Play, color: "var(--status-success)" },
                     { label: "Scheduled", count: events.filter((e) => e.status === "scheduled").length, icon: Clock, color: "var(--accent-primary)" },
                     { label: "Recurring", count: events.filter((e) => e.recurring).length, icon: Repeat, color: "var(--accent-secondary)" },
                     { label: "Total Screens", count: events.reduce((s, e) => s + e.screens, 0), icon: Monitor, color: "var(--accent-tertiary)" },
@@ -452,7 +404,6 @@ export default function SchedulePage() {
                                     <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
                                         <span style={{ color: event.color, flexShrink: 0 }}>{statusIcon(event.status)}</span>
                                         <span style={{ fontSize: "0.78rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{event.name}</span>
-                                        <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>{event.playlistName || event.campaign}</span>
                                         <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>{event.startTime}–{event.endTime}</span>
                                     </div>
                                 </motion.div>
@@ -525,17 +476,10 @@ export default function SchedulePage() {
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 12 }}>
-                                                    {event.playlistName || event.campaign || "No playlist assigned"}
-                                                </p>
+                                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 12 }}>{event.campaign || "No content label"}</p>
                                                 <div style={{ display: "flex", gap: 24, fontSize: "0.75rem", color: "hsl(var(--text-muted))", flexWrap: "wrap" }}>
                                                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {event.startTime} – {event.endTime}</span>
                                                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Monitor size={12} /> {event.screens} screens</span>
-                                                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                                        {event.broadcastScope === "Selected Devices"
-                                                            ? event.deviceNames.join(", ") || "No devices selected"
-                                                            : "All paired devices"}
-                                                    </span>
                                                     <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                                         <Zap size={12} style={{ color: `hsl(${priorityLabel(event.priority).color})` }} />
                                                         <span style={{ color: `hsl(${priorityLabel(event.priority).color})` }}>{priorityLabel(event.priority).text}</span>
@@ -577,12 +521,12 @@ export default function SchedulePage() {
                             </div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
                                 {[
-                                    { label: "Playlist", value: selectedEvent.playlistName || selectedEvent.campaign || "Unassigned" },
-                                    { label: "Status", value: selectedEvent.isActiveNow ? "Active now" : selectedEvent.status.charAt(0).toUpperCase() + selectedEvent.status.slice(1) },
+                                    { label: "Content", value: selectedEvent.campaign || "Unassigned" },
+                                    { label: "Status", value: selectedEvent.status.charAt(0).toUpperCase() + selectedEvent.status.slice(1) },
                                     { label: "Time Window", value: `${selectedEvent.startTime} - ${selectedEvent.endTime}` },
                                     { label: "Screens", value: `${selectedEvent.screens} displays` },
                                     { label: "Priority", value: priorityLabel(selectedEvent.priority).text },
-                                    { label: "Audience", value: selectedEvent.broadcastScope === "Selected Devices" ? selectedEvent.deviceNames.join(", ") || "No devices" : "All paired devices" },
+                                    { label: "Type", value: selectedEvent.recurring ? "Recurring" : "One-time" },
                                 ].map((f, i) => (
                                     <div key={i}>
                                         <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{f.label}</p>
@@ -640,40 +584,10 @@ export default function SchedulePage() {
                                     style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.95rem" }} />
                             </div>
                             <div style={{ marginBottom: 16 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Playlist</label>
-                                <select value={editor.playlistId} onChange={(e) => setEditor((prev) => ({ ...prev, playlistId: e.target.value }))}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem" }}>
-                                    <option value="">Select a playlist...</option>
-                                    {playlists.map((playlist) => (
-                                        <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
-                                    ))}
-                                </select>
+                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Content Label</label>
+                                <input placeholder="e.g. Morning playlist" value={editor.campaign} onChange={(e) => setEditor((prev) => ({ ...prev, campaign: e.target.value }))}
+                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem" }} />
                             </div>
-                            <div style={{ marginBottom: 16 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Audience</label>
-                                <select value={editor.broadcastScope} onChange={(e) => setEditor((prev) => ({
-                                    ...prev,
-                                    broadcastScope: e.target.value as BroadcastScope,
-                                    deviceIds: e.target.value === "All Devices" ? [] : prev.deviceIds,
-                                }))}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem" }}>
-                                    <option value="All Devices">All paired devices</option>
-                                    <option value="Selected Devices">Selected devices</option>
-                                </select>
-                            </div>
-                            {editor.broadcastScope === "Selected Devices" && (
-                                <div style={{ marginBottom: 16, maxHeight: 180, overflowY: "auto", border: "1px solid hsla(var(--border-subtle), 0.35)", borderRadius: 10, padding: 12 }}>
-                                    {devices.length === 0 ? (
-                                        <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>No paired devices available.</p>
-                                    ) : devices.map((device) => (
-                                        <label key={device.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 4px", cursor: "pointer", fontSize: "0.85rem" }}>
-                                            <input type="checkbox" checked={editor.deviceIds.includes(device.id)} onChange={() => toggleEditorDevice(device.id)} />
-                                            <span>{device.name}</span>
-                                            {device.location ? <span style={{ color: "hsl(var(--text-muted))", fontSize: "0.75rem" }}>{device.location}</span> : null}
-                                        </label>
-                                    ))}
-                                </div>
-                            )}
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                                 <div>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Start Time</label>
@@ -699,7 +613,7 @@ export default function SchedulePage() {
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
                                 <div>
                                     <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Status</label>
                                     <select value={editor.status} onChange={(e) => setEditor((prev) => ({ ...prev, status: e.target.value as ScheduleStatus }))}
@@ -713,6 +627,11 @@ export default function SchedulePage() {
                                         style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", textTransform: "capitalize" }}>
                                         {(["low", "normal", "high"] as SchedulePriority[]).map((p) => <option key={p} value={p}>{p}</option>)}
                                     </select>
+                                </div>
+                                <div>
+                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Screens</label>
+                                    <input type="number" min={0} value={editor.screens} onChange={(e) => setEditor((prev) => ({ ...prev, screens: Math.max(0, Number(e.target.value) || 0) }))}
+                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
                                 </div>
                             </div>
                             <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 16 }}>

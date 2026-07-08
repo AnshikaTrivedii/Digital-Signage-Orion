@@ -271,7 +271,6 @@ model Playlist {
   playlistAssets PlaylistAsset[]
   layoutZones    LayoutZone[]
   devices        Device[]
-  scheduleEvents ScheduleEvent[]
 
   @@index([organizationId, createdAt])
 }
@@ -350,41 +349,24 @@ model LayoutZone {
 }
 
 model ScheduleEvent {
-  id             String               @id @default(cuid())
+  id             String           @id @default(cuid())
   organizationId String
   name           String
   campaign       String
-  playlistId     String?
   startTime      String
   endTime        String
   days           String[]
-  screens        Int                  @default(0)
-  broadcastScope TickerBroadcastScope @default(ALL_DEVICES)
-  status         ScheduleStatus       @default(SCHEDULED)
-  color          String               @default("#4ade80")
-  priority       SchedulePriority     @default(NORMAL)
-  recurring      Boolean              @default(true)
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
+  screens        Int              @default(0)
+  status         ScheduleStatus   @default(SCHEDULED)
+  color          String           @default("#4ade80")
+  priority       SchedulePriority @default(NORMAL)
+  recurring      Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  playlist       Playlist?            @relation(fields: [playlistId], references: [id], onDelete: SetNull)
-  deviceTargets  ScheduleEventDevice[]
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, createdAt])
-  @@index([organizationId, playlistId])
-}
-
-model ScheduleEventDevice {
-  scheduleEventId String
-  deviceId        String
-  createdAt       DateTime @default(now())
-
-  scheduleEvent   ScheduleEvent @relation(fields: [scheduleEventId], references: [id], onDelete: Cascade)
-  device          Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-
-  @@id([scheduleEventId, deviceId])
-  @@index([deviceId])
 }
 
 model Device {
@@ -491,7 +473,6 @@ model Device {
   currentLayout   Layout?          @relation(fields: [currentLayoutId], references: [id], onDelete: SetNull)
   proofOfPlayLogs ProofOfPlayLog[]
   tickerTargets   TickerDevice[]
-  scheduleTargets ScheduleEventDevice[]
   cachedAssets    DeviceCachedAsset[]
   cacheCommands   DeviceCacheCommand[]
   systemLogs      DeviceSystemLog[]

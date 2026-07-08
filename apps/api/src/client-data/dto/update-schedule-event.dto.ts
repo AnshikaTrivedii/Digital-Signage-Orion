@@ -36,19 +36,6 @@ export class UpdateScheduleEventDto {
 
     @IsOptional()
     @IsString()
-    playlistId?: string;
-
-    @IsOptional()
-    @IsIn(['all devices', 'selected devices'])
-    broadcastScope?: 'all devices' | 'selected devices';
-
-    @IsOptional()
-    @IsArray()
-    @IsString({ each: true })
-    deviceIds?: string[];
-
-    @IsOptional()
-    @IsString()
     @Matches(TIME_REGEX, { message: 'startTime must be HH:MM (24h)' })
     startTime?: string;
 
