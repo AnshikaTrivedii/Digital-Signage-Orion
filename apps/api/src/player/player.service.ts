@@ -420,7 +420,6 @@ export class PlayerService {
       contentRevision: contentRevision.revision,
       syncRequired,
       configVersion: playerConfig.configVersion,
-      popLogsExpected: playerConfig.popLogsExpected,
       features: playerConfig.features,
       ...commandPayload,
     };
@@ -502,7 +501,6 @@ export class PlayerService {
     return {
       received: true,
       configVersion: playerConfig.configVersion,
-      popLogsExpected: playerConfig.popLogsExpected,
       features: playerConfig.features,
       ...commandPayload,
     };
@@ -1179,28 +1177,9 @@ export class PlayerService {
     }[],
   ) {
     const device = await this.resolveDeviceByToken(authHeader);
-    const batchSize = logs?.length ?? 0;
 
-    if (process.env.PLAYER_POP_LOG !== 'false') {
-      this.logger.log(
-        `PoP submit deviceId=${device.id} name=${device.name} batch=${batchSize} featureEnabled=${device.featureProofOfPlay}`,
-      );
-    }
-
-    if (!device.featureProofOfPlay) {
-      this.logger.warn(
-        `PoP logs ignored for deviceId=${device.id} (${device.name}): featureProofOfPlay is disabled`,
-      );
-      return this.buildPopLogSubmitResponse(device, {
-        received: 0,
-        skipped: batchSize,
-        accepted: false,
-        reason: 'proof_of_play_disabled',
-      });
-    }
-
-    if (!batchSize) {
-      return this.buildPopLogSubmitResponse(device, { received: 0, skipped: 0, accepted: true });
+    if (!logs?.length) {
+      return { received: 0, skipped: 0 };
     }
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
@@ -1267,46 +1246,17 @@ export class PlayerService {
     });
 
     if (!rows.length) {
-      return this.buildPopLogSubmitResponse(device, {
-        received: 0,
-        skipped: batchSize,
-        accepted: false,
-        reason: 'all_logs_invalid',
-      });
+      return { received: 0, skipped: logs.length };
     }
 
     await this.prisma.proofOfPlayLog.createMany({ data: rows });
 
     this.logger.log(
-      `Received ${rows.length} PoP logs from deviceId=${device.id} (${device.name})` +
-        (rows.length < batchSize ? ` (${batchSize - rows.length} skipped)` : ''),
+      `Received ${rows.length} PoP logs from device ${device.name}` +
+        (rows.length < logs.length ? ` (${logs.length - rows.length} skipped)` : ''),
     );
 
-    return this.buildPopLogSubmitResponse(device, {
-      received: rows.length,
-      skipped: batchSize - rows.length,
-      accepted: true,
-    });
-  }
-
-  private buildPopLogSubmitResponse(
-    device: PairedDevice,
-    result: {
-      received: number;
-      skipped: number;
-      accepted: boolean;
-      reason?: string;
-    },
-  ) {
-    return {
-      received: result.received,
-      skipped: result.skipped,
-      accepted: result.accepted,
-      deviceId: device.id,
-      deviceName: device.name,
-      popLogsExpected: device.featureProofOfPlay,
-      ...(result.reason ? { reason: result.reason } : {}),
-    };
+    return { received: rows.length, skipped: logs.length - rows.length };
   }
 
   private calculateUptime(createdAt: Date): string {

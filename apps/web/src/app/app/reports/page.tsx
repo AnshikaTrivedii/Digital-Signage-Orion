@@ -75,16 +75,6 @@ type ReportResponse = {
         totalPages: number;
         distinctDevicesInRange?: number;
         activeDevicesWithoutPop?: { id: string; name: string; status: string }[];
-        devicePopDiagnostics?: {
-            deviceId: string;
-            deviceName: string;
-            status: string;
-            featureProofOfPlay: boolean;
-            popLogCountInRange: number;
-            lastPopLogAtInRange: string | null;
-            isReportingInRange: boolean;
-            lastSeenAt: string | null;
-        }[];
         aggregatesTruncated?: boolean;
     };
     lastLogAt: string | null;
@@ -400,50 +390,13 @@ export default function ReportsPage() {
 
             {(meta?.activeDevicesWithoutPop?.length ?? 0) > 0 && (
                 <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-warning), 0.35)" }}>
-                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Online devices with no proof-of-play in this date range</p>
+                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Active devices with no proof-of-play in this date range</p>
                     <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
-                        These paired devices are reachable and have PoP enabled, but submitted no playback logs in the selected window. Check the device table below or Android player PoP flush logs.
+                        These paired devices are online but have not submitted playback logs. Ensure the Android player calls POST /api/player/pop-logs.
                     </p>
                     <p style={{ fontSize: "0.8rem" }}>
                         {(meta?.activeDevicesWithoutPop ?? []).map((device) => device.name).join(" • ")}
                     </p>
-                </div>
-            )}
-
-            {(meta?.devicePopDiagnostics?.length ?? 0) > 0 && (
-                <div className="glass-panel" style={{ padding: 18, marginBottom: 24 }}>
-                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 4 }}>Device PoP diagnostics</p>
-                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 14 }}>
-                        Per-device log counts for the selected date range. Silent devices may need an Android player fix.
-                    </p>
-                    <div style={{ overflowX: "auto" }}>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Device</th>
-                                    <th>Status</th>
-                                    <th>PoP enabled</th>
-                                    <th>Logs in range</th>
-                                    <th>Last log in range</th>
-                                    <th>Last seen</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(meta?.devicePopDiagnostics ?? []).map((device) => (
-                                    <tr key={device.deviceId}>
-                                        <td style={{ fontWeight: 600 }}>{device.deviceName}</td>
-                                        <td style={{ textTransform: "capitalize" }}>{device.status}</td>
-                                        <td>{device.featureProofOfPlay ? "Yes" : "No"}</td>
-                                        <td style={{ color: device.isReportingInRange ? "hsl(var(--status-success))" : "hsl(var(--status-warning))" }}>
-                                            {device.popLogCountInRange}
-                                        </td>
-                                        <td>{device.lastPopLogAtInRange ? formatReportDateTime(device.lastPopLogAtInRange) : "—"}</td>
-                                        <td>{device.lastSeenAt ? formatReportDateTime(device.lastSeenAt) : "—"}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             )}
 
