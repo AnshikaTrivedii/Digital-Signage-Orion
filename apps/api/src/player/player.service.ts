@@ -410,7 +410,7 @@ export class PlayerService {
     await this.deviceManagement.ingestTelemetry(device.id, data);
     const contentRevision = await this.getDeviceContentRevision(device);
     const refreshed = await this.prisma.device.findUnique({ where: { id: device.id } });
-    const syncRequired = this.computeSyncRequired(device, contentRevision);
+    const syncRequired = await this.computeSyncRequired(device, contentRevision);
     const pendingCommand = await this.deviceCache.deliverPendingCommand(device.id);
     const playerConfig = this.deviceManagement.getPlayerConfig(refreshed ?? device);
     const commandPayload = this.formatPlayerCommandPayload(pendingCommand);
@@ -422,6 +422,7 @@ export class PlayerService {
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
+      revisionPollIntervalSeconds: playerConfig.revisionPollIntervalSeconds,
       initialSyncPending: playerConfig.initialSyncPending,
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
@@ -507,6 +508,7 @@ export class PlayerService {
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
+      revisionPollIntervalSeconds: playerConfig.revisionPollIntervalSeconds,
       initialSyncPending: playerConfig.initialSyncPending,
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
@@ -529,10 +531,21 @@ export class PlayerService {
   async getSyncRevision(authHeader: string | undefined) {
     const device = await this.resolveDeviceByToken(authHeader);
     const contentRevision = await this.getDeviceContentRevision(device);
+    const syncRequired = await this.computeSyncRequired(device, contentRevision);
+    const playerConfig = this.deviceManagement.getPlayerConfig(device);
 
     return {
       revision: contentRevision.revision,
       updatedAt: contentRevision.updatedAt,
+      syncRequired,
+      playlistVersion: contentRevision.playlistVersion,
+      layoutVersion: contentRevision.layoutVersion,
+      contentType: device.currentLayoutId ? 'layout' : device.currentPlaylistId ? 'playlist' : 'none',
+      playlistId: device.currentPlaylistId,
+      layoutId: device.currentLayoutId,
+      initialSyncPending: playerConfig.initialSyncPending,
+      revisionPollIntervalSeconds: playerConfig.revisionPollIntervalSeconds,
+      syncIntervalSeconds: playerConfig.syncIntervalSeconds,
     };
   }
 
@@ -555,12 +568,27 @@ export class PlayerService {
       : await this.buildPlaylistSyncResponse(device, query, syncContext);
 
     const pendingCommand = (await this.deviceCache.deliverPendingCommand(device.id)) ?? null;
+    const refreshedDevice = await this.prisma.device.findUnique({ where: { id: device.id } });
+    const effectiveDevice: PairedDevice =
+      refreshedDevice?.organizationId != null
+        ? { ...refreshedDevice, organizationId: refreshedDevice.organizationId }
+        : device;
+    const contentRevision = await this.getDeviceContentRevision(effectiveDevice);
+    const assets = Array.isArray(payload.assets) ? payload.assets : [];
+    const pendingDownloadCount = assets.filter(
+      (entry) => (entry as { requiresDownload?: boolean }).requiresDownload,
+    ).length;
+    const syncRequired =
+      (await this.computeSyncRequired(effectiveDevice, contentRevision)) || pendingDownloadCount > 0;
 
     return {
       ...payload,
+      syncRequired,
+      pendingDownloadCount,
+      contentRevision: contentRevision.revision,
       cacheCommand: pendingCommand,
       pendingCommand,
-      ...this.deviceManagement.getPlayerConfig(device),
+      ...this.deviceManagement.getPlayerConfig(effectiveDevice),
     };
   }
 
@@ -647,9 +675,7 @@ export class PlayerService {
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
 
-    const shouldAckPlaylistVersion =
-      contentUnchanged ||
-      (clientReportedVersion !== undefined && clientReportedVersion === playlist.syncVersion);
+    const shouldAckPlaylistVersion = contentUnchanged;
 
     const assignedDeviceCount = await this.prisma.device.count({
       where: { currentPlaylistId: playlist.id },
@@ -847,9 +873,7 @@ export class PlayerService {
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
 
-    const shouldAckLayoutVersion =
-      contentUnchanged ||
-      (clientReportedLayoutVersion !== undefined && clientReportedLayoutVersion === layout.syncVersion);
+    const shouldAckLayoutVersion = contentUnchanged;
 
     const assignedDeviceCount = await this.prisma.device.count({
       where: { currentLayoutId: layout.id },
@@ -895,7 +919,30 @@ export class PlayerService {
     };
   }
 
+  private async getTickerRevisionSuffix(organizationId: string, deviceId: string): Promise<string> {
+    const aggregate = await this.prisma.ticker.aggregate({
+      where: {
+        organizationId,
+        status: TickerStatus.ACTIVE,
+        OR: [
+          { broadcastScope: TickerBroadcastScope.ALL_DEVICES },
+          {
+            broadcastScope: TickerBroadcastScope.SELECTED_DEVICES,
+            deviceTargets: { some: { deviceId } },
+          },
+        ],
+      },
+      _max: { updatedAt: true },
+      _count: { _all: true },
+    });
+
+    if (!aggregate._count._all) return ':tk0';
+    return `:tk${aggregate._max.updatedAt?.getTime() ?? 0}c${aggregate._count._all}`;
+  }
+
   private async getDeviceContentRevision(device: PairedDevice): Promise<ContentRevisionState> {
+    const tickerSuffix = await this.getTickerRevisionSuffix(device.organizationId, device.id);
+
     if (device.currentLayoutId) {
       const layout = await this.prisma.layout.findUnique({
         where: { id: device.currentLayoutId },
@@ -911,7 +958,7 @@ export class PlayerService {
       }
 
       return {
-        revision: `ly:${layout.id}:v${layout.syncVersion}:${layout.updatedAt.getTime()}`,
+        revision: `ly:${layout.id}:v${layout.syncVersion}:${layout.updatedAt.getTime()}${tickerSuffix}`,
         updatedAt: layout.updatedAt.toISOString(),
         playlistVersion: null,
         layoutVersion: layout.syncVersion,
@@ -933,7 +980,7 @@ export class PlayerService {
       }
 
       return {
-        revision: `pl:${playlist.id}:v${playlist.syncVersion}:${playlist.updatedAt.getTime()}`,
+        revision: `pl:${playlist.id}:v${playlist.syncVersion}:${playlist.updatedAt.getTime()}${tickerSuffix}`,
         updatedAt: playlist.updatedAt.toISOString(),
         playlistVersion: playlist.syncVersion,
         layoutVersion: null,
@@ -948,23 +995,50 @@ export class PlayerService {
     };
   }
 
-  private computeSyncRequired(device: PairedDevice, content: ContentRevisionState): boolean {
+  private async computeSyncRequired(
+    device: PairedDevice,
+    content: ContentRevisionState,
+  ): Promise<boolean> {
     if (content.revision === 'none') return false;
 
     if (device.currentLayoutId) {
-      return (
+      const layoutSyncRequired =
         content.layoutVersion != null &&
-        (device.lastAckedLayoutVersion == null || device.lastAckedLayoutVersion !== content.layoutVersion)
-      );
-    }
-
-    if (device.currentPlaylistId) {
-      return (
+        (device.lastAckedLayoutVersion == null ||
+          device.lastAckedLayoutVersion !== content.layoutVersion);
+      if (layoutSyncRequired) return true;
+    } else if (device.currentPlaylistId) {
+      const playlistSyncRequired =
         content.playlistVersion != null &&
         (device.lastAckedPlaylistVersion == null ||
-          device.lastAckedPlaylistVersion !== content.playlistVersion)
-      );
+          device.lastAckedPlaylistVersion !== content.playlistVersion);
+      if (playlistSyncRequired) return true;
+    } else {
+      return false;
     }
+
+    const tickerAggregate = await this.prisma.ticker.aggregate({
+      where: {
+        organizationId: device.organizationId,
+        status: TickerStatus.ACTIVE,
+        OR: [
+          { broadcastScope: TickerBroadcastScope.ALL_DEVICES },
+          {
+            broadcastScope: TickerBroadcastScope.SELECTED_DEVICES,
+            deviceTargets: { some: { deviceId: device.id } },
+          },
+        ],
+      },
+      _max: { updatedAt: true },
+      _count: { _all: true },
+    });
+
+    if (!tickerAggregate._count._all) return false;
+
+    const lastSyncAt = device.lastSync ? new Date(device.lastSync) : null;
+    const tickerUpdatedAt = tickerAggregate._max.updatedAt;
+    if (!tickerUpdatedAt) return false;
+    if (!lastSyncAt || tickerUpdatedAt > lastSyncAt) return true;
 
     return false;
   }

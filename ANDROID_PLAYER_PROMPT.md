@@ -48,7 +48,7 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
     *   **Fetch Playlist:** Call `GET /api/player/sync` (authenticated with device token). Returns the active playlist manifest with pre-signed download URLs for each asset.
     *   **Download & Cache Assets:** Do NOT stream continuously. Download all assets to local storage on first sync. Use Android's `DownloadManager` or OkHttp streams to save to internal cache.
     *   **Playback Loop:** Once the manifest and files are cached, play them seamlessly in order based on `durationSeconds` and `position`.
-    *   **Periodic Re-sync:** Re-fetch the playlist manifest to detect content updates, using the interval the server provides. Heartbeat, sync, and device-report responses include `syncIntervalSeconds` (server-configurable, defaults to 120s / 2 minutes). Use that value for the re-sync timer and fall back to 120s if it is missing. Download only new/changed assets.
+    *   **Periodic Re-sync:** Poll `GET /api/player/sync-revision` every **5 seconds** (`revisionPollIntervalSeconds`). When `revision` changes or `syncRequired` is true, immediately call `GET /api/player/sync`. Also re-fetch the full manifest on the interval the server provides — heartbeat, sync, and device-report responses include `syncIntervalSeconds` (server-configurable, defaults to 120s / 2 minutes). Use that value only as a **fallback** full-sync timer, not as the primary change-detection path. Download only new/changed assets.
     *   **Offline Mode:** If the internet disconnects, continue looping cached content indefinitely until connection is restored.
 
 5.  **Proof of Play (PoP) & Device Health:**
@@ -211,7 +211,44 @@ Send device health telemetry. Call every ~60 seconds.
 **Response (200):**
 ```json
 {
-  "status": "ok"
+  "status": "ok",
+  "contentRevision": "pl:clxyz123:v3:1718712000000:tk1718712100000c1",
+  "syncRequired": false,
+  "syncIntervalSeconds": 120,
+  "revisionPollIntervalSeconds": 5,
+  "initialSyncPending": false,
+  "initialSyncTimeoutSeconds": 120,
+  "command": "FORCE_SYNC",
+  "commandId": "cmd_abc123"
+}
+```
+
+- `syncRequired`: `true` when the server has a newer playlist/layout version the device has not fully cached, or when ticker content changed since the last sync.
+- `revisionPollIntervalSeconds`: how often to poll `GET /api/player/sync-revision` (default **5s**).
+- `syncIntervalSeconds`: fallback full manifest poll interval (default **120s**).
+- `initialSyncPending`: `true` for freshly paired devices that have not completed their first successful sync.
+- `command` / `commandId`: optional cache command (`FORCE_SYNC`, `CLEAR_CACHE`, `REDOWNLOAD_PLAYLIST`). Execute immediately — do not wait for the next periodic sync timer.
+
+---
+
+#### `GET /api/player/sync-revision`
+
+Lightweight revision check. Poll every `revisionPollIntervalSeconds` (default **5s**). When `revision` differs from the last stored value **or** `syncRequired` is `true`, immediately call `GET /api/player/sync`.
+
+**Response (200):**
+```json
+{
+  "revision": "pl:clxyz123:v3:1718712000000:tk1718712100000c1",
+  "updatedAt": "2026-06-18T12:00:00.000Z",
+  "syncRequired": true,
+  "playlistVersion": 3,
+  "layoutVersion": null,
+  "contentType": "playlist",
+  "playlistId": "clxyz123",
+  "layoutId": null,
+  "initialSyncPending": false,
+  "revisionPollIntervalSeconds": 5,
+  "syncIntervalSeconds": 120
 }
 ```
 
@@ -611,16 +648,23 @@ This assigns the device to the user's organization, generates the `deviceToken`,
 │                       PLAYBACK PHASE                                │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  Every 5 minutes:                                                   │
+│  Every revisionPollIntervalSeconds (5s default):                    │
+│  GET /player/sync-revision ─────►  revision + syncRequired          │
+│  If revision changed OR syncRequired → GET /player/sync immediately │
+│                                                                     │
+│  Fallback every syncIntervalSeconds (120s default):                 │
 │  GET /player/sync?playlistVersion=N&knownAssetIds=...               │
 │                               ──►  Incremental manifest + deltas  │
 │  Download only requiresDownload    (pre-signed S3 URLs, 7d expiry)  │
 │  Delete removedAssetIds locally    after successful sync            │
 │  Play in loop (position order)                                      │
 │                                                                     │
+│  Immediately after pairing + on FORCE_SYNC command:                 │
+│  GET /player/sync (do not wait for periodic timer)                  │
+│                                                                     │
 │  Every 60 seconds:                                                  │
-│  POST /player/heartbeat ────────►  Updates device telemetry in CMS  │
-│  { cpu, ram, temp, currentContent }                                 │
+│  POST /player/heartbeat ────────►  syncRequired + optional command  │
+│  { cpu, ram, temp, currentContent }  Execute command immediately    │
 │                                                                     │
 │  Every 5 minutes:                                                   │
 │  POST /player/pop-logs ─────────►  Submits playback analytics       │
@@ -660,6 +704,11 @@ interface OrionPlayerApi {
         @Header("Authorization") token: String,
         @Body body: HeartbeatRequest
     ): HeartbeatResponse
+
+    @GET("player/sync-revision")
+    suspend fun getSyncRevision(
+        @Header("Authorization") token: String
+    ): SyncRevisionResponse
 
     @GET("player/sync")
     suspend fun syncPlaylist(
@@ -707,7 +756,31 @@ data class HeartbeatRequest(
     val temp: Int,
     val currentContent: String? = null
 )
-data class HeartbeatResponse(val status: String)
+data class HeartbeatResponse(
+    val status: String,
+    val contentRevision: String? = null,
+    val syncRequired: Boolean = false,
+    val syncIntervalSeconds: Int = 120,
+    val revisionPollIntervalSeconds: Int = 5,
+    val initialSyncPending: Boolean = false,
+    val initialSyncTimeoutSeconds: Int = 120,
+    val command: String? = null,
+    val commandId: String? = null,
+)
+
+data class SyncRevisionResponse(
+    val revision: String,
+    val updatedAt: String?,
+    val syncRequired: Boolean,
+    val playlistVersion: Int?,
+    val layoutVersion: Int?,
+    val contentType: String,
+    val playlistId: String?,
+    val layoutId: String?,
+    val initialSyncPending: Boolean,
+    val revisionPollIntervalSeconds: Int = 5,
+    val syncIntervalSeconds: Int = 120,
+)
 
 data class SyncResponse(
     val unchanged: Boolean,
@@ -719,7 +792,13 @@ data class SyncResponse(
     val tickers: List<TickerInfo> = emptyList(),
     val currentAssetIds: List<String>,
     val removedAssetIds: List<String>,
+    val syncRequired: Boolean = false,
+    val pendingDownloadCount: Int = 0,
+    val contentRevision: String? = null,
     val cacheCommand: CacheCommandInfo? = null,
+    val revisionPollIntervalSeconds: Int = 5,
+    val syncIntervalSeconds: Int = 120,
+    val initialSyncPending: Boolean = false,
 )
 
 data class CacheCommandInfo(

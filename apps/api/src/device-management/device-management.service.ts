@@ -19,6 +19,9 @@ const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
 /** Window a freshly onboarded device has to complete its first playlist download. */
 export const INITIAL_SYNC_TIMEOUT_SECONDS = 120;
 
+/** Lightweight revision poll interval the player should use to detect CMS changes quickly. */
+export const REVISION_POLL_INTERVAL_SECONDS = 5;
+
 export type InitialSyncState = 'none' | 'pending' | 'timed_out';
 
 /** Resolve onboarding sync state for a device (pending, timed out after 120s, or none). */
@@ -306,6 +309,7 @@ export class DeviceManagementService {
       configVersion: device.configVersion,
       popLogsExpected: device.featureProofOfPlay,
       syncIntervalSeconds: this.getSyncIntervalSeconds(),
+      revisionPollIntervalSeconds: REVISION_POLL_INTERVAL_SECONDS,
       initialSyncPending: resolveInitialSyncState(device) === 'pending',
       initialSyncTimeoutSeconds: INITIAL_SYNC_TIMEOUT_SECONDS,
       features: {

@@ -468,7 +468,7 @@ export class ClientDataService {
       });
     });
 
-    await this.triggerInitialSync(organizationId, deviceIds, actor.userId);
+    await this.notifyDevicesSyncRequired(organizationId, deviceIds, actor.userId);
 
     const updated = await this.prisma.playlist.findFirst({
       where: { id: playlistId, organizationId },
@@ -994,44 +994,76 @@ export class ClientDataService {
   }
 
   /**
-   * Mark freshly onboarded devices as "Pending Initial Sync" and queue an
-   * immediate FORCE_SYNC so the player downloads its first playlist without
-   * waiting for the normal polling interval. Only devices that have never
-   * completed a successful sync are treated as initial onboarding.
+   * Notify assigned devices that CMS content changed. Queues FORCE_SYNC for every
+   * paired device with active content, and marks never-synced devices for initial
+   * onboarding so the player does not wait for the normal polling interval.
    */
-  private async triggerInitialSync(
+  private async notifyDevicesSyncRequired(
     organizationId: string,
     deviceIds: string[],
     requestedById?: string,
   ) {
     if (!deviceIds.length) return;
 
-    const freshDevices = await this.prisma.device.findMany({
+    const targets = await this.prisma.device.findMany({
       where: {
         id: { in: deviceIds },
         organizationId,
         isPaired: true,
-        currentPlaylistId: { not: null },
-        lastSuccessfulSyncAt: null,
+        OR: [{ currentPlaylistId: { not: null } }, { currentLayoutId: { not: null } }],
       },
-      select: { id: true },
+      select: { id: true, lastSuccessfulSyncAt: true },
     });
 
-    if (!freshDevices.length) return;
+    if (!targets.length) return;
 
-    const freshIds = freshDevices.map((device) => device.id);
-    await this.prisma.device.updateMany({
-      where: { id: { in: freshIds } },
-      data: { pendingInitialSync: true, initialSyncRequestedAt: new Date() },
-    });
+    const freshIds = targets
+      .filter((device) => device.lastSuccessfulSyncAt == null)
+      .map((device) => device.id);
+
+    if (freshIds.length) {
+      await this.prisma.device.updateMany({
+        where: { id: { in: freshIds } },
+        data: { pendingInitialSync: true, initialSyncRequestedAt: new Date() },
+      });
+    }
 
     await Promise.all(
-      freshIds.map((deviceId) =>
+      targets.map((device) =>
         this.deviceCache
-          .queueCommand(deviceId, organizationId, DeviceCacheCommandType.FORCE_SYNC, requestedById)
+          .queueCommand(device.id, organizationId, DeviceCacheCommandType.FORCE_SYNC, requestedById)
           .catch(() => undefined),
       ),
     );
+  }
+
+  private async notifyTickerDevicesSyncRequired(
+    organizationId: string,
+    broadcastScope: TickerBroadcastScope,
+    selectedDeviceIds: string[],
+    requestedById?: string,
+  ) {
+    let deviceIds: string[];
+    if (broadcastScope === TickerBroadcastScope.ALL_DEVICES) {
+      const devices = await this.prisma.device.findMany({
+        where: { organizationId, isPaired: true },
+        select: { id: true },
+      });
+      deviceIds = devices.map((device) => device.id);
+    } else {
+      deviceIds = selectedDeviceIds;
+    }
+
+    await this.notifyDevicesSyncRequired(organizationId, deviceIds, requestedById);
+  }
+
+  /** @deprecated Use notifyDevicesSyncRequired */
+  private async triggerInitialSync(
+    organizationId: string,
+    deviceIds: string[],
+    requestedById?: string,
+  ) {
+    await this.notifyDevicesSyncRequired(organizationId, deviceIds, requestedById);
   }
 
   async clearDeviceCache(actor: RequestActor, deviceId: string) {
@@ -1121,8 +1153,8 @@ export class ClientDataService {
       include: { currentPlaylist: { select: { name: true } } },
     });
 
-    if (paired.currentPlaylistId) {
-      await this.triggerInitialSync(organizationId, [paired.id], actor.userId);
+    if (paired.currentPlaylistId || paired.currentLayoutId) {
+      await this.notifyDevicesSyncRequired(organizationId, [paired.id], actor.userId);
     }
 
     return this.serializeDevice(paired);
@@ -1316,6 +1348,15 @@ export class ClientDataService {
       });
     });
 
+    if (ticker.status === TickerStatus.ACTIVE) {
+      await this.notifyTickerDevicesSyncRequired(
+        organizationId,
+        broadcastScope,
+        selectedDeviceIds,
+        actor.userId,
+      );
+    }
+
     return this.serializeTicker(ticker);
   }
 
@@ -1425,6 +1466,15 @@ export class ClientDataService {
       });
     });
 
+    if (updated.status === TickerStatus.ACTIVE) {
+      await this.notifyTickerDevicesSyncRequired(
+        organizationId,
+        updated.broadcastScope,
+        updated.deviceTargets.map((target) => target.deviceId),
+        actor.userId,
+      );
+    }
+
     return this.serializeTicker(updated);
   }
 
@@ -1445,15 +1495,34 @@ export class ClientDataService {
       },
     });
 
+    await this.notifyTickerDevicesSyncRequired(
+      organizationId,
+      updated.broadcastScope,
+      updated.deviceTargets.map((target) => target.deviceId),
+      actor.userId,
+    );
+
     return this.serializeTicker(updated);
   }
 
   async deleteTicker(actor: RequestActor, tickerId: string) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    const ticker = await this.prisma.ticker.findFirst({ where: { id: tickerId, organizationId } });
+    const ticker = await this.prisma.ticker.findFirst({
+      where: { id: tickerId, organizationId },
+      include: { deviceTargets: { select: { deviceId: true } } },
+    });
     if (!ticker) throw new NotFoundException('Ticker not found');
+
     await this.prisma.ticker.delete({ where: { id: tickerId } });
+
+    await this.notifyTickerDevicesSyncRequired(
+      organizationId,
+      ticker.broadcastScope,
+      ticker.deviceTargets.map((target) => target.deviceId),
+      actor.userId,
+    );
+
     return { success: true };
   }
 
@@ -2687,6 +2756,8 @@ export class ClientDataService {
             currentLayoutId: layoutId,
             currentPlaylistId: null,
             currentContent: layout.name,
+            lastAckedPlaylistVersion: null,
+            lastAckedLayoutVersion: null,
           },
         });
       }
@@ -2699,6 +2770,8 @@ export class ClientDataService {
         },
       });
     });
+
+    await this.notifyDevicesSyncRequired(organizationId, deviceIds, actor.userId);
 
     return this.getLayout(actor, layoutId);
   }
