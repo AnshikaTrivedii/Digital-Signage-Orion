@@ -29,7 +29,7 @@ import {
   ZoneType,
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
-import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { dedupeIdenticalPopLogs, enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import {
   EXCEL_REPORT_DATETIME_NUM_FMT,
@@ -1668,9 +1668,12 @@ export class ClientDataService {
         };
       });
 
-    const enrichedAggregateLogs = expandPopLogs(aggregateLogs);
-    const enrichedLogs = expandPopLogs(logs);
-    const playbackEventCount = totalLogs;
+    const enrichedAggregateLogs = dedupeIdenticalPopLogs(expandPopLogs(aggregateLogs));
+    const enrichedLogs = dedupeIdenticalPopLogs(expandPopLogs(logs));
+    const playbackEventCount =
+      totalLogs > 0 && totalLogs <= AGGREGATE_CAP
+        ? enrichedAggregateLogs.length
+        : totalLogs;
     const chartData =
       totalLogs <= AGGREGATE_CAP
         ? this.buildReportChartData(enrichedAggregateLogs, range, rangeStart, rangeEnd)
@@ -1994,25 +1997,8 @@ export class ClientDataService {
         return { ...log, ...enriched, assetName };
       });
 
-    // Drop accidental identical duplicates (same device/asset/times/duration/playlist/status).
-    // Legitimate replays at different times are kept.
-    const seenExact = new Set<string>();
-    const uniqueRows = exportRows.filter((log) => {
-      const key = [
-        log.deviceId ?? '',
-        log.device,
-        log.assetName || log.content,
-        log.playlistName ?? '',
-        log.campaignName ?? '',
-        log.startTime.toISOString(),
-        log.endTime?.toISOString() ?? '',
-        String(log.durationSeconds ?? ''),
-        log.status,
-      ].join('|');
-      if (seenExact.has(key)) return false;
-      seenExact.add(key);
-      return true;
-    });
+    // Same exact-field dedupe as the dashboard API so both surfaces match.
+    const uniqueRows = dedupeIdenticalPopLogs(exportRows);
 
     this.logger.log(
       `PoP export rows db=${logs.length} afterFilter=${exportRows.length} ` +

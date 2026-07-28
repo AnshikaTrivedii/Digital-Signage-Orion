@@ -20,6 +20,43 @@ export function normalizeAssetName(name: string): string {
   return name.trim().toLowerCase();
 }
 
+/**
+ * Drop accidental identical PoP rows (device retries / double flush).
+ * Keeps the first occurrence; legitimate replays at different times remain.
+ */
+export function dedupeIdenticalPopLogs<
+  T extends {
+    deviceId?: string | null;
+    device: string;
+    assetName?: string | null;
+    content?: string | null;
+    playlistName?: string | null;
+    campaignName?: string | null;
+    startTime: Date;
+    endTime?: Date | null;
+    durationSeconds?: number | null;
+    status: string;
+  },
+>(logs: T[]): T[] {
+  const seen = new Set<string>();
+  return logs.filter((log) => {
+    const key = [
+      log.deviceId ?? '',
+      log.device,
+      log.assetName || log.content || '',
+      log.playlistName ?? '',
+      log.campaignName ?? '',
+      log.startTime.toISOString(),
+      log.endTime?.toISOString() ?? '',
+      String(log.durationSeconds ?? ''),
+      log.status,
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 const MULTIPLE_TOLERANCE = 0.15;
 
 function resolveSinglePlaybackDuration(
