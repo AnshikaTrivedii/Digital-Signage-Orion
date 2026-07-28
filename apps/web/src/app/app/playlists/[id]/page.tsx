@@ -63,10 +63,10 @@ type PlaylistAssetRowProps = {
     index: number;
     canEdit: boolean;
     durationDirty: boolean;
-    savingDurationAssetId: string | null;
-    onDurationChange: (assetId: string, value: string) => void;
-    onDurationSave: (assetId: string) => void;
-    onRemove: (assetId: string) => void;
+    savingDurationId: string | null;
+    onDurationChange: (playlistAssetId: string, value: string) => void;
+    onDurationSave: (playlistAssetId: string) => void;
+    onRemove: (playlistAssetId: string) => void;
     onDragEnd: () => void;
     getIcon: (type: string) => ReactNode;
 };
@@ -76,7 +76,7 @@ function PlaylistAssetRow({
     index,
     canEdit,
     durationDirty,
-    savingDurationAssetId,
+    savingDurationId,
     onDurationChange,
     onDurationSave,
     onRemove,
@@ -84,6 +84,7 @@ function PlaylistAssetRow({
     getIcon,
 }: PlaylistAssetRowProps) {
     const dragControls = useDragControls();
+    const itemId = asset.playlistAssetId;
 
     return (
         <Reorder.Item
@@ -140,13 +141,13 @@ function PlaylistAssetRow({
                     min={1}
                     step={1}
                     value={asset.durationSeconds}
-                    disabled={!canEdit || savingDurationAssetId === asset.id}
-                    onChange={(event) => onDurationChange(asset.id, event.target.value)}
-                    onBlur={() => onDurationSave(asset.id)}
+                    disabled={!canEdit || savingDurationId === itemId}
+                    onChange={(event) => onDurationChange(itemId, event.target.value)}
+                    onBlur={() => onDurationSave(itemId)}
                     onKeyDown={(event) => {
                         if (event.key === "Enter") {
                             event.preventDefault();
-                            onDurationSave(asset.id);
+                            onDurationSave(itemId);
                             event.currentTarget.blur();
                         }
                     }}
@@ -169,8 +170,8 @@ function PlaylistAssetRow({
                 {durationDirty && canEdit && (
                     <button
                         type="button"
-                        onClick={() => onDurationSave(asset.id)}
-                        disabled={savingDurationAssetId === asset.id}
+                        onClick={() => onDurationSave(itemId)}
+                        disabled={savingDurationId === itemId}
                         style={{
                             padding: "6px 10px",
                             borderRadius: 8,
@@ -179,11 +180,11 @@ function PlaylistAssetRow({
                             color: "hsl(var(--bg-base))",
                             fontSize: "0.72rem",
                             fontWeight: 700,
-                            cursor: savingDurationAssetId === asset.id ? "wait" : "pointer",
-                            opacity: savingDurationAssetId === asset.id ? 0.7 : 1,
+                            cursor: savingDurationId === itemId ? "wait" : "pointer",
+                            opacity: savingDurationId === itemId ? 0.7 : 1,
                         }}
                     >
-                        {savingDurationAssetId === asset.id ? "Saving…" : "Save"}
+                        {savingDurationId === itemId ? "Saving…" : "Save"}
                     </button>
                 )}
             </div>
@@ -192,7 +193,7 @@ function PlaylistAssetRow({
                 type="button"
                 className="btn-icon-soft"
                 disabled={!canEdit}
-                onClick={() => onRemove(asset.id)}
+                onClick={() => onRemove(itemId)}
                 style={{ color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}
             >
                 <Trash2 size={18} />
@@ -211,7 +212,7 @@ export default function PlaylistBuilderPage() {
     const [assets, setAssets] = useState<Asset[]>([]);
     const [playlistAssets, setPlaylistAssets] = useState<PlaylistAsset[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [savingDurationAssetId, setSavingDurationAssetId] = useState<string | null>(null);
+    const [savingDurationId, setSavingDurationId] = useState<string | null>(null);
     const [isSavingOrder, setIsSavingOrder] = useState(false);
     const pendingOrderRef = useRef<PlaylistAsset[] | null>(null);
     const savedOrderRef = useRef<string[]>([]);
@@ -293,17 +294,17 @@ export default function PlaylistBuilderPage() {
 
     const syncSavedDurations = useCallback((assets: PlaylistAsset[]) => {
         savedDurationsRef.current = Object.fromEntries(
-            assets.map((asset) => [asset.id, asset.durationSeconds]),
+            assets.map((asset) => [asset.playlistAssetId, asset.durationSeconds]),
         );
     }, []);
 
-    const isDurationDirty = useCallback((assetId: string, durationSeconds: number) => {
-        return savedDurationsRef.current[assetId] !== durationSeconds;
+    const isDurationDirty = useCallback((playlistAssetId: string, durationSeconds: number) => {
+        return savedDurationsRef.current[playlistAssetId] !== durationSeconds;
     }, []);
 
     const hasUnsavedDurations = useCallback(() => {
         return playlistAssetsRef.current.some((asset) =>
-            isDurationDirty(asset.id, asset.durationSeconds),
+            isDurationDirty(asset.playlistAssetId, asset.durationSeconds),
         );
     }, [isDurationDirty]);
 
@@ -331,7 +332,7 @@ export default function PlaylistBuilderPage() {
             const ordered = [...timelineRes].sort((a, b) => a.position - b.position);
             setPlaylistAssets(ordered);
             syncSavedDurations(ordered);
-            savedOrderRef.current = ordered.map((asset) => asset.id);
+            savedOrderRef.current = ordered.map((asset) => asset.playlistAssetId);
         } catch (error) {
             toast.error("Failed to load playlist data");
             console.error(error);
@@ -370,39 +371,51 @@ export default function PlaylistBuilderPage() {
 
             if (added.success) {
                 const durationSeconds = added.durationSeconds ?? asset.defaultDurationSeconds ?? 10;
-                setPlaylistAssets((prev) => [
-                    ...prev,
-                    {
-                        ...asset,
-                        playlistAssetId: added.playlistAssetId,
-                        durationSeconds,
-                        position: prev.length,
-                    },
-                ]);
-                savedDurationsRef.current[asset.id] = durationSeconds;
+                setPlaylistAssets((prev) => {
+                    const next = [
+                        ...prev,
+                        {
+                            ...asset,
+                            playlistAssetId: added.playlistAssetId,
+                            durationSeconds,
+                            position: prev.length,
+                        },
+                    ];
+                    savedOrderRef.current = next.map((item) => item.playlistAssetId);
+                    return next;
+                });
+                savedDurationsRef.current[added.playlistAssetId] = durationSeconds;
+                toast.success(`Added ${asset.name}`);
             }
-        } catch {
-            toast.error("Failed to add asset");
+        } catch (error) {
+            const message = error instanceof ApiError ? error.message : "Failed to add asset";
+            toast.error(message);
         }
     };
 
-    const handleRemoveAsset = async (assetId: string) => {
+    const handleRemoveAsset = async (playlistAssetId: string) => {
         if (!canEdit) return toast.error("Read-only mode");
         try {
-            await apiDelete(`/api/client-data/playlists/${playlistId}/assets/${assetId}`, {
+            await apiDelete(`/api/client-data/playlists/${playlistId}/assets/${playlistAssetId}`, {
                 headers: { "x-organization-id": activeOrganizationId! },
             });
-            setPlaylistAssets((prev) => prev.filter((a) => a.id !== assetId));
-            delete savedDurationsRef.current[assetId];
+            setPlaylistAssets((prev) => {
+                const next = prev
+                    .filter((item) => item.playlistAssetId !== playlistAssetId)
+                    .map((item, index) => ({ ...item, position: index }));
+                savedOrderRef.current = next.map((item) => item.playlistAssetId);
+                return next;
+            });
+            delete savedDurationsRef.current[playlistAssetId];
         } catch {
             toast.error("Failed to remove asset");
         }
     };
 
     const persistDuration = useCallback(
-        async (assetId: string, durationSeconds: number): Promise<boolean> => {
+        async (playlistAssetId: string, durationSeconds: number): Promise<boolean> => {
             if (!canEdit || !activeOrganizationId) return false;
-            if (!isDurationDirty(assetId, durationSeconds)) return true;
+            if (!isDurationDirty(playlistAssetId, durationSeconds)) return true;
 
             const normalized = Math.floor(durationSeconds);
             if (!Number.isFinite(normalized) || normalized < 1) {
@@ -410,26 +423,28 @@ export default function PlaylistBuilderPage() {
                 return false;
             }
 
-            setSavingDurationAssetId(assetId);
+            setSavingDurationId(playlistAssetId);
             try {
                 const updated = await apiRequest<PlaylistAsset>(
-                    `/api/client-data/playlists/${playlistId}/assets/${assetId}`,
+                    `/api/client-data/playlists/${playlistId}/assets/${playlistAssetId}`,
                     {
                         method: "PATCH",
                         headers: { "x-organization-id": activeOrganizationId },
                         body: JSON.stringify({ durationSeconds: normalized }),
                     },
                 );
-                savedDurationsRef.current[assetId] = updated.durationSeconds;
+                savedDurationsRef.current[playlistAssetId] = updated.durationSeconds;
                 setPlaylistAssets((prev) =>
-                    prev.map((item) => (item.id === assetId ? { ...item, ...updated } : item)),
+                    prev.map((item) =>
+                        item.playlistAssetId === playlistAssetId ? { ...item, ...updated } : item,
+                    ),
                 );
                 return true;
             } catch {
                 toast.error("Failed to update duration");
                 return false;
             } finally {
-                setSavingDurationAssetId(null);
+                setSavingDurationId(null);
             }
         },
         [activeOrganizationId, canEdit, isDurationDirty, playlistId],
@@ -437,30 +452,32 @@ export default function PlaylistBuilderPage() {
 
     const flushPendingDurationSaves = useCallback(async (): Promise<boolean> => {
         const dirtyAssets = playlistAssetsRef.current.filter((asset) =>
-            isDurationDirty(asset.id, asset.durationSeconds),
+            isDurationDirty(asset.playlistAssetId, asset.durationSeconds),
         );
         if (dirtyAssets.length === 0) return true;
 
         for (const asset of dirtyAssets) {
-            const saved = await persistDuration(asset.id, asset.durationSeconds);
+            const saved = await persistDuration(asset.playlistAssetId, asset.durationSeconds);
             if (!saved) return false;
         }
         return true;
     }, [isDurationDirty, persistDuration]);
 
-    const handleDurationChange = (assetId: string, value: string) => {
+    const handleDurationChange = (playlistAssetId: string, value: string) => {
         if (value.trim() === "") return;
         const parsed = Math.floor(Number(value));
         if (!Number.isFinite(parsed)) return;
         setPlaylistAssets((prev) =>
-            prev.map((asset) => (asset.id === assetId ? { ...asset, durationSeconds: parsed } : asset)),
+            prev.map((asset) =>
+                asset.playlistAssetId === playlistAssetId ? { ...asset, durationSeconds: parsed } : asset,
+            ),
         );
     };
 
-    const handleDurationSave = async (assetId: string) => {
-        const asset = playlistAssetsRef.current.find((item) => item.id === assetId);
+    const handleDurationSave = async (playlistAssetId: string) => {
+        const asset = playlistAssetsRef.current.find((item) => item.playlistAssetId === playlistAssetId);
         if (!asset) return;
-        await persistDuration(assetId, asset.durationSeconds);
+        await persistDuration(playlistAssetId, asset.durationSeconds);
     };
 
     const saveAssetOrder = async (orderedAssets: PlaylistAsset[]) => {
@@ -477,10 +494,12 @@ export default function PlaylistBuilderPage() {
             await apiRequest(`/api/client-data/playlists/${playlistId}/assets/reorder`, {
                 method: "PATCH",
                 headers: { "x-organization-id": activeOrganizationId },
-                body: JSON.stringify({ assetIds: orderedAssets.map((asset) => asset.id) }),
+                body: JSON.stringify({
+                    playlistAssetIds: orderedAssets.map((asset) => asset.playlistAssetId),
+                }),
             });
             await loadData();
-            savedOrderRef.current = orderedAssets.map((asset) => asset.id);
+            savedOrderRef.current = orderedAssets.map((asset) => asset.playlistAssetId);
             toast.success("Asset order saved");
         } catch (error) {
             const message = error instanceof ApiError ? error.message : "Failed to save asset order";
@@ -501,7 +520,7 @@ export default function PlaylistBuilderPage() {
 
     const handleReorderEnd = () => {
         if (!pendingOrderRef.current || isSavingOrder) return;
-        const nextIds = pendingOrderRef.current.map((asset) => asset.id);
+        const nextIds = pendingOrderRef.current.map((asset) => asset.playlistAssetId);
         if (nextIds.join("|") === savedOrderRef.current.join("|")) {
             pendingOrderRef.current = null;
             return;
@@ -548,7 +567,7 @@ export default function PlaylistBuilderPage() {
                         <ImageIcon size={18} /> Asset Library
                     </h3>
                     <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 12 }}>
-                        Browse folders and click an asset to add it to the timeline.
+                        Browse folders and click an asset to add it. The same asset can be added multiple times.
                     </p>
 
                     {/* Back + Breadcrumbs */}
@@ -695,8 +714,8 @@ export default function PlaylistBuilderPage() {
                                         asset={pa}
                                         index={index}
                                         canEdit={canEdit && !isSavingOrder}
-                                        durationDirty={isDurationDirty(pa.id, pa.durationSeconds)}
-                                        savingDurationAssetId={savingDurationAssetId}
+                                        durationDirty={isDurationDirty(pa.playlistAssetId, pa.durationSeconds)}
+                                        savingDurationId={savingDurationId}
                                         onDurationChange={handleDurationChange}
                                         onDurationSave={handleDurationSave}
                                         onRemove={handleRemoveAsset}

@@ -55,6 +55,9 @@ function resolveSinglePlaybackDuration(
 /**
  * When a single stored log covers multiple loop iterations (e.g. 60s for six
  * 10s slots), expand it into one event per configured slot duration.
+ *
+ * IMPORTANT: Call this only at **ingest** (player PoP submit). Reports and Excel
+ * export must not re-expand — that duplicates rows already stored in the DB.
  */
 export function expandPopLogPlaybackEvents<
   T extends {

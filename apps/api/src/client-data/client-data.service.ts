@@ -29,9 +29,12 @@ import {
   ZoneType,
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
-import { enrichPopLogFields, expandPopLogPlaybackEvents, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
-import { formatReportDateTime } from '../common/format-datetime';
+import {
+  EXCEL_REPORT_DATETIME_NUM_FMT,
+  toExcelWallClockDate,
+} from '../common/format-datetime';
 import { storageBytesToNumber } from '../common/device-storage.utils';
 import { getPreviewKind } from '../assets/asset-media.utils';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
@@ -178,13 +181,7 @@ export class ClientDataService {
       throw new BadRequestException('Only ready assets can be added to a playlist');
     }
 
-    const existing = await this.prisma.playlistAsset.findUnique({
-      where: { playlistId_assetId: { playlistId, assetId } },
-    });
-    if (existing) {
-      throw new BadRequestException('This asset is already in the playlist');
-    }
-
+    // Same asset may be added multiple times — each call creates a new PlaylistAsset row.
     const defaultDuration = asset.defaultDurationSeconds ?? 10;
     const normalizedDuration = this.normalizeDurationSeconds(durationSeconds ?? defaultDuration);
 
@@ -212,19 +209,19 @@ export class ClientDataService {
   async updatePlaylistAssetDuration(
     actor: RequestActor,
     playlistId: string,
-    assetId: string,
+    playlistAssetId: string,
     durationSeconds: number,
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
     const normalizedDuration = this.normalizeDurationSeconds(durationSeconds);
 
-    const playlistAsset = await this.prisma.playlistAsset.findUnique({
-      where: { playlistId_assetId: { playlistId, assetId } },
+    const playlistAsset = await this.prisma.playlistAsset.findFirst({
+      where: { id: playlistAssetId, playlistId, playlist: { organizationId } },
       include: { playlist: true, asset: true },
     });
 
-    if (!playlistAsset || playlistAsset.playlist.organizationId !== organizationId) {
+    if (!playlistAsset) {
       throw new NotFoundException('Playlist asset not found');
     }
 
@@ -239,8 +236,8 @@ export class ClientDataService {
     await this.playlistSync.bumpPlaylist(playlistId, 'duration-updated');
 
     this.logger.log(
-      `Playlist asset duration updated playlistId=${playlistId} assetId=${assetId} ` +
-        `previousDuration=${previousDuration}s newDuration=${updated.durationSeconds}s position=${updated.position}`,
+      `Playlist asset duration updated playlistId=${playlistId} playlistAssetId=${playlistAssetId} ` +
+        `assetId=${updated.assetId} previousDuration=${previousDuration}s newDuration=${updated.durationSeconds}s position=${updated.position}`,
     );
 
     return {
@@ -257,16 +254,16 @@ export class ClientDataService {
     };
   }
 
-  async removePlaylistAsset(actor: RequestActor, playlistId: string, assetId: string) {
+  async removePlaylistAsset(actor: RequestActor, playlistId: string, playlistAssetId: string) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
 
-    const pa = await this.prisma.playlistAsset.findUnique({
-      where: { playlistId_assetId: { playlistId, assetId } },
+    const pa = await this.prisma.playlistAsset.findFirst({
+      where: { id: playlistAssetId, playlistId, playlist: { organizationId } },
       include: { playlist: true },
     });
 
-    if (!pa || pa.playlist.organizationId !== organizationId) {
+    if (!pa) {
       throw new NotFoundException('Playlist asset not found');
     }
 
@@ -282,7 +279,11 @@ export class ClientDataService {
     return { success: true };
   }
 
-  async reorderPlaylistAssets(actor: RequestActor, playlistId: string, body: { assetIds: string[] }) {
+  async reorderPlaylistAssets(
+    actor: RequestActor,
+    playlistId: string,
+    body: { playlistAssetIds: string[] },
+  ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
 
@@ -291,29 +292,29 @@ export class ClientDataService {
 
     const existingAssets = await this.prisma.playlistAsset.findMany({
       where: { playlistId },
-      select: { assetId: true },
+      select: { id: true },
     });
-    const existingAssetIds = new Set(existingAssets.map((entry) => entry.assetId));
+    const existingIds = new Set(existingAssets.map((entry) => entry.id));
 
-    if (body.assetIds.length !== existingAssetIds.size) {
-      throw new BadRequestException('assetIds must include every playlist asset exactly once');
+    if (body.playlistAssetIds.length !== existingIds.size) {
+      throw new BadRequestException('playlistAssetIds must include every playlist item exactly once');
     }
 
     const seen = new Set<string>();
-    for (const assetId of body.assetIds) {
-      if (!existingAssetIds.has(assetId)) {
-        throw new BadRequestException('Invalid asset id in reorder payload');
+    for (const playlistAssetId of body.playlistAssetIds) {
+      if (!existingIds.has(playlistAssetId)) {
+        throw new BadRequestException('Invalid playlist asset id in reorder payload');
       }
-      if (seen.has(assetId)) {
-        throw new BadRequestException('assetIds must not contain duplicates');
+      if (seen.has(playlistAssetId)) {
+        throw new BadRequestException('playlistAssetIds must not contain duplicates');
       }
-      seen.add(assetId);
+      seen.add(playlistAssetId);
     }
 
     await this.prisma.$transaction(
-      body.assetIds.map((assetId, index) =>
+      body.playlistAssetIds.map((playlistAssetId, index) =>
         this.prisma.playlistAsset.update({
-          where: { playlistId_assetId: { playlistId, assetId } },
+          where: { id: playlistAssetId },
           data: { position: index },
         }),
       ),
@@ -1641,7 +1642,7 @@ export class ClientDataService {
     >(
       sourceLogs: T[],
     ) =>
-      sourceLogs.flatMap((log) => {
+      sourceLogs.map((log) => {
         const assetName = log.assetName || log.content;
         const playbackContext = contextIndex.resolve(
           assetName,
@@ -1658,21 +1659,18 @@ export class ClientDataService {
           },
           playbackContext,
         );
-        return expandPopLogPlaybackEvents(
-          { ...log, ...enriched },
-          playbackContext?.durationSeconds ?? null,
-        ).map((entry, index, events) => ({
-          ...entry,
-          id: events.length > 1 ? `${log.id}#${index + 1}` : log.id,
-        }));
+        // One DB row = one report row. Slot expansion already happens at ingest
+        // (player submit). Re-expanding here duplicated events in the UI/export.
+        return {
+          ...log,
+          ...enriched,
+          id: log.id,
+        };
       });
 
     const enrichedAggregateLogs = expandPopLogs(aggregateLogs);
     const enrichedLogs = expandPopLogs(logs);
-    const playbackEventCount =
-      totalLogs > 0 && totalLogs <= AGGREGATE_CAP
-        ? enrichedAggregateLogs.length
-        : totalLogs;
+    const playbackEventCount = totalLogs;
     const chartData =
       totalLogs <= AGGREGATE_CAP
         ? this.buildReportChartData(enrichedAggregateLogs, range, rangeStart, rangeEnd)
@@ -1911,12 +1909,28 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const exportTimeZone = query.timezone?.trim() || 'UTC';
     const { where } = await this.buildPopLogWhere(organizationId, query);
-    const [logs, devices] = await Promise.all([
+
+    this.logger.log(
+      `PoP export org=${organizationId} range=${query.range ?? '7d'} ` +
+        `deviceId=${query.deviceId ?? 'all'} folderId=${query.folderId ?? 'all'} ` +
+        `status=${query.status ?? 'all'} search=${query.search?.trim() ? 'yes' : 'no'}`,
+    );
+
+    const [logs, devices, filterDevice] = await Promise.all([
       this.prisma.proofOfPlayLog.findMany({
         where,
         orderBy: { startTime: 'desc' },
       }),
-      this.prisma.device.findMany({ where: { organizationId }, select: { id: true, currentPlaylistId: true } }),
+      this.prisma.device.findMany({
+        where: { organizationId },
+        select: { id: true, name: true, currentPlaylistId: true },
+      }),
+      query.deviceId && !query.deviceId.startsWith('historical:')
+        ? this.prisma.device.findFirst({
+            where: { id: query.deviceId, organizationId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
     ]);
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(organizationId);
@@ -1935,40 +1949,90 @@ export class ClientDataService {
     ];
     sheet.getRow(1).font = { bold: true };
 
-    const expandedLogs = logs.flatMap((log) => {
-      const assetName = log.assetName || log.content;
-      const playbackContext = contextIndex.resolve(
-        assetName,
-        log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
-      );
-      const enriched = enrichPopLogFields(
-        {
+    const historicalName = query.deviceId?.startsWith('historical:')
+      ? query.deviceId.slice('historical:'.length)
+      : null;
+
+    const matchesDeviceFilter = (log: {
+      deviceId?: string | null;
+      device: string;
+    }) => {
+      if (!query.deviceId) return true;
+      if (filterDevice) {
+        return (
+          log.deviceId === filterDevice.id ||
+          ((!log.deviceId || log.deviceId === '') &&
+            log.device.localeCompare(filterDevice.name, undefined, { sensitivity: 'accent' }) === 0)
+        );
+      }
+      if (historicalName) {
+        return log.device === historicalName;
+      }
+      return false;
+    };
+
+    // One DB row → one Excel row. Do not re-run slot expansion here (ingest already expands).
+    const exportRows = logs
+      .filter((log) => matchesDeviceFilter(log))
+      .map((log) => {
+        const assetName = log.assetName || log.content;
+        const playbackContext = contextIndex.resolve(
           assetName,
-          playlistName: log.playlistName,
-          campaignName: log.campaignName,
-          startTime: log.startTime,
-          endTime: log.endTime,
-          durationSeconds: log.durationSeconds,
-        },
-        playbackContext,
-      );
-      return expandPopLogPlaybackEvents(
-        { ...log, ...enriched },
-        playbackContext?.durationSeconds ?? null,
-      );
+          log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
+        );
+        const enriched = enrichPopLogFields(
+          {
+            assetName,
+            playlistName: log.playlistName,
+            campaignName: log.campaignName,
+            startTime: log.startTime,
+            endTime: log.endTime,
+            durationSeconds: log.durationSeconds,
+          },
+          playbackContext,
+        );
+        return { ...log, ...enriched, assetName };
+      });
+
+    // Drop accidental identical duplicates (same device/asset/times/duration/playlist/status).
+    // Legitimate replays at different times are kept.
+    const seenExact = new Set<string>();
+    const uniqueRows = exportRows.filter((log) => {
+      const key = [
+        log.deviceId ?? '',
+        log.device,
+        log.assetName || log.content,
+        log.playlistName ?? '',
+        log.campaignName ?? '',
+        log.startTime.toISOString(),
+        log.endTime?.toISOString() ?? '',
+        String(log.durationSeconds ?? ''),
+        log.status,
+      ].join('|');
+      if (seenExact.has(key)) return false;
+      seenExact.add(key);
+      return true;
     });
 
-    for (const log of expandedLogs) {
+    this.logger.log(
+      `PoP export rows db=${logs.length} afterFilter=${exportRows.length} ` +
+        `deduped=${uniqueRows.length} deviceFilter=${query.deviceId ?? 'none'}`,
+    );
+
+    for (const log of uniqueRows) {
       const assetName = log.assetName || log.content;
-      sheet.addRow({
+      const row = sheet.addRow({
         device: log.device,
         playlistName: log.playlistName ?? '',
         assetName,
-        startTime: formatReportDateTime(log.startTime, exportTimeZone),
-        endTime: formatReportDateTime(log.endTime, exportTimeZone),
+        startTime: toExcelWallClockDate(log.startTime, exportTimeZone),
+        endTime: toExcelWallClockDate(log.endTime, exportTimeZone),
         duration: log.durationSeconds != null ? `${log.durationSeconds}s` : '',
         status: this.toTitleStatus(log.status),
       });
+      // Real Date cells + 24h format so Excel sorts chronologically, not as text.
+      row.getCell('startTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
+      row.getCell('endTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
     }
 
     return Buffer.from(await workbook.xlsx.writeBuffer());
@@ -2024,10 +2088,17 @@ export class ClientDataService {
           andClauses.push({ id: '__no_match__' });
         }
       } else {
+        // Match by stable deviceId, or by device name for legacy rows that predate deviceId.
+        // Never match other devices' rows (even if names were later changed).
         andClauses.push({
           OR: [
             { deviceId: device.id },
-            { deviceId: null, device: device.name },
+            {
+              AND: [
+                { OR: [{ deviceId: null }, { deviceId: '' }] },
+                { device: { equals: device.name, mode: 'insensitive' } },
+              ],
+            },
           ],
         });
       }

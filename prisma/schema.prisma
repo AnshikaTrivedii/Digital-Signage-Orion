@@ -302,8 +302,9 @@ model PlaylistAsset {
   playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
   asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-  @@unique([playlistId, assetId])
+  // Same asset may appear multiple times in one playlist; each row is a distinct occurrence.
   @@index([playlistId, position])
+  @@index([playlistId, assetId])
 }
 
 model Layout {

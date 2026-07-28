@@ -105,28 +105,28 @@ export class ClientDataController {
     return this.clientDataService.reorderPlaylistAssets(actor, playlistId, body);
   }
 
-  @Patch('playlists/:playlistId/assets/:assetId')
+  @Patch('playlists/:playlistId/assets/:playlistAssetId')
   updatePlaylistAssetDuration(
     @CurrentActor() actor: RequestActor,
     @Param('playlistId') playlistId: string,
-    @Param('assetId') assetId: string,
+    @Param('playlistAssetId') playlistAssetId: string,
     @Body() body: UpdatePlaylistAssetDurationDto,
   ) {
     return this.clientDataService.updatePlaylistAssetDuration(
       actor,
       playlistId,
-      assetId,
+      playlistAssetId,
       body.durationSeconds,
     );
   }
 
-  @Delete('playlists/:playlistId/assets/:assetId')
+  @Delete('playlists/:playlistId/assets/:playlistAssetId')
   removePlaylistAsset(
     @CurrentActor() actor: RequestActor,
     @Param('playlistId') playlistId: string,
-    @Param('assetId') assetId: string,
+    @Param('playlistAssetId') playlistAssetId: string,
   ) {
-    return this.clientDataService.removePlaylistAsset(actor, playlistId, assetId);
+    return this.clientDataService.removePlaylistAsset(actor, playlistId, playlistAssetId);
   }
 
   @Get('layouts')

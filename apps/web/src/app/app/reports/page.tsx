@@ -183,14 +183,15 @@ export default function ReportsPage() {
         params.set("limit", "100");
         if (logSearch.trim()) params.set("search", logSearch.trim());
         if (statusFilter !== "all") params.set("status", statusFilter);
-        if (groupBy === "device" && deviceFilter) params.set("deviceId", deviceFilter);
-        if (groupBy === "campaign" && campaignFilter) params.set("folderId", campaignFilter);
+        // Always forward active filters so table and export stay identical.
+        if (deviceFilter) params.set("deviceId", deviceFilter);
+        if (campaignFilter) params.set("folderId", campaignFilter);
         if (dateRange === "custom") {
             if (customStart) params.set("startDate", new Date(`${customStart}T00:00:00`).toISOString());
             if (customEnd) params.set("endDate", new Date(`${customEnd}T23:59:59`).toISOString());
         }
-        return params.toString();
-    }, [dateRange, logSearch, statusFilter, groupBy, deviceFilter, campaignFilter, customStart, customEnd]);
+        return params;
+    }, [dateRange, logSearch, statusFilter, deviceFilter, campaignFilter, customStart, customEnd]);
 
     const handleGroupByChange = (mode: GroupBy) => {
         setGroupBy(mode);
@@ -205,7 +206,7 @@ export default function ReportsPage() {
             setLoadError(null);
             try {
                 const response = await apiRequest<ReportResponse>(
-                    `/api/client-data/reports?${buildQuery(pageNumber)}`,
+                    `/api/client-data/reports?${buildQuery(pageNumber).toString()}`,
                     { headers: { "x-organization-id": activeOrganizationId } },
                 );
                 setReportData(response);
@@ -239,6 +240,15 @@ export default function ReportsPage() {
         }
     };
 
+    const selectedDeviceName = deviceFilter
+        ? (reportData?.devices ?? []).find((device) => device.id === deviceFilter)?.name ?? null
+        : null;
+    const selectedCampaignName = campaignFilter
+        ? campaignFilter === "__uncategorized__"
+            ? "Uncategorized"
+            : (reportData?.campaigns ?? []).find((campaign) => campaign.id === campaignFilter)?.name
+        : null;
+
     const handleExport = async () => {
         if (!activeOrganizationId) {
             toast.error("Select an organization first");
@@ -252,9 +262,17 @@ export default function ReportsPage() {
             const organizationId = typeof window !== "undefined"
                 ? window.localStorage.getItem(ACTIVE_ORGANIZATION_STORAGE_KEY) ?? activeOrganizationId
                 : activeOrganizationId;
-            const exportQuery = `${buildQuery(page).replace(/page=\d+&?/, "").replace(/limit=\d+&?/, "")}&timezone=${encodeURIComponent(getUserTimeZone())}`;
+
+            // Rebuild from the same filter state as the table — never strip with regex.
+            const exportParams = buildQuery(page);
+            exportParams.delete("page");
+            exportParams.delete("limit");
+            exportParams.set("timezone", getUserTimeZone());
+            if (deviceFilter) exportParams.set("deviceId", deviceFilter);
+            if (campaignFilter) exportParams.set("folderId", campaignFilter);
+
             const response = await fetch(
-                `${API_BASE}/api/client-data/reports/export?${exportQuery}`,
+                `${API_BASE}/api/client-data/reports/export?${exportParams.toString()}`,
                 {
                     headers: {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -270,12 +288,21 @@ export default function ReportsPage() {
             const anchor = document.createElement("a");
             anchor.href = url;
             const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "_");
-            anchor.download = `ProofOfPlay_Report_${stamp}.xlsx`;
+            const deviceSlug = selectedDeviceName
+                ? selectedDeviceName.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_|_$/g, "")
+                : null;
+            anchor.download = deviceSlug
+                ? `ProofOfPlay_${deviceSlug}_${stamp}.xlsx`
+                : `ProofOfPlay_Report_${stamp}.xlsx`;
             document.body.appendChild(anchor);
             anchor.click();
             document.body.removeChild(anchor);
             URL.revokeObjectURL(url);
-            toast.success("Excel export ready");
+            toast.success(
+                deviceSlug
+                    ? `Excel export ready (${selectedDeviceName} only)`
+                    : "Excel export ready",
+            );
         } catch (error) {
             toast.error(describeError(error));
         } finally {
@@ -289,14 +316,6 @@ export default function ReportsPage() {
     const meta = reportData?.proofOfPlayMeta;
     const tableColumnCount = 7;
     const tableHeaders = ["Device", "Playlist", "Asset", "Start Time", "End Time", "Duration", "Status"];
-    const selectedDeviceName = deviceFilter
-        ? (reportData?.devices ?? []).find((device) => device.id === deviceFilter)?.name
-        : null;
-    const selectedCampaignName = campaignFilter
-        ? campaignFilter === "__uncategorized__"
-            ? "Uncategorized"
-            : (reportData?.campaigns ?? []).find((campaign) => campaign.id === campaignFilter)?.name
-        : null;
 
     const kpiCards = useMemo(() => [
         {
@@ -509,15 +528,49 @@ export default function ReportsPage() {
                         (reportData?.deviceBreakdown ?? []).length === 0 ? (
                             <p style={{ color: "hsl(var(--text-muted))" }}>No device activity in this window.</p>
                         ) : (
-                            (reportData?.deviceBreakdown ?? []).map((device) => (
-                                <div key={device.id ?? device.name} style={{ marginBottom: 14 }}>
+                            (reportData?.deviceBreakdown ?? []).map((device) => {
+                                const optionId = device.id
+                                    ?? (reportData?.devices ?? []).find((entry) => entry.name === device.name)?.id
+                                    ?? "";
+                                const isSelected = Boolean(optionId && deviceFilter === optionId);
+                                return (
+                                <button
+                                    key={device.id ?? device.name}
+                                    type="button"
+                                    onClick={() => {
+                                        if (!optionId) return;
+                                        setGroupBy("device");
+                                        setCampaignFilter("");
+                                        setDeviceFilter(isSelected ? "" : optionId);
+                                    }}
+                                    style={{
+                                        display: "block",
+                                        width: "100%",
+                                        textAlign: "left",
+                                        marginBottom: 14,
+                                        padding: "8px 10px",
+                                        borderRadius: 10,
+                                        border: isSelected
+                                            ? "1px solid hsla(var(--accent-primary), 0.45)"
+                                            : "1px solid transparent",
+                                        background: isSelected
+                                            ? "hsla(var(--accent-primary), 0.1)"
+                                            : "transparent",
+                                        cursor: optionId ? "pointer" : "default",
+                                        color: "inherit",
+                                    }}
+                                >
                                     <div className="flex-between" style={{ marginBottom: 4 }}>
                                         <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{device.name}</span>
                                         <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{device.impressions}</span>
                                     </div>
-                                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>{device.verifiedRate}% verified</p>
-                                </div>
-                            ))
+                                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>
+                                        {device.verifiedRate}% verified
+                                        {isSelected ? " • exporting this device only" : " • click to filter"}
+                                    </p>
+                                </button>
+                                );
+                            })
                         )
                     ) : (reportData?.campaignBreakdown ?? []).length === 0 ? (
                         <p style={{ color: "hsl(var(--text-muted))" }}>No campaign activity in this window.</p>

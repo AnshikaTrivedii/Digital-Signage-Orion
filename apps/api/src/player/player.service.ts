@@ -1365,16 +1365,35 @@ export class PlayerService {
       });
     }
 
-    await this.prisma.proofOfPlayLog.createMany({ data: rows });
+    // Deduplicate identical events within this batch (device retries / double flush).
+    const batchSeen = new Set<string>();
+    const dedupedRows = rows.filter((row) => {
+      const key = [
+        row.deviceId ?? '',
+        row.assetName,
+        row.startTime.toISOString(),
+        row.endTime?.toISOString() ?? '',
+        String(row.durationSeconds ?? ''),
+        row.playlistName ?? '',
+        row.status,
+      ].join('|');
+      if (batchSeen.has(key)) return false;
+      batchSeen.add(key);
+      return true;
+    });
+
+    await this.prisma.proofOfPlayLog.createMany({ data: dedupedRows });
 
     this.logger.log(
-      `Received ${rows.length} PoP logs from deviceId=${device.id} (${device.name})` +
-        (rows.length < batchSize ? ` (${batchSize - rows.length} skipped)` : ''),
+      `Received ${dedupedRows.length} PoP logs from deviceId=${device.id} (${device.name})` +
+        (dedupedRows.length < batchSize
+          ? ` (${batchSize - dedupedRows.length} skipped/deduped)`
+          : ''),
     );
 
     return this.buildPopLogSubmitResponse(device, {
-      received: rows.length,
-      skipped: batchSize - rows.length,
+      received: dedupedRows.length,
+      skipped: batchSize - dedupedRows.length,
       accepted: true,
     });
   }
