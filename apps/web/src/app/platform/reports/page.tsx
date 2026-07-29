@@ -35,10 +35,10 @@ const regionData = [
 
 const proofOfPlay = [
     { id: "1", device: "LOBBY-SCR-001", content: "Summer_Promo.mp4", timestamp: "2026-03-23 14:02:12", status: "Verified" },
-    { id: "2", device: "CAFE-SCR-003", content: "Menu_Board.html", timestamp: "2026-03-23 13:58:45", status: "Verified" },
+    { id: "2", device: "CAFE-SCR-003", content: "Menu_Board.pdf", timestamp: "2026-03-23 13:58:45", status: "Verified" },
     { id: "3", device: "CONF-SCR-012", content: "Corporate_Update.mp4", timestamp: "2026-03-23 13:55:30", status: "Verified" },
     { id: "4", device: "RETAIL-SCR-007", content: "Flash_Sale.png", timestamp: "2026-03-23 13:50:18", status: "Failed" },
-    { id: "5", device: "EXEC-SCR-002", content: "KPI_Dashboard.html", timestamp: "2026-03-23 13:45:02", status: "Verified" },
+    { id: "5", device: "EXEC-SCR-002", content: "KPI_Dashboard.pptx", timestamp: "2026-03-23 13:45:02", status: "Verified" },
     { id: "6", device: "PARK-SCR-011", content: "Event_Schedule.mp4", timestamp: "2026-03-23 13:40:55", status: "Verified" },
 ];
 

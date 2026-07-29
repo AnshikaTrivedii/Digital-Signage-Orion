@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import {
-    FileCode, FileText, Globe, Image as ImageIcon, Video,
+    FileText, Globe, Image as ImageIcon, Video,
     FileSpreadsheet, Presentation, FileType,
 } from "lucide-react";
 import { getPreviewKind, type PreviewKind } from "@/lib/asset-media";
@@ -22,7 +22,6 @@ function previewIcon(kind: PreviewKind, size: number): ReactNode {
     switch (kind) {
         case "image": return <ImageIcon size={size} style={{ color: "hsl(var(--accent-secondary))" }} />;
         case "video": return <Video size={size} style={style} />;
-        case "html": return <FileCode size={size} style={{ color: "hsl(var(--accent-tertiary))" }} />;
         case "pdf": return <FileText size={size} style={{ color: "#f87171" }} />;
         case "word": return <FileType size={size} style={{ color: "#60a5fa" }} />;
         case "excel": return <FileSpreadsheet size={size} style={{ color: "#4ade80" }} />;
@@ -58,21 +57,10 @@ export function AssetPreview({
         return <video src={mediaUrl} style={{ width: "100%", height, objectFit }} muted playsInline />;
     }
 
-    if (kind === "html" && mediaUrl && size !== "thumb") {
-        return (
-            <iframe
-                src={mediaUrl}
-                title={asset.name ?? "HTML preview"}
-                sandbox=""
-                style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
-            />
-        );
-    }
-
     if (kind === "pdf" && mediaUrl && size === "inspector") {
         return (
             <iframe
-                src={mediaUrl}
+                src={`${mediaUrl}#toolbar=0&navpanes=0`}
                 title={asset.name ?? "PDF preview"}
                 style={{ width: "100%", height: "100%", border: "none", background: "#fff" }}
             />
@@ -80,8 +68,31 @@ export function AssetPreview({
     }
 
     return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%" }}>
+        <div
+            style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                width: "100%",
+                height: "100%",
+            }}
+        >
             {previewIcon(kind, iconSize)}
+            {size === "inspector" && asset.type === "HTML" && (
+                <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", textAlign: "center", margin: 0 }}>
+                    Legacy HTML asset (no longer supported for upload)
+                </p>
+            )}
+            {size === "inspector" && kind === "pdf" && !mediaUrl && (
+                <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", margin: 0 }}>PDF preview unavailable</p>
+            )}
+            {size === "inspector" && (kind === "word" || kind === "powerpoint" || kind === "document") && asset.type === "DOCUMENT" && (
+                <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", margin: 0 }}>
+                    {(asset.documentFormat ?? "document").toUpperCase()} document
+                </p>
+            )}
         </div>
     );
 }

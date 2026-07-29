@@ -15,7 +15,7 @@ Copy the following text and provide it to your AI assistant or Android developer
 Build a robust, kiosk-mode Android application for a Digital Signage system ("Digital-Signage-Orion"). The app must run seamlessly on Android-based displays or TV boxes, fetching content from a NestJS backend and playing it in a continuous loop.
 
 **Context:**
-Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `Layouts` (multi-zone screen designs), `Assets` (Images, Videos, HTML, URL), and `Tickers` (scrolling text overlays). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
+Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `Layouts` (multi-zone screen designs), `Assets` (Images, Videos, Documents, URLs), and `Tickers` (scrolling text overlays). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
 
 > **Note (architecture):** There is **no "Campaign" layer**. Playlists link **directly** to assets (`Playlist → PlaylistAsset → Asset`). A device can play either a **full-screen playlist** OR a **multi-zone layout** assigned from the CMS Layout Designer. When a layout is assigned, `/sync` returns zone geometry + per-zone content instead of a single full-screen playlist.
 
@@ -24,7 +24,7 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 1.  **Tech Stack:**
     *   Language: Kotlin
     *   UI: Jetpack Compose (preferred) or XML Layouts.
-    *   Media Playback: **ExoPlayer** for videos (gapless loop), **Coil/Glide** for images, and **WebView** for HTML and URL assets.
+    *   Media Playback: **ExoPlayer** for videos (gapless loop), **Coil/Glide** for images, **PdfRenderer** (or equivalent) for PDFs, Office/WebView rendering for DOC/DOCX/PPT/PPTX documents, and **WebView** for URL assets.
     *   Networking: **Retrofit** with OkHttp.
     *   Asynchronous Operations: **Kotlin Coroutines** and **Flows**.
     *   Dependency Injection: **Hilt**.
@@ -299,6 +299,7 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "name": "welcome-banner.jpg",
       "type": "IMAGE",
       "mimeType": "image/jpeg",
+      "documentFormat": null,
       "durationSeconds": 10,
       "position": 0,
       "assetVersion": 2,
@@ -335,6 +336,7 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "name": "welcome-banner.jpg",
       "type": "IMAGE",
       "mimeType": "image/jpeg",
+      "documentFormat": null,
       "durationSeconds": 10,
       "position": 0,
       "assetVersion": 2,
@@ -353,6 +355,7 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "name": "promo-video.mp4",
       "type": "VIDEO",
       "mimeType": "video/mp4",
+      "documentFormat": null,
       "durationSeconds": 30,
       "position": 1,
       "assetVersion": 1,
@@ -368,6 +371,7 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "name": "Weather Dashboard",
       "type": "URL",
       "mimeType": "text/uri-list",
+      "documentFormat": null,
       "durationSeconds": 15,
       "position": 2,
       "assetVersion": 1,
@@ -377,6 +381,25 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
       "downloadUrl": null,
       "url": "https://weather.com",
       "fileSize": 0
+    },
+    {
+      "id": "clxyzdoc",
+      "name": "menu-board.pdf",
+      "type": "DOCUMENT",
+      "mimeType": "application/pdf",
+      "documentFormat": "pdf",
+      "durationSeconds": 20,
+      "position": 3,
+      "assetVersion": 1,
+      "updatedAt": "2026-06-20T00:00:00.000Z",
+      "contentHash": "pdfhash123",
+      "status": "READY",
+      "available": true,
+      "unavailableReason": null,
+      "requiresDownload": true,
+      "downloadUrl": "https://s3.ap-south-1.amazonaws.com/orion-assets/...",
+      "url": null,
+      "fileSize": 890123
     }
   ],
   "tickers": [
@@ -474,16 +497,28 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 7. When `available: false`, show a user-visible error using `unavailableReason` — do not attempt download.
 8. Playback never requires live internet — only sync, heartbeat, and PoP upload use the network.
 
-**Asset types:** `IMAGE`, `VIDEO`, `HTML`, `DOCUMENT`, `URL`
+**Asset types:** `IMAGE`, `VIDEO`, `DOCUMENT`, `URL` only (HTML asset type is removed — do not render HTML as a playlist asset)
 
 **Playback logic:**
 1. Sort assets by `position` (already sorted in response)
 2. Play each asset for `durationSeconds`
 3. For `IMAGE`: display using Glide/Coil for the specified duration
 4. For `VIDEO`: play using ExoPlayer (may exceed `durationSeconds` — play to completion)
-5. For `HTML`: render in a WebView for the specified duration
+5. For `DOCUMENT`:
+   - Use local cached file (same download/cache path as IMAGE/VIDEO)
+   - Prefer `documentFormat` (`pdf` | `doc` | `docx` | `ppt` | `pptx`; legacy may be `word` / `powerpoint`); fall back to `mimeType` / file extension
+   - **PDF**: render pages clearly fullscreen (PdfRenderer / similar); respect `durationSeconds`
+   - **Office** (DOC, DOCX, PPT, PPTX): render with the existing Office/WebView conversion approach fullscreen; respect `durationSeconds`
+   - Never show a blank screen — if render fails, show a clear error placeholder and advance after duration
 6. For `URL`: load `url` in a WebView for `durationSeconds` (no download/cache — `downloadUrl` is null)
 7. Loop back to position 0 when the last asset finishes
+
+**Document sync/cache (same as IMAGE/VIDEO):**
+- `requiresDownload: true` → download to local cache
+- If already cached with matching `assetVersion` / `contentHash` → do **not** re-download
+- Work offline from cache
+- Update when version/hash changes
+- Delete when listed in `removedAssetIds`
 
 **Cache commands (delivered on sync):**
 
@@ -846,8 +881,9 @@ data class TickerInfo(
 data class AssetInfo(
     val id: String,
     val name: String,
-    val type: String,        // IMAGE, VIDEO, HTML, DOCUMENT, URL
+    val type: String,        // IMAGE, VIDEO, DOCUMENT, URL
     val mimeType: String,
+    val documentFormat: String?, // pdf | doc | docx | ppt | pptx (legacy: word | powerpoint); null for non-documents
     val durationSeconds: Int,
     val position: Int,
     val assetVersion: Int,

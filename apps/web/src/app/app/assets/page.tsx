@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     UploadCloud, Search, Image as ImageIcon, Video,
     FileText, Trash2, Link as LinkIcon, X,
-    Eye, CloudUpload, FileCode, Archive, AlertCircle, Loader2, Tag, Globe, Plus,
+    Eye, CloudUpload, Archive, AlertCircle, Loader2, Tag, Globe, Plus,
     Folder as FolderIcon, FolderPlus, FolderInput, Pencil, ChevronRight, Home, Check
 } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -21,7 +21,7 @@ interface Asset {
     organizationId: string;
     folderId?: string | null;
     name: string;
-    type: "IMAGE" | "VIDEO" | "HTML" | "DOCUMENT" | "URL";
+    type: "IMAGE" | "VIDEO" | "DOCUMENT" | "URL" | "HTML";
     status: "UPLOADING" | "READY" | "ERROR";
     mimeType: string;
     fileSize: number;
@@ -96,8 +96,6 @@ const TAB_TO_TYPE: Record<string, string | undefined> = {
     All: undefined,
     Images: "IMAGE",
     Videos: "VIDEO",
-    HTML: "HTML",
-    Docs: "DOCUMENT",
     Documents: "DOCUMENT",
     URLs: "URL",
 };
@@ -328,8 +326,8 @@ export default function AssetsPage() {
         switch (type) {
             case "VIDEO": return <Video size={size} style={{ color: "hsl(var(--accent-primary))" }} />;
             case "IMAGE": return <ImageIcon size={size} style={{ color: "hsl(var(--accent-secondary))" }} />;
-            case "HTML": return <FileCode size={size} style={{ color: "hsl(var(--accent-tertiary))" }} />;
             case "URL": return <Globe size={size} style={{ color: "hsl(var(--accent-primary))" }} />;
+            case "DOCUMENT": return <FileText size={size} style={{ color: "#f87171" }} />;
             default: return <FileText size={size} style={{ color: "hsl(var(--text-muted))" }} />;
         }
     };
@@ -337,8 +335,8 @@ export default function AssetsPage() {
     const getGlowColor = (type: string) => {
         if (type === "VIDEO") return "hsl(var(--accent-primary))";
         if (type === "IMAGE") return "hsl(var(--accent-secondary))";
-        if (type === "HTML") return "hsl(var(--accent-tertiary))";
         if (type === "URL") return "hsl(var(--accent-primary))";
+        if (type === "DOCUMENT") return "#f87171";
         return "hsl(var(--text-muted))";
     };
 
@@ -630,7 +628,7 @@ export default function AssetsPage() {
 
             <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ display: "flex", gap: 6, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
-                    {["All", "Images", "Videos", "HTML", "Documents", "URLs"].map(tab => (
+                    {["All", "Images", "Videos", "Documents", "URLs"].map(tab => (
                         <button key={tab} onClick={() => setActiveTab(tab)} style={{
                             padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: "0.85rem", fontWeight: 500,
                             background: activeTab === tab ? "hsla(var(--accent-primary), 0.15)" : "transparent",
@@ -970,11 +968,19 @@ export default function AssetsPage() {
                                     {
                                         label: "Duration",
                                         value:
-                                            selectedAsset.type === "URL" || selectedAsset.type === "HTML" || selectedAsset.type === "DOCUMENT"
-                                                ? `${selectedAsset.defaultDurationSeconds ?? selectedAsset.durationSeconds ?? (selectedAsset.type === "HTML" ? 30 : 20)}s default`
-                                                : (formatDuration(selectedAsset.durationMs) || `${selectedAsset.defaultDurationSeconds ?? 10}s default`),
+                                            selectedAsset.type === "URL" || selectedAsset.type === "DOCUMENT"
+                                                ? `${selectedAsset.defaultDurationSeconds ?? selectedAsset.durationSeconds ?? 20}s default`
+                                                : selectedAsset.type === "HTML"
+                                                    ? `${selectedAsset.defaultDurationSeconds ?? 30}s default (legacy)`
+                                                    : (formatDuration(selectedAsset.durationMs) || `${selectedAsset.defaultDurationSeconds ?? 10}s default`),
                                     },
+                                    ...(selectedAsset.type === "DOCUMENT" && selectedAsset.documentFormat
+                                        ? [{ label: "Format", value: selectedAsset.documentFormat.toUpperCase() }]
+                                        : []),
                                     ...(selectedAsset.type === "URL" ? [{ label: "Website URL", value: selectedAsset.url || "N/A" }] : []),
+                                    ...(selectedAsset.type === "HTML"
+                                        ? [{ label: "Note", value: "Legacy HTML — uploads disabled" }]
+                                        : []),
                                     { label: "MIME Type", value: selectedAsset.mimeType },
                                     { label: "Uploaded By", value: selectedAsset.uploadedBy?.fullName || "Unknown" },
                                 ].map((f, i) => (

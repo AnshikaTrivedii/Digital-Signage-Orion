@@ -1,11 +1,33 @@
 import { AssetType } from '@prisma/client';
 
-export type DocumentFormat = 'pdf' | 'word' | 'excel' | 'powerpoint' | 'text' | 'other';
+/**
+ * Stored documentFormat values — prefer specific extensions for new uploads.
+ * Legacy rows may still use `word` / `powerpoint` / `excel` / `text`.
+ */
+export type DocumentFormat =
+  | 'pdf'
+  | 'doc'
+  | 'docx'
+  | 'ppt'
+  | 'pptx'
+  | 'word'
+  | 'excel'
+  | 'powerpoint'
+  | 'text'
+  | 'other';
+
+/** Formats accepted for new DOCUMENT uploads. */
+export const SUPPORTED_DOCUMENT_UPLOAD_FORMATS: ReadonlySet<DocumentFormat> = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'ppt',
+  'pptx',
+]);
 
 export type PreviewKind =
   | 'image'
   | 'video'
-  | 'html'
   | 'pdf'
   | 'word'
   | 'excel'
@@ -14,6 +36,10 @@ export type PreviewKind =
   | 'url'
   | 'document';
 
+/**
+ * Upload accept map. Supported product types: Image, Video, URL (via separate API), Document.
+ * Document formats: PDF, DOC, DOCX, PPT, PPTX.
+ */
 const EXTENSION_MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -24,16 +50,11 @@ const EXTENSION_MIME: Record<string, string> = {
   '.mp4': 'video/mp4',
   '.mov': 'video/quicktime',
   '.webm': 'video/webm',
-  '.html': 'text/html',
-  '.htm': 'text/html',
   '.pdf': 'application/pdf',
   '.doc': 'application/msword',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.ppt': 'application/vnd.ms-powerpoint',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  '.xls': 'application/vnd.ms-excel',
-  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  '.txt': 'text/plain',
 };
 
 const MIME_ASSET_TYPE: Record<string, AssetType> = {
@@ -45,20 +66,14 @@ const MIME_ASSET_TYPE: Record<string, AssetType> = {
   'video/mp4': AssetType.VIDEO,
   'video/quicktime': AssetType.VIDEO,
   'video/webm': AssetType.VIDEO,
-  'text/html': AssetType.HTML,
-  'application/xhtml+xml': AssetType.HTML,
   'application/pdf': AssetType.DOCUMENT,
   'application/msword': AssetType.DOCUMENT,
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': AssetType.DOCUMENT,
   'application/vnd.ms-powerpoint': AssetType.DOCUMENT,
   'application/vnd.openxmlformats-officedocument.presentationml.presentation': AssetType.DOCUMENT,
-  'application/vnd.ms-excel': AssetType.DOCUMENT,
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': AssetType.DOCUMENT,
-  'text/plain': AssetType.DOCUMENT,
 };
 
 const DEFAULT_DURATION_SECONDS: Partial<Record<AssetType, number>> = {
-  [AssetType.HTML]: 30,
   [AssetType.DOCUMENT]: 20,
   [AssetType.URL]: 15,
   [AssetType.IMAGE]: 10,
@@ -81,42 +96,58 @@ export function inferMimeType(filename: string, mimeType?: string): string {
 
 export function resolveDocumentFormat(mimeType: string, filename: string): DocumentFormat | null {
   const normalized = mimeType.toLowerCase();
-  if (normalized === 'application/pdf' || getFileExtension(filename) === '.pdf') return 'pdf';
-  if (
-    normalized.includes('wordprocessingml') ||
-    normalized === 'application/msword' ||
-    ['.doc', '.docx'].includes(getFileExtension(filename))
-  ) {
-    return 'word';
-  }
+  const ext = getFileExtension(filename);
+  if (normalized === 'application/pdf' || ext === '.pdf') return 'pdf';
+  if (ext === '.doc' || normalized === 'application/msword') return 'doc';
+  if (ext === '.docx' || normalized.includes('wordprocessingml')) return 'docx';
+  if (ext === '.ppt' || normalized === 'application/vnd.ms-powerpoint') return 'ppt';
+  if (ext === '.pptx' || normalized.includes('presentationml')) return 'pptx';
+  // Legacy / non-upload formats (still recognized for existing assets).
   if (
     normalized.includes('spreadsheetml') ||
     normalized === 'application/vnd.ms-excel' ||
-    ['.xls', '.xlsx'].includes(getFileExtension(filename))
+    ['.xls', '.xlsx'].includes(ext)
   ) {
     return 'excel';
   }
-  if (
-    normalized.includes('presentationml') ||
-    normalized === 'application/vnd.ms-powerpoint' ||
-    ['.ppt', '.pptx'].includes(getFileExtension(filename))
-  ) {
-    return 'powerpoint';
-  }
-  if (normalized === 'text/plain' || getFileExtension(filename) === '.txt') return 'text';
+  if (normalized === 'text/plain' || ext === '.txt') return 'text';
   return 'other';
 }
 
 export function resolveUploadMedia(filename: string, mimeType: string) {
   const resolvedMime = inferMimeType(filename, mimeType);
+  const ext = getFileExtension(filename);
+
+  // Explicitly reject HTML — no longer a supported asset type.
+  if (
+    resolvedMime === 'text/html' ||
+    resolvedMime === 'application/xhtml+xml' ||
+    ext === '.html' ||
+    ext === '.htm'
+  ) {
+    throw new Error(
+      'HTML assets are no longer supported. Upload Image, Video, or Document (PDF, DOC, DOCX, PPT, PPTX).',
+    );
+  }
+
   const assetType = MIME_ASSET_TYPE[resolvedMime];
   if (!assetType) {
-    const allowed = [...new Set(Object.values(MIME_ASSET_TYPE))].join(', ');
-    throw new Error(`Unsupported file type: ${resolvedMime}. Supported asset types: ${allowed}`);
+    throw new Error(
+      `Unsupported file type: ${resolvedMime}. Supported: Image, Video, Document (PDF, DOC, DOCX, PPT, PPTX).`,
+    );
   }
 
   const documentFormat =
     assetType === AssetType.DOCUMENT ? resolveDocumentFormat(resolvedMime, filename) : null;
+
+  if (
+    assetType === AssetType.DOCUMENT &&
+    (!documentFormat || !SUPPORTED_DOCUMENT_UPLOAD_FORMATS.has(documentFormat))
+  ) {
+    throw new Error(
+      `Unsupported document format. Supported documents: PDF, DOC, DOCX, PPT, PPTX.`,
+    );
+  }
 
   return {
     mimeType: resolvedMime,
@@ -128,18 +159,27 @@ export function resolveUploadMedia(filename: string, mimeType: string) {
 }
 
 export function getPreviewKind(
-  assetType: AssetType,
+  assetType: AssetType | string,
   documentFormat?: string | null,
 ): PreviewKind {
-  if (assetType === AssetType.IMAGE) return 'image';
-  if (assetType === AssetType.VIDEO) return 'video';
-  if (assetType === AssetType.HTML) return 'html';
-  if (assetType === AssetType.URL) return 'url';
-  if (assetType === AssetType.DOCUMENT) {
+  if (assetType === AssetType.IMAGE || assetType === 'IMAGE') return 'image';
+  if (assetType === AssetType.VIDEO || assetType === 'VIDEO') return 'video';
+  if (assetType === AssetType.URL || assetType === 'URL') return 'url';
+  // Legacy HTML rows still in DB: treat as generic document icon (not uploadable).
+  if (assetType === AssetType.HTML || assetType === 'HTML') return 'document';
+  if (assetType === AssetType.DOCUMENT || assetType === 'DOCUMENT') {
     if (documentFormat === 'pdf') return 'pdf';
-    if (documentFormat === 'word') return 'word';
+    if (documentFormat === 'doc' || documentFormat === 'docx' || documentFormat === 'word') {
+      return 'word';
+    }
     if (documentFormat === 'excel') return 'excel';
-    if (documentFormat === 'powerpoint') return 'powerpoint';
+    if (
+      documentFormat === 'ppt' ||
+      documentFormat === 'pptx' ||
+      documentFormat === 'powerpoint'
+    ) {
+      return 'powerpoint';
+    }
     if (documentFormat === 'text') return 'text';
     return 'document';
   }

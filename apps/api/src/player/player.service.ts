@@ -61,6 +61,7 @@ type ManifestAssetInput = {
   contentHash: string | null;
   updatedAt: Date;
   defaultDurationSeconds?: number | null;
+  documentFormat?: string | null;
 };
 
 type ManifestEntry = {
@@ -68,6 +69,7 @@ type ManifestEntry = {
   name: string;
   type: string;
   mimeType: string;
+  documentFormat: string | null;
   durationSeconds: number;
   position: number;
   assetVersion: number;
@@ -1092,6 +1094,7 @@ export class PlayerService {
       name: asset.name,
       type: asset.type,
       mimeType: asset.mimeType,
+      documentFormat: asset.documentFormat ?? null,
       durationSeconds,
       position,
       assetVersion: asset.contentVersion,
@@ -1099,6 +1102,19 @@ export class PlayerService {
       contentHash: asset.contentHash,
       fileSize: asset.fileSize,
     };
+
+    // HTML playlist assets are retired — keep DB rows intact but do not serve for playback.
+    if (asset.type === 'HTML') {
+      return {
+        ...baseEntry,
+        status: asset.status,
+        available: false,
+        unavailableReason: 'HTML assets are no longer supported',
+        requiresDownload: false,
+        downloadUrl: null,
+        url: null,
+      };
+    }
 
     const isUrlAsset = asset.type === 'URL';
     if (isUrlAsset) {
