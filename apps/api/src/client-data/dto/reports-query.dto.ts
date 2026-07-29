@@ -1,21 +1,30 @@
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsISO8601, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 import { NormalizeLimit, NormalizePage } from '../../common/transforms/normalize-pagination.transform';
 
-export const REPORT_RANGES = ['today', '7d', '30d', 'all', 'custom'] as const;
+export const REPORT_RANGES = ['today', 'yesterday', '7d', '15d', 'custom'] as const;
 export type ReportRange = (typeof REPORT_RANGES)[number];
+
+/** Calendar date `YYYY-MM-DD`, optionally with a time suffix. */
+const REPORT_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}(T[\d:.+-Z]*)?$/;
 
 export class ReportsQueryDto {
   @IsOptional()
   @IsIn(REPORT_RANGES)
   range?: ReportRange;
 
+  /** Calendar date `YYYY-MM-DD` (preferred) or ISO datetime — day bounds applied in `timezone`. */
   @IsOptional()
-  @IsISO8601()
+  @Matches(REPORT_DATE_PATTERN, {
+    message: 'startDate must be YYYY-MM-DD or an ISO datetime',
+  })
   startDate?: string;
 
+  /** Calendar date `YYYY-MM-DD` (preferred) or ISO datetime — day bounds applied in `timezone`. */
   @IsOptional()
-  @IsISO8601()
+  @Matches(REPORT_DATE_PATTERN, {
+    message: 'endDate must be YYYY-MM-DD or an ISO datetime',
+  })
   endDate?: string;
 
   @IsOptional()
@@ -49,7 +58,7 @@ export class ReportsQueryDto {
   @Max(500)
   limit?: number;
 
-  /** IANA timezone for export formatting, e.g. Asia/Kolkata */
+  /** IANA timezone for range bounds + export formatting, e.g. Asia/Kolkata */
   @IsOptional()
   @IsString()
   timezone?: string;

@@ -13,7 +13,7 @@ import { formatReportDateTime, getUserTimeZone } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 import { ACTIVE_ORGANIZATION_STORAGE_KEY, AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
 
-type Range = "today" | "7d" | "30d" | "all" | "custom";
+type Range = "today" | "yesterday" | "7d" | "15d" | "custom";
 
 type PopLog = {
     id: string;
@@ -93,11 +93,13 @@ type ReportResponse = {
 
 const RANGE_LABEL: Record<Range, string> = {
     today: "Today",
-    "7d": "Last 7 days",
-    "30d": "Last 30 days",
-    all: "All records",
-    custom: "Custom range",
+    yesterday: "Yesterday",
+    "7d": "Last 7 Days",
+    "15d": "Last 15 Days",
+    custom: "Custom Range",
 };
+
+const RANGE_OPTIONS: Range[] = ["today", "yesterday", "7d", "15d", "custom"];
 
 const statusFromLog = (status: string) => status.toLowerCase();
 
@@ -181,17 +183,29 @@ export default function ReportsPage() {
         params.set("range", dateRange);
         params.set("page", String(pageNumber));
         params.set("limit", "100");
+        params.set("timezone", getUserTimeZone());
         if (logSearch.trim()) params.set("search", logSearch.trim());
         if (statusFilter !== "all") params.set("status", statusFilter);
         // Always forward active filters so table and export stay identical.
         if (deviceFilter) params.set("deviceId", deviceFilter);
         if (campaignFilter) params.set("folderId", campaignFilter);
         if (dateRange === "custom") {
-            if (customStart) params.set("startDate", new Date(`${customStart}T00:00:00`).toISOString());
-            if (customEnd) params.set("endDate", new Date(`${customEnd}T23:59:59`).toISOString());
+            // Send calendar dates only — backend applies timezone day bounds.
+            if (customStart) params.set("startDate", customStart);
+            if (customEnd) params.set("endDate", customEnd);
         }
         return params;
     }, [dateRange, logSearch, statusFilter, deviceFilter, campaignFilter, customStart, customEnd]);
+
+    const customRangeValid =
+        dateRange !== "custom" ||
+        Boolean(customStart && customEnd && customStart <= customEnd);
+    const customRangeError =
+        dateRange === "custom" && customStart && customEnd && customStart > customEnd
+            ? "End date cannot be earlier than start date"
+            : dateRange === "custom" && (!customStart || !customEnd)
+                ? "Select both start and end dates"
+                : null;
 
     const handleGroupByChange = (mode: GroupBy) => {
         setGroupBy(mode);
@@ -227,8 +241,14 @@ export default function ReportsPage() {
                 return;
             }
         }
+        if (!customRangeValid) {
+            setReportData(null);
+            setIsLoading(false);
+            setLoadError(null);
+            return;
+        }
         void loadReport(page);
-    }, [filterKey, page, loadReport]);
+    }, [filterKey, page, loadReport, customRangeValid]);
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -252,6 +272,10 @@ export default function ReportsPage() {
     const handleExport = async () => {
         if (!activeOrganizationId) {
             toast.error("Select an organization first");
+            return;
+        }
+        if (!customRangeValid) {
+            toast.error(customRangeError ?? "Select a valid date range");
             return;
         }
         setIsExporting(true);
@@ -350,7 +374,7 @@ export default function ReportsPage() {
 
     const hasData = (meta?.total ?? 0) > 0;
     const lastLogAt = reportData?.lastLogAt ? new Date(reportData.lastLogAt) : null;
-    const showStaleLogHint = !hasData && lastLogAt && dateRange !== "all";
+    const showStaleLogHint = !hasData && !!lastLogAt && customRangeValid;
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
@@ -372,7 +396,7 @@ export default function ReportsPage() {
                 </div>
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                     <div className="glass-panel" style={{ display: "flex", padding: 4, borderRadius: 10, flexWrap: "wrap" }}>
-                        {(["today", "7d", "30d", "all", "custom"] as Range[]).map((t) => (
+                        {RANGE_OPTIONS.map((t) => (
                             <button key={t} onClick={() => setDateRange(t)} style={{
                                 padding: "8px 14px", border: "none", borderRadius: 8, fontSize: "0.8rem", fontWeight: 600, cursor: "pointer",
                                 background: dateRange === t ? "hsla(var(--accent-primary), 0.15)" : "transparent",
@@ -380,11 +404,11 @@ export default function ReportsPage() {
                             }}>{RANGE_LABEL[t]}</button>
                         ))}
                     </div>
-                    <button className="btn-outline" onClick={handleRefresh} disabled={isRefreshing || isLoading} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-outline" onClick={handleRefresh} disabled={isRefreshing || isLoading || !customRangeValid} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <RefreshCw size={16} style={{ animation: isRefreshing ? "spin 1s linear infinite" : undefined }} />
                         Refresh
                     </button>
-                    <button className="btn-outline" onClick={handleExport} disabled={isExporting} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-outline" onClick={handleExport} disabled={isExporting || !customRangeValid} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <Download size={16} />
                         {isExporting ? "Exporting..." : "Export Excel"}
                     </button>
@@ -395,14 +419,29 @@ export default function ReportsPage() {
                 <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
                     <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "hsl(var(--text-muted))" }}>Start date</span>
-                        <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)}
-                            style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid hsla(var(--border-subtle), 1)", background: "hsla(var(--bg-base), 0.8)", color: "hsl(var(--text-primary))" }} />
+                        <input
+                            type="date"
+                            value={customStart}
+                            max={customEnd || undefined}
+                            onChange={(e) => setCustomStart(e.target.value)}
+                            style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid hsla(var(--border-subtle), 1)", background: "hsla(var(--bg-base), 0.8)", color: "hsl(var(--text-primary))" }}
+                        />
                     </label>
                     <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "hsl(var(--text-muted))" }}>End date</span>
-                        <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)}
-                            style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid hsla(var(--border-subtle), 1)", background: "hsla(var(--bg-base), 0.8)", color: "hsl(var(--text-primary))" }} />
+                        <input
+                            type="date"
+                            value={customEnd}
+                            min={customStart || undefined}
+                            onChange={(e) => setCustomEnd(e.target.value)}
+                            style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid hsla(var(--border-subtle), 1)", background: "hsla(var(--bg-base), 0.8)", color: "hsl(var(--text-primary))" }}
+                        />
                     </label>
+                    {customRangeError && (
+                        <p style={{ fontSize: "0.75rem", color: "hsl(var(--status-danger))", alignSelf: "center" }}>
+                            {customRangeError}
+                        </p>
+                    )}
                 </div>
             )}
 
@@ -473,11 +512,11 @@ export default function ReportsPage() {
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>No logs in this date range</p>
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>
                             The most recent playback log is from {formatReportDateTime(lastLogAt)}.
-                            Try &quot;Last 7 days&quot; or &quot;All records&quot;, or wait a few minutes after playback on a paired Android device.
+                            Try &quot;Last 7 Days&quot; or &quot;Last 15 Days&quot;, or wait a few minutes after playback on a paired Android device.
                             Logs are only submitted by the player app, not from browser previews.
                         </p>
                     </div>
-                    <button className="btn-outline" onClick={() => setDateRange("7d")}>Last 7 days</button>
+                    <button className="btn-outline" onClick={() => setDateRange("7d")}>Last 7 Days</button>
                 </div>
             )}
 

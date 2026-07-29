@@ -33,6 +33,12 @@ import { dedupeIdenticalPopLogs, enrichPopLogFields, PopLogContextIndex } from '
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import {
   EXCEL_REPORT_DATETIME_NUM_FMT,
+  addCalendarDays,
+  compareCalendarDates,
+  endOfZonedDay,
+  getZonedCalendarDate,
+  parseCalendarDateInput,
+  startOfZonedDay,
   toExcelWallClockDate,
 } from '../common/format-datetime';
 import { storageBytesToNumber } from '../common/device-storage.utils';
@@ -1539,10 +1545,11 @@ export class ClientDataService {
       status?: 'all' | 'verified' | 'failed';
       page?: number;
       limit?: number;
+      timezone?: string;
     } = {},
   ) {
     const organizationId = this.getOrgId(actor);
-    const range = query.range ?? '7d';
+    const range = query.range ?? 'today';
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(500, Math.max(1, query.limit ?? 100));
     const { where, rangeStart, rangeEnd } = await this.buildPopLogWhere(organizationId, query);
@@ -1676,7 +1683,13 @@ export class ClientDataService {
         : totalLogs;
     const chartData =
       totalLogs <= AGGREGATE_CAP
-        ? this.buildReportChartData(enrichedAggregateLogs, range, rangeStart, rangeEnd)
+        ? this.buildReportChartData(
+            enrichedAggregateLogs,
+            range,
+            rangeStart,
+            rangeEnd,
+            query.timezone,
+          )
         : [];
     const deviceByName = new Map(devices.map((device) => [device.name, device]));
     const deviceAgg = new Map<string, {
@@ -1914,9 +1927,10 @@ export class ClientDataService {
     const { where } = await this.buildPopLogWhere(organizationId, query);
 
     this.logger.log(
-      `PoP export org=${organizationId} range=${query.range ?? '7d'} ` +
+      `PoP export org=${organizationId} range=${query.range ?? 'today'} ` +
         `deviceId=${query.deviceId ?? 'all'} folderId=${query.folderId ?? 'all'} ` +
-        `status=${query.status ?? 'all'} search=${query.search?.trim() ? 'yes' : 'no'}`,
+        `status=${query.status ?? 'all'} search=${query.search?.trim() ? 'yes' : 'no'} ` +
+        `timezone=${exportTimeZone}`,
     );
 
     const [logs, devices, filterDevice] = await Promise.all([
@@ -1948,7 +1962,6 @@ export class ClientDataService {
       { header: 'Start Time', key: 'startTime', width: 24 },
       { header: 'End Time', key: 'endTime', width: 24 },
       { header: 'Duration', key: 'duration', width: 14 },
-      { header: 'Status', key: 'status', width: 14 },
     ];
     sheet.getRow(1).font = { bold: true };
 
@@ -2014,7 +2027,6 @@ export class ClientDataService {
         startTime: toExcelWallClockDate(log.startTime, exportTimeZone),
         endTime: toExcelWallClockDate(log.endTime, exportTimeZone),
         duration: log.durationSeconds != null ? `${log.durationSeconds}s` : '',
-        status: this.toTitleStatus(log.status),
       });
       // Real Date cells + 24h format so Excel sorts chronologically, not as text.
       row.getCell('startTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
@@ -2042,12 +2054,14 @@ export class ClientDataService {
       folderId?: string;
       search?: string;
       status?: 'all' | 'verified' | 'failed';
+      timezone?: string;
     },
   ) {
     const { rangeStart, rangeEnd } = this.resolveReportDateRange(
-      query.range ?? '7d',
+      query.range ?? 'today',
       query.startDate,
       query.endDate,
+      query.timezone,
     );
     const andClauses: Prisma.ProofOfPlayLogWhereInput[] = [{ organizationId }];
 
@@ -2174,43 +2188,62 @@ export class ClientDataService {
     return { where: { AND: andClauses }, rangeStart, rangeEnd };
   }
 
-  private resolveReportDateRange(range: string, startDate?: string, endDate?: string) {
+  /**
+   * Resolve inclusive playback window bounds in UTC from calendar days in `timezone`.
+   * Filtering uses ProofOfPlayLog.startTime (playback start).
+   */
+  private resolveReportDateRange(
+    range: string,
+    startDate?: string,
+    endDate?: string,
+    timezone?: string,
+  ) {
+    const timeZone = timezone?.trim() || 'UTC';
+    const normalized = (range ?? 'today').toLowerCase();
     const now = new Date();
-    const normalized = (range ?? '7d').toLowerCase();
+    const today = getZonedCalendarDate(now, timeZone);
 
     if (normalized === 'custom') {
-      const customStart = startDate ? new Date(startDate) : null;
-      const customEnd = endDate ? new Date(endDate) : now;
-      if (customStart && Number.isNaN(customStart.getTime())) {
-        throw new BadRequestException('Invalid startDate');
+      if (!startDate?.trim() || !endDate?.trim()) {
+        throw new BadRequestException('Custom range requires startDate and endDate');
       }
-      if (Number.isNaN(customEnd.getTime())) {
-        throw new BadRequestException('Invalid endDate');
-      }
-      if (customStart && customEnd < customStart) {
-        throw new BadRequestException('endDate must be after startDate');
+      const customStart = parseCalendarDateInput(startDate);
+      const customEnd = parseCalendarDateInput(endDate);
+      if (!customStart) throw new BadRequestException('Invalid startDate');
+      if (!customEnd) throw new BadRequestException('Invalid endDate');
+      if (compareCalendarDates(customEnd, customStart) < 0) {
+        throw new BadRequestException('endDate must be on or after startDate');
       }
       return {
-        rangeStart: customStart,
-        rangeEnd: customEnd,
+        rangeStart: startOfZonedDay(customStart, timeZone),
+        rangeEnd: endOfZonedDay(customEnd, timeZone),
       };
     }
 
-    if (normalized === 'all') {
-      return { rangeStart: null, rangeEnd: null };
-    }
-
     if (normalized === 'today') {
-      const rangeStart = new Date(now);
-      rangeStart.setHours(0, 0, 0, 0);
-      const rangeEnd = new Date(now);
-      rangeEnd.setHours(23, 59, 59, 999);
-      return { rangeStart, rangeEnd };
+      return {
+        rangeStart: startOfZonedDay(today, timeZone),
+        rangeEnd: endOfZonedDay(today, timeZone),
+      };
     }
 
-    const days = normalized === '30d' ? 30 : normalized === '24h' ? 1 : 7;
-    const rangeStart = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
-    return { rangeStart, rangeEnd: now };
+    if (normalized === 'yesterday') {
+      const yesterday = addCalendarDays(today, -1);
+      return {
+        rangeStart: startOfZonedDay(yesterday, timeZone),
+        rangeEnd: endOfZonedDay(yesterday, timeZone),
+      };
+    }
+
+    // Inclusive rolling windows that include today:
+    // Last 7 days  → today + previous 6 calendar days
+    // Last 15 days → today + previous 14 calendar days
+    const inclusiveDays = normalized === '15d' ? 15 : 7;
+    const rangeStartDay = addCalendarDays(today, -(inclusiveDays - 1));
+    return {
+      rangeStart: startOfZonedDay(rangeStartDay, timeZone),
+      rangeEnd: endOfZonedDay(today, timeZone),
+    };
   }
 
   private buildReportChartData(
@@ -2218,57 +2251,56 @@ export class ClientDataService {
     range: string,
     rangeStart: Date | null,
     rangeEnd: Date | null,
+    timezone?: string,
   ) {
-    const normalized = (range ?? '7d').toLowerCase();
+    const timeZone = timezone?.trim() || 'UTC';
+    const normalized = (range ?? 'today').toLowerCase();
     const end = rangeEnd ?? new Date();
     const start =
       rangeStart ??
-      new Date(end.getTime() - (normalized === '30d' ? 30 : normalized === 'today' ? 1 : 7) * 24 * 60 * 60 * 1000);
+      new Date(
+        end.getTime() -
+          (normalized === '15d' ? 15 : normalized === 'yesterday' || normalized === 'today' ? 1 : 7) *
+            24 *
+            60 *
+            60 *
+            1000,
+      );
 
-    if (normalized === 'all' && logs.length > 0) {
-      const monthAgg = new Map<string, { label: string; impressions: number; verified: number; sortKey: string }>();
-      for (const log of logs) {
-        const label = log.startTime.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-        const sortKey = `${log.startTime.getFullYear()}-${String(log.startTime.getMonth() + 1).padStart(2, '0')}`;
-        const current = monthAgg.get(sortKey) ?? { label, impressions: 0, verified: 0, sortKey };
-        current.impressions += 1;
-        if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
-        monthAgg.set(sortKey, current);
-      }
-      return Array.from(monthAgg.values())
-        .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
-        .slice(-24)
-        .map((bucket) => ({
-          day: bucket.label,
-          impressions: bucket.impressions,
-          engagement:
-            bucket.impressions > 0
-              ? Math.round((bucket.verified / bucket.impressions) * 100)
-              : 0,
-        }));
-    }
-
-    const bucketMs =
-      normalized === 'today'
-        ? 60 * 60 * 1000
-        : 24 * 60 * 60 * 1000;
+    const useHourlyBuckets = normalized === 'today' || normalized === 'yesterday';
+    const bucketMs = useHourlyBuckets ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const defaultBucketCount =
+      normalized === 'today' || normalized === 'yesterday'
+        ? 24
+        : normalized === '15d'
+          ? 15
+          : normalized === 'custom'
+            ? Math.max(1, Math.ceil((end.getTime() - start.getTime()) / bucketMs))
+            : 7;
     const bucketCount = Math.max(
       1,
       Math.min(
-        normalized === 'today' ? 24 : normalized === '30d' ? 30 : 7,
-        Math.ceil((end.getTime() - start.getTime()) / bucketMs),
+        Math.max(defaultBucketCount, 1),
+        Math.ceil((end.getTime() - start.getTime()) / bucketMs) || defaultBucketCount,
       ),
     );
 
     const buckets = Array.from({ length: bucketCount }, (_, index) => {
       const bucketStart = new Date(start.getTime() + index * bucketMs);
       return {
-        label:
-          normalized === 'today'
-            ? bucketStart.toLocaleTimeString('en-US', { hour: '2-digit', hour12: false })
-            : bucketCount <= 7
-              ? bucketStart.toLocaleDateString('en-US', { weekday: 'short' })
-              : bucketStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        label: useHourlyBuckets
+          ? bucketStart.toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              hour12: false,
+              timeZone,
+            })
+          : bucketCount <= 7
+            ? bucketStart.toLocaleDateString('en-US', { weekday: 'short', timeZone })
+            : bucketStart.toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                timeZone,
+              }),
         impressions: 0,
         verified: 0,
       };
