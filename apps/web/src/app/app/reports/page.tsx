@@ -2,9 +2,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
-    Activity, Eye, Download, Search, ArrowUpRight, Monitor, FileText,
+    Activity, Eye, Download, Search, Monitor, FileText,
     RefreshCw, AlertTriangle, CheckCircle, XCircle, TrendingUp, Clock,
-    ChevronLeft, ChevronRight,
+    ChevronLeft, ChevronRight, CalendarRange,
     Folder,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
@@ -74,17 +74,6 @@ type ReportResponse = {
         limit: number;
         totalPages: number;
         distinctDevicesInRange?: number;
-        activeDevicesWithoutPop?: { id: string; name: string; status: string }[];
-        devicePopDiagnostics?: {
-            deviceId: string;
-            deviceName: string;
-            status: string;
-            featureProofOfPlay: boolean;
-            popLogCountInRange: number;
-            lastPopLogAtInRange: string | null;
-            isReportingInRange: boolean;
-            lastSeenAt: string | null;
-        }[];
         aggregatesTruncated?: boolean;
     };
     lastLogAt: string | null;
@@ -375,40 +364,50 @@ export default function ReportsPage() {
     const hasData = (meta?.total ?? 0) > 0;
     const lastLogAt = reportData?.lastLogAt ? new Date(reportData.lastLogAt) : null;
     const showStaleLogHint = !hasData && !!lastLogAt && customRangeValid;
+    const breakdownMax = Math.max(
+        ...(groupBy === "device"
+            ? (reportData?.deviceBreakdown ?? []).map((entry) => entry.impressions)
+            : (reportData?.campaignBreakdown ?? []).map((entry) => entry.impressions)),
+        1,
+    );
 
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
+            <div className="reports-header">
                 <div>
-                    <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Reports & Analytics</h1>
-                    <p style={{ color: "hsl(var(--text-secondary))" }}>
-                        {RANGE_LABEL[dateRange]} • {reportData
-                            ? `${meta?.total ?? 0} total records`
-                            : "Collecting metrics..."}
-                    </p>
-                    {lastLogAt && (
-                        <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.8rem", marginTop: 6 }}>
-                            Last log received: {formatReportDateTime(lastLogAt)}
-                            {reportData?.lastLogDevice ? ` from ${reportData.lastLogDevice}` : ""}
-                            {" "}• Android players sync logs every ~5 minutes
-                        </p>
-                    )}
+                    <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 6 }}>Reports & Analytics</h1>
+                    <div className="reports-meta">
+                        <span className="reports-chip reports-chip--accent">{RANGE_LABEL[dateRange]}</span>
+                        <span className="reports-chip">
+                            {reportData ? `${(meta?.total ?? 0).toLocaleString()} records` : "Collecting metrics..."}
+                        </span>
+                        {lastLogAt && (
+                            <span className="reports-chip">
+                                Last log {formatReportDateTime(lastLogAt)}
+                                {reportData?.lastLogDevice ? ` • ${reportData.lastLogDevice}` : ""}
+                            </span>
+                        )}
+                    </div>
                 </div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                    <div className="glass-panel" style={{ display: "flex", padding: 4, borderRadius: 10, flexWrap: "wrap" }}>
+                <div className="reports-actions">
+                    <div className="reports-segment" role="group" aria-label="Date range">
                         {RANGE_OPTIONS.map((t) => (
-                            <button key={t} onClick={() => setDateRange(t)} style={{
-                                padding: "8px 14px", border: "none", borderRadius: 8, fontSize: "0.8rem", fontWeight: 600, cursor: "pointer",
-                                background: dateRange === t ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                                color: dateRange === t ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                            }}>{RANGE_LABEL[t]}</button>
+                            <button
+                                key={t}
+                                type="button"
+                                aria-pressed={dateRange === t}
+                                className={`reports-segment__item${dateRange === t ? " is-active" : ""}`}
+                                onClick={() => setDateRange(t)}
+                            >
+                                {RANGE_LABEL[t]}
+                            </button>
                         ))}
                     </div>
-                    <button className="btn-outline" onClick={handleRefresh} disabled={isRefreshing || isLoading || !customRangeValid} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-outline reports-btn" onClick={handleRefresh} disabled={isRefreshing || isLoading || !customRangeValid}>
                         <RefreshCw size={16} style={{ animation: isRefreshing ? "spin 1s linear infinite" : undefined }} />
                         Refresh
                     </button>
-                    <button className="btn-outline" onClick={handleExport} disabled={isExporting || !customRangeValid} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-outline reports-btn" onClick={handleExport} disabled={isExporting || !customRangeValid}>
                         <Download size={16} />
                         {isExporting ? "Exporting..." : "Export Excel"}
                     </button>
@@ -416,29 +415,43 @@ export default function ReportsPage() {
             </div>
 
             {dateRange === "custom" && (
-                <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "end" }}>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "hsl(var(--text-muted))" }}>Start date</span>
-                        <input
-                            type="date"
-                            value={customStart}
-                            max={customEnd || undefined}
-                            onChange={(e) => setCustomStart(e.target.value)}
-                            style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid hsla(var(--border-subtle), 1)", background: "hsla(var(--bg-base), 0.8)", color: "hsl(var(--text-primary))" }}
-                        />
-                    </label>
-                    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "hsl(var(--text-muted))" }}>End date</span>
-                        <input
-                            type="date"
-                            value={customEnd}
-                            min={customStart || undefined}
-                            onChange={(e) => setCustomEnd(e.target.value)}
-                            style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid hsla(var(--border-subtle), 1)", background: "hsla(var(--bg-base), 0.8)", color: "hsl(var(--text-primary))" }}
-                        />
-                    </label>
+                <div className="reports-range-card">
+                    <div className="reports-range-card__head">
+                        <CalendarRange size={16} style={{ color: "hsl(var(--accent-primary))" }} />
+                        <span>Custom range</span>
+                    </div>
+                    <div className="reports-range-card__fields">
+                        <label className="reports-field">
+                            <span>Start date</span>
+                            <input
+                                type="date"
+                                value={customStart}
+                                max={customEnd || undefined}
+                                onChange={(e) => setCustomStart(e.target.value)}
+                            />
+                        </label>
+                        <label className="reports-field">
+                            <span>End date</span>
+                            <input
+                                type="date"
+                                value={customEnd}
+                                min={customStart || undefined}
+                                onChange={(e) => setCustomEnd(e.target.value)}
+                            />
+                        </label>
+                        {(customStart || customEnd) && (
+                            <button
+                                type="button"
+                                className="btn-outline reports-btn"
+                                onClick={() => { setCustomStart(""); setCustomEnd(""); }}
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
                     {customRangeError && (
-                        <p style={{ fontSize: "0.75rem", color: "hsl(var(--status-danger))", alignSelf: "center" }}>
+                        <p className="reports-range-card__error">
+                            <AlertTriangle size={14} />
                             {customRangeError}
                         </p>
                     )}
@@ -446,7 +459,7 @@ export default function ReportsPage() {
             )}
 
             {loadError && (
-                <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-danger), 0.3)", display: "flex", alignItems: "center", gap: 12 }}>
+                <div className="reports-notice reports-notice--danger">
                     <AlertTriangle size={18} style={{ color: "hsl(var(--status-danger))" }} />
                     <div style={{ flex: 1 }}>
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>Unable to load reports</p>
@@ -456,64 +469,14 @@ export default function ReportsPage() {
                 </div>
             )}
 
-            {(meta?.activeDevicesWithoutPop?.length ?? 0) > 0 && (
-                <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-warning), 0.35)" }}>
-                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Online devices with no proof-of-play in this date range</p>
-                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
-                        These paired devices are reachable and have PoP enabled, but submitted no playback logs in the selected window. Check the device table below or Android player PoP flush logs.
-                    </p>
-                    <p style={{ fontSize: "0.8rem" }}>
-                        {(meta?.activeDevicesWithoutPop ?? []).map((device) => device.name).join(" • ")}
-                    </p>
-                </div>
-            )}
-
-            {(meta?.devicePopDiagnostics?.length ?? 0) > 0 && (
-                <div className="glass-panel" style={{ padding: 18, marginBottom: 24 }}>
-                    <p style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 4 }}>Device PoP diagnostics</p>
-                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 14 }}>
-                        Per-device log counts for the selected date range. Silent devices may need an Android player fix.
-                    </p>
-                    <div style={{ overflowX: "auto" }}>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Device</th>
-                                    <th>Status</th>
-                                    <th>PoP enabled</th>
-                                    <th>Logs in range</th>
-                                    <th>Last log in range</th>
-                                    <th>Last seen</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(meta?.devicePopDiagnostics ?? []).map((device) => (
-                                    <tr key={device.deviceId}>
-                                        <td style={{ fontWeight: 600 }}>{device.deviceName}</td>
-                                        <td style={{ textTransform: "capitalize" }}>{device.status}</td>
-                                        <td>{device.featureProofOfPlay ? "Yes" : "No"}</td>
-                                        <td style={{ color: device.isReportingInRange ? "hsl(var(--status-success))" : "hsl(var(--status-warning))" }}>
-                                            {device.popLogCountInRange}
-                                        </td>
-                                        <td>{device.lastPopLogAtInRange ? formatReportDateTime(device.lastPopLogAtInRange) : "—"}</td>
-                                        <td>{device.lastSeenAt ? formatReportDateTime(device.lastSeenAt) : "—"}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-
             {showStaleLogHint && (
-                <div className="glass-panel" style={{ padding: 18, marginBottom: 24, border: "1px solid hsla(var(--status-warning), 0.3)", display: "flex", alignItems: "flex-start", gap: 12 }}>
+                <div className="reports-notice reports-notice--warning">
                     <Clock size={18} style={{ color: "hsl(var(--status-warning))", marginTop: 2 }} />
                     <div style={{ flex: 1 }}>
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>No logs in this date range</p>
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>
-                            The most recent playback log is from {formatReportDateTime(lastLogAt)}.
-                            Try &quot;Last 7 Days&quot; or &quot;Last 15 Days&quot;, or wait a few minutes after playback on a paired Android device.
-                            Logs are only submitted by the player app, not from browser previews.
+                            The most recent playback log is from {formatReportDateTime(lastLogAt)}. Try a wider range,
+                            or wait a few minutes after playback on a paired device.
                         </p>
                     </div>
                     <button className="btn-outline" onClick={() => setDateRange("7d")}>Last 7 Days</button>
@@ -525,18 +488,15 @@ export default function ReportsPage() {
                     const Icon = kpi.icon;
                     return (
                         <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.08 }}
-                            className="glass-card" style={{ padding: 24, borderRadius: 20 }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-                                <div style={{ width: 48, height: 48, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `hsla(${kpi.color}, 0.1)` }}>
-                                    <Icon size={22} style={{ color: `hsl(${kpi.color})` }} />
+                            className="glass-card reports-kpi" style={{ borderTop: `2px solid hsla(${kpi.color}, 0.45)` }}>
+                            <div className="reports-kpi__top">
+                                <div className="reports-kpi__icon" style={{ background: `hsla(${kpi.color}, 0.12)` }}>
+                                    <Icon size={20} style={{ color: `hsl(${kpi.color})` }} />
                                 </div>
-                                <span style={{ fontSize: "0.75rem", fontWeight: 600, color: "hsl(var(--status-success))", display: "flex", alignItems: "center", gap: 4 }}>
-                                    Live <ArrowUpRight size={12} />
-                                </span>
+                                <p className="reports-kpi__title">{kpi.title}</p>
                             </div>
-                            <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.8rem", marginBottom: 4 }}>{kpi.title}</p>
-                            <p style={{ fontSize: "2rem", fontWeight: 800 }}>{kpi.value}</p>
-                            <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{kpi.subtitle}</p>
+                            <p className="reports-kpi__value">{kpi.value}</p>
+                            <p className="reports-kpi__subtitle">{kpi.subtitle}</p>
                         </motion.div>
                     );
                 })}
@@ -544,25 +504,35 @@ export default function ReportsPage() {
 
             <div className="grid-main" style={{ marginBottom: 32 }}>
                 <div className="glass-panel" style={{ padding: 24 }}>
-                    <h2 style={{ fontSize: "1.15rem", fontWeight: 700, marginBottom: 24 }}>Impressions & Engagement</h2>
+                    <div className="reports-panel-head">
+                        <h2>Impressions & Engagement</h2>
+                        {maxImpressions > 1 && <span className="reports-chip">peak {maxImpressions.toLocaleString()}</span>}
+                    </div>
                     {chartData.every((bucket) => bucket.impressions === 0) ? (
-                        <p style={{ color: "hsl(var(--text-muted))", padding: 40, textAlign: "center" }}>No playback logged in this window.</p>
+                        <p className="reports-empty">No playback logged in this window.</p>
                     ) : (
-                        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 200 }}>
+                        <div className="reports-chart">
                             {chartData.map((d, i) => (
-                                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                                    <motion.div initial={{ height: 0 }} animate={{ height: `${(d.impressions / maxImpressions) * 100}%` }}
-                                        style={{ width: "100%", background: "hsla(var(--accent-primary), 0.6)", borderRadius: "4px 4px 0 0", minHeight: d.impressions > 0 ? 4 : 0 }} />
-                                    <span style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))" }}>{d.day}</span>
+                                <div key={i} className="reports-chart__col" title={`${d.day}: ${d.impressions.toLocaleString()} impressions • ${d.engagement}% verified`}>
+                                    <div className="reports-chart__track">
+                                        <motion.div
+                                            className="reports-chart__bar"
+                                            initial={{ height: 0 }}
+                                            animate={{ height: `${(d.impressions / maxImpressions) * 100}%` }}
+                                            transition={{ duration: 0.45, delay: i * 0.02 }}
+                                            style={{ minHeight: d.impressions > 0 ? 4 : 0 }}
+                                        />
+                                    </div>
+                                    <span className="reports-chart__label">{d.day}</span>
                                 </div>
                             ))}
                         </div>
                     )}
                 </div>
                 <div className="glass-panel" style={{ padding: 24 }}>
-                    <h2 style={{ fontSize: "1.15rem", fontWeight: 700, marginBottom: 24 }}>
-                        {groupBy === "device" ? "Device Breakdown" : "Campaign Breakdown"}
-                    </h2>
+                    <div className="reports-panel-head">
+                        <h2>{groupBy === "device" ? "Device Breakdown" : "Campaign Breakdown"}</h2>
+                    </div>
                     {groupBy === "device" ? (
                         (reportData?.deviceBreakdown ?? []).length === 0 ? (
                             <p style={{ color: "hsl(var(--text-muted))" }}>No device activity in this window.</p>
@@ -576,36 +546,28 @@ export default function ReportsPage() {
                                 <button
                                     key={device.id ?? device.name}
                                     type="button"
+                                    className={`reports-breakdown__row${isSelected ? " is-active" : ""}`}
+                                    disabled={!optionId}
                                     onClick={() => {
                                         if (!optionId) return;
                                         setGroupBy("device");
                                         setCampaignFilter("");
                                         setDeviceFilter(isSelected ? "" : optionId);
                                     }}
-                                    style={{
-                                        display: "block",
-                                        width: "100%",
-                                        textAlign: "left",
-                                        marginBottom: 14,
-                                        padding: "8px 10px",
-                                        borderRadius: 10,
-                                        border: isSelected
-                                            ? "1px solid hsla(var(--accent-primary), 0.45)"
-                                            : "1px solid transparent",
-                                        background: isSelected
-                                            ? "hsla(var(--accent-primary), 0.1)"
-                                            : "transparent",
-                                        cursor: optionId ? "pointer" : "default",
-                                        color: "inherit",
-                                    }}
                                 >
-                                    <div className="flex-between" style={{ marginBottom: 4 }}>
-                                        <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{device.name}</span>
-                                        <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{device.impressions}</span>
+                                    <div className="reports-breakdown__top">
+                                        <span className="reports-breakdown__name">{device.name}</span>
+                                        <span className="reports-breakdown__count">{device.impressions.toLocaleString()}</span>
                                     </div>
-                                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>
+                                    <div className="reports-breakdown__track">
+                                        <div
+                                            className="reports-breakdown__fill"
+                                            style={{ width: `${Math.min(100, (device.impressions / breakdownMax) * 100)}%` }}
+                                        />
+                                    </div>
+                                    <p className="reports-breakdown__hint">
                                         {device.verifiedRate}% verified
-                                        {isSelected ? " • exporting this device only" : " • click to filter"}
+                                        {isSelected ? " • exporting this device only" : optionId ? " • click to filter" : ""}
                                     </p>
                                 </button>
                                 );
@@ -615,15 +577,21 @@ export default function ReportsPage() {
                         <p style={{ color: "hsl(var(--text-muted))" }}>No campaign activity in this window.</p>
                     ) : (
                         (reportData?.campaignBreakdown ?? []).map((campaign) => (
-                            <div key={campaign.id ?? campaign.name} style={{ marginBottom: 14 }}>
-                                <div className="flex-between" style={{ marginBottom: 4 }}>
-                                    <span style={{ fontWeight: 600, fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <div key={campaign.id ?? campaign.name} className="reports-breakdown__row is-static">
+                                <div className="reports-breakdown__top">
+                                    <span className="reports-breakdown__name">
                                         <Folder size={14} style={{ color: "hsl(var(--accent-primary))" }} />
                                         {campaign.name}
                                     </span>
-                                    <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{campaign.impressions}</span>
+                                    <span className="reports-breakdown__count">{campaign.impressions.toLocaleString()}</span>
                                 </div>
-                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>{campaign.verifiedRate}% verified</p>
+                                <div className="reports-breakdown__track">
+                                    <div
+                                        className="reports-breakdown__fill"
+                                        style={{ width: `${Math.min(100, (campaign.impressions / breakdownMax) * 100)}%` }}
+                                    />
+                                </div>
+                                <p className="reports-breakdown__hint">{campaign.verifiedRate}% verified</p>
                             </div>
                         ))
                     )}
@@ -631,13 +599,13 @@ export default function ReportsPage() {
             </div>
 
             <div className="glass-panel" style={{ padding: 24 }}>
-                <div className="flex-between" style={{ marginBottom: 24, gap: 16, flexWrap: "wrap" }}>
+                <div className="reports-logs-head">
                     <div>
                         <h2 style={{ fontSize: "1.15rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
                             <FileText size={18} /> Proof-of-Play Logs
                         </h2>
-                        <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
-                            Showing page {meta?.page ?? 1} of {meta?.totalPages ?? 1} • {meta?.total ?? 0} playback events
+                        <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>
+                            Page {meta?.page ?? 1} of {meta?.totalPages ?? 1} • {(meta?.total ?? 0).toLocaleString()} playback events
                             {selectedDeviceName
                                 ? ` • Filtered to ${selectedDeviceName}`
                                 : selectedCampaignName
@@ -645,20 +613,22 @@ export default function ReportsPage() {
                                     : ""}
                         </p>
                     </div>
-                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                        <div style={{ display: "flex", background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
+                    <div className="reports-toolbar">
+                        <div className="reports-segment reports-segment--sm" role="group" aria-label="Group by">
                             {(["device", "campaign"] as const).map((mode) => (
-                                <button key={mode} onClick={() => handleGroupByChange(mode)} style={{
-                                    padding: "8px 14px", border: "none", borderRadius: 8, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", textTransform: "capitalize",
-                                    background: groupBy === mode ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                                    color: groupBy === mode ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                                }}>{mode === "campaign" ? "Campaigns" : "Devices"}</button>
+                                <button
+                                    key={mode}
+                                    type="button"
+                                    aria-pressed={groupBy === mode}
+                                    className={`reports-segment__item${groupBy === mode ? " is-active" : ""}`}
+                                    onClick={() => handleGroupByChange(mode)}
+                                >
+                                    {mode === "campaign" ? "Campaigns" : "Devices"}
+                                </button>
                             ))}
                         </div>
                         {groupBy === "device" ? (
-                            <select value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)}
-                                aria-label="Filter by device"
-                                style={{ padding: "8px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem", minWidth: 160 }}>
+                            <select className="reports-select" value={deviceFilter} onChange={(e) => setDeviceFilter(e.target.value)} aria-label="Filter by device">
                                 <option value="">All Devices</option>
                                 {(reportData?.devices ?? []).map((device) => (
                                     <option key={device.id} value={device.id}>
@@ -667,9 +637,7 @@ export default function ReportsPage() {
                                 ))}
                             </select>
                         ) : (
-                            <select value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)}
-                                aria-label="Filter by campaign"
-                                style={{ padding: "8px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem", minWidth: 160 }}>
+                            <select className="reports-select" value={campaignFilter} onChange={(e) => setCampaignFilter(e.target.value)} aria-label="Filter by campaign">
                                 <option value="">All Campaigns</option>
                                 <option value="__uncategorized__">Uncategorized</option>
                                 {(reportData?.campaigns ?? []).map((campaign) => (
@@ -677,25 +645,38 @@ export default function ReportsPage() {
                                 ))}
                             </select>
                         )}
-                        <div style={{ display: "flex", background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
+                        <div className="reports-segment reports-segment--sm" role="group" aria-label="Filter by status">
                             {(["all", "verified", "failed"] as const).map((status) => (
-                                <button key={status} onClick={() => setStatusFilter(status)} style={{
-                                    padding: "8px 14px", border: "none", borderRadius: 8, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", textTransform: "capitalize",
-                                    background: statusFilter === status ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                                    color: statusFilter === status ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                                }}>{status}</button>
+                                <button
+                                    key={status}
+                                    type="button"
+                                    aria-pressed={statusFilter === status}
+                                    className={`reports-segment__item is-capitalized${statusFilter === status ? " is-active" : ""}`}
+                                    onClick={() => setStatusFilter(status)}
+                                >
+                                    {status}
+                                </button>
                             ))}
                         </div>
-                        <div style={{ position: "relative", minWidth: 240 }}>
-                            <Search size={16} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "hsl(var(--text-muted))" }} />
-                            <input type="text" placeholder="Search device, playlist, campaign, asset..." value={logSearch} onChange={e => setLogSearch(e.target.value)}
-                                style={{ width: "100%", padding: "8px 14px 8px 38px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.85rem", outline: "none" }} />
+                        <div className="reports-search">
+                            <Search size={16} />
+                            <input
+                                type="text"
+                                placeholder="Search device, playlist, asset..."
+                                value={logSearch}
+                                onChange={e => setLogSearch(e.target.value)}
+                            />
+                            {logSearch && (
+                                <button type="button" aria-label="Clear search" onClick={() => setLogSearch("")}>
+                                    <XCircle size={14} />
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
 
-                <div style={{ overflowX: "auto" }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+                <div className="reports-table-wrap">
+                    <table className="reports-table">
                         <thead>
                             <tr>
                                 {tableHeaders.map(h => (
@@ -705,18 +686,26 @@ export default function ReportsPage() {
                         </thead>
                         <tbody>
                             {isLoading && !reportData ? (
-                                <tr><td colSpan={tableColumnCount} style={{ padding: 20, color: "hsl(var(--text-muted))" }}>Loading report data...</td></tr>
+                                Array.from({ length: 6 }).map((_, rowIndex) => (
+                                    <tr key={`skeleton-${rowIndex}`}>
+                                        {Array.from({ length: tableColumnCount }).map((__, cellIndex) => (
+                                            <td key={cellIndex} style={tdStyle}>
+                                                <span className="reports-skeleton" />
+                                            </td>
+                                        ))}
+                                    </tr>
+                                ))
                             ) : null}
                             {!isLoading && !hasData && (
                                 <tr>
-                                    <td colSpan={tableColumnCount} style={{ padding: 40, textAlign: "center", color: "hsl(var(--text-muted))" }}>
+                                    <td colSpan={tableColumnCount} className="reports-table__empty">
                                         <Clock size={32} style={{ opacity: 0.25, marginBottom: 8 }} />
-                                        <p>No proof-of-play records yet</p>
+                                        <p>No proof-of-play records in this range</p>
                                     </td>
                                 </tr>
                             )}
                             {filteredLogs.map((log) => (
-                                <tr key={log.id} style={{ borderBottom: "1px solid hsla(var(--border-subtle), 0.1)" }}>
+                                <tr key={log.id}>
                                     {renderLogRowCells(log)}
                                 </tr>
                             ))}
@@ -725,12 +714,12 @@ export default function ReportsPage() {
                 </div>
 
                 {meta && meta.totalPages > 1 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20 }}>
-                        <button className="btn-outline" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div className="reports-pagination">
+                        <button className="btn-outline reports-btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
                             <ChevronLeft size={16} /> Previous
                         </button>
-                        <span style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>Page {meta.page} of {meta.totalPages}</span>
-                        <button className="btn-outline" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>Page {meta.page} of {meta.totalPages}</span>
+                        <button className="btn-outline reports-btn" disabled={page >= meta.totalPages} onClick={() => setPage((p) => p + 1)}>
                             Next <ChevronRight size={16} />
                         </button>
                     </div>
@@ -741,6 +730,426 @@ export default function ReportsPage() {
                 @keyframes spin {
                     from { transform: rotate(0deg); }
                     to { transform: rotate(360deg); }
+                }
+                @keyframes reportsShimmer {
+                    from { background-position: -200px 0; }
+                    to { background-position: 200px 0; }
+                }
+
+                .reports-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    gap: 20px;
+                    flex-wrap: wrap;
+                    margin-bottom: 28px;
+                }
+                .reports-meta {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                }
+                .reports-chip {
+                    font-size: 0.72rem;
+                    font-weight: 600;
+                    padding: 4px 10px;
+                    border-radius: 999px;
+                    color: hsl(var(--text-muted));
+                    background: hsla(var(--bg-base), 0.6);
+                    border: 1px solid hsla(var(--border-subtle), 0.5);
+                    white-space: nowrap;
+                }
+                .reports-chip--accent {
+                    color: hsl(var(--accent-primary));
+                    background: hsla(var(--accent-primary), 0.12);
+                    border-color: hsla(var(--accent-primary), 0.3);
+                }
+                .reports-actions {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    align-items: center;
+                }
+                .reports-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+
+                .reports-segment {
+                    display: flex;
+                    gap: 2px;
+                    padding: 4px;
+                    border-radius: 12px;
+                    background: hsla(var(--bg-base), 0.7);
+                    border: 1px solid hsla(var(--border-subtle), 0.5);
+                    flex-wrap: wrap;
+                }
+                .reports-segment__item {
+                    padding: 8px 14px;
+                    border: none;
+                    border-radius: 9px;
+                    background: transparent;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: background 0.15s ease, color 0.15s ease;
+                    white-space: nowrap;
+                }
+                .reports-segment--sm .reports-segment__item {
+                    padding: 7px 12px;
+                    font-size: 0.75rem;
+                }
+                .reports-segment__item.is-capitalized { text-transform: capitalize; }
+                .reports-segment__item:hover:not(.is-active) {
+                    color: hsl(var(--text-primary));
+                    background: hsla(var(--border-subtle), 0.25);
+                }
+                .reports-segment__item.is-active {
+                    background: hsla(var(--accent-primary), 0.16);
+                    color: hsl(var(--accent-primary));
+                    box-shadow: inset 0 0 0 1px hsla(var(--accent-primary), 0.28);
+                }
+
+                .reports-range-card {
+                    padding: 18px 20px;
+                    margin-bottom: 24px;
+                    border-radius: 16px;
+                    background: hsla(var(--bg-surface-elevated), 0.55);
+                    border: 1px solid hsla(var(--border-subtle), 0.6);
+                }
+                .reports-range-card__head {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    font-size: 0.8rem;
+                    font-weight: 700;
+                    margin-bottom: 14px;
+                }
+                .reports-range-card__fields {
+                    display: flex;
+                    gap: 16px;
+                    flex-wrap: wrap;
+                    align-items: flex-end;
+                }
+                .reports-range-card__error {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    margin-top: 12px;
+                    font-size: 0.75rem;
+                    color: hsl(var(--status-danger));
+                }
+                .reports-field {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                }
+                .reports-field > span {
+                    font-size: 0.72rem;
+                    font-weight: 600;
+                    color: hsl(var(--text-muted));
+                }
+                .reports-field input,
+                .reports-select {
+                    padding: 9px 12px;
+                    border-radius: 10px;
+                    background: hsla(var(--bg-base), 0.85);
+                    border: 1px solid hsla(var(--border-subtle), 1);
+                    color: hsl(var(--text-primary));
+                    font-size: 0.85rem;
+                    outline: none;
+                    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                }
+                .reports-select { min-width: 168px; }
+                .reports-field input:focus,
+                .reports-select:focus {
+                    border-color: hsla(var(--accent-primary), 0.6);
+                    box-shadow: 0 0 0 3px hsla(var(--accent-primary), 0.12);
+                }
+
+                .reports-notice {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 12px;
+                    padding: 16px 18px;
+                    margin-bottom: 24px;
+                    border-radius: 14px;
+                    background: hsla(var(--bg-surface-elevated), 0.5);
+                }
+                .reports-notice--warning { border: 1px solid hsla(var(--status-warning), 0.3); }
+                .reports-notice--danger { border: 1px solid hsla(var(--status-danger), 0.3); align-items: center; }
+
+                .reports-kpi {
+                    padding: 22px;
+                    border-radius: 18px;
+                    transition: transform 0.18s ease, box-shadow 0.18s ease;
+                }
+                .reports-kpi:hover {
+                    transform: translateY(-2px);
+                    box-shadow: var(--shadow-md);
+                }
+                .reports-kpi__top {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    margin-bottom: 14px;
+                }
+                .reports-kpi__icon {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 11px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                }
+                .reports-kpi__title {
+                    font-size: 0.78rem;
+                    font-weight: 600;
+                    color: hsl(var(--text-muted));
+                }
+                .reports-kpi__value {
+                    font-size: 1.9rem;
+                    font-weight: 800;
+                    line-height: 1.1;
+                    font-variant-numeric: tabular-nums;
+                }
+                .reports-kpi__subtitle {
+                    font-size: 0.7rem;
+                    color: hsl(var(--text-muted));
+                    margin-top: 6px;
+                }
+
+                .reports-panel-head {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 12px;
+                    margin-bottom: 20px;
+                }
+                .reports-panel-head h2 {
+                    font-size: 1.15rem;
+                    font-weight: 700;
+                }
+                .reports-empty {
+                    color: hsl(var(--text-muted));
+                    padding: 48px 0;
+                    text-align: center;
+                    font-size: 0.85rem;
+                }
+
+                .reports-chart {
+                    display: flex;
+                    align-items: stretch;
+                    gap: 6px;
+                    height: 210px;
+                }
+                .reports-chart__col {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                    min-width: 0;
+                }
+                .reports-chart__track {
+                    flex: 1;
+                    display: flex;
+                    align-items: flex-end;
+                    border-radius: 6px;
+                    background: hsla(var(--border-subtle), 0.12);
+                }
+                .reports-chart__bar {
+                    width: 100%;
+                    border-radius: 6px 6px 0 0;
+                    background: linear-gradient(180deg, hsla(var(--accent-primary), 0.85), hsla(var(--accent-primary), 0.4));
+                    transition: filter 0.15s ease;
+                }
+                .reports-chart__col:hover .reports-chart__bar { filter: brightness(1.25); }
+                .reports-chart__label {
+                    font-size: 0.6rem;
+                    color: hsl(var(--text-muted));
+                    text-align: center;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .reports-breakdown__row {
+                    display: block;
+                    width: 100%;
+                    text-align: left;
+                    margin-bottom: 10px;
+                    padding: 10px 12px;
+                    border-radius: 12px;
+                    border: 1px solid transparent;
+                    background: transparent;
+                    color: inherit;
+                    cursor: pointer;
+                    transition: background 0.15s ease, border-color 0.15s ease;
+                }
+                .reports-breakdown__row.is-static,
+                .reports-breakdown__row:disabled { cursor: default; }
+                .reports-breakdown__row:hover:not(.is-static):not(:disabled) {
+                    background: hsla(var(--border-subtle), 0.16);
+                }
+                .reports-breakdown__row.is-active {
+                    border-color: hsla(var(--accent-primary), 0.45);
+                    background: hsla(var(--accent-primary), 0.1);
+                }
+                .reports-breakdown__top {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                    margin-bottom: 8px;
+                }
+                .reports-breakdown__name {
+                    font-weight: 600;
+                    font-size: 0.85rem;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 6px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .reports-breakdown__count {
+                    font-size: 0.75rem;
+                    color: hsl(var(--text-muted));
+                    font-variant-numeric: tabular-nums;
+                }
+                .reports-breakdown__track {
+                    height: 5px;
+                    border-radius: 999px;
+                    background: hsla(var(--border-subtle), 0.25);
+                    overflow: hidden;
+                }
+                .reports-breakdown__fill {
+                    height: 100%;
+                    border-radius: 999px;
+                    background: hsla(var(--accent-primary), 0.75);
+                    transition: width 0.35s ease;
+                }
+                .reports-breakdown__hint {
+                    font-size: 0.65rem;
+                    color: hsl(var(--text-muted));
+                    margin-top: 6px;
+                }
+
+                .reports-logs-head {
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: space-between;
+                    gap: 16px;
+                    flex-wrap: wrap;
+                    margin-bottom: 22px;
+                }
+                .reports-toolbar {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                    align-items: center;
+                }
+                .reports-search {
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                    min-width: 240px;
+                    flex: 1;
+                }
+                .reports-search > svg {
+                    position: absolute;
+                    left: 12px;
+                    color: hsl(var(--text-muted));
+                    pointer-events: none;
+                }
+                .reports-search input {
+                    width: 100%;
+                    padding: 9px 34px 9px 38px;
+                    border-radius: 10px;
+                    background: hsla(var(--bg-base), 0.85);
+                    border: 1px solid hsla(var(--border-subtle), 1);
+                    color: hsl(var(--text-primary));
+                    font-size: 0.85rem;
+                    outline: none;
+                    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                }
+                .reports-search input:focus {
+                    border-color: hsla(var(--accent-primary), 0.6);
+                    box-shadow: 0 0 0 3px hsla(var(--accent-primary), 0.12);
+                }
+                .reports-search > button {
+                    position: absolute;
+                    right: 10px;
+                    display: flex;
+                    border: none;
+                    background: transparent;
+                    color: hsl(var(--text-muted));
+                    cursor: pointer;
+                }
+                .reports-search > button:hover { color: hsl(var(--text-primary)); }
+
+                .reports-table-wrap {
+                    overflow-x: auto;
+                    border-radius: 12px;
+                }
+                .reports-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    min-width: 980px;
+                }
+                .reports-table thead th {
+                    position: sticky;
+                    top: 0;
+                    background: hsla(var(--bg-surface-elevated), 0.97);
+                    backdrop-filter: blur(6px);
+                    z-index: 1;
+                }
+                .reports-table tbody tr {
+                    border-bottom: 1px solid hsla(var(--border-subtle), 0.12);
+                    transition: background 0.12s ease;
+                }
+                .reports-table tbody tr:hover { background: hsla(var(--accent-primary), 0.05); }
+                .reports-table__empty {
+                    padding: 56px 20px;
+                    text-align: center;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.85rem;
+                }
+
+                .reports-skeleton {
+                    display: block;
+                    height: 12px;
+                    border-radius: 6px;
+                    background: linear-gradient(
+                        90deg,
+                        hsla(var(--border-subtle), 0.18) 25%,
+                        hsla(var(--border-subtle), 0.35) 37%,
+                        hsla(var(--border-subtle), 0.18) 63%
+                    );
+                    background-size: 400px 100%;
+                    animation: reportsShimmer 1.2s ease-in-out infinite;
+                }
+
+                .reports-pagination {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    gap: 12px;
+                    margin-top: 20px;
+                }
+                .reports-pagination > span {
+                    font-size: 0.85rem;
+                    color: hsl(var(--text-muted));
+                }
+
+                @media (max-width: 720px) {
+                    .reports-actions,
+                    .reports-toolbar { width: 100%; }
+                    .reports-search { min-width: 100%; }
                 }
             `}</style>
         </motion.div>
