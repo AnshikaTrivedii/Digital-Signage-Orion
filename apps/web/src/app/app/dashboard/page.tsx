@@ -1,363 +1,942 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
-    Monitor, CheckCircle, XCircle, HardDrive,
-    ArrowUpRight, ArrowDownRight, Sparkles, ChevronRight,
-    Play, Clock, Calendar, BarChart3, Zap, Activity,
-    Globe, Users,
-    Upload, Eye, Radio, Server, Shield
+    AlertTriangle,
+    BarChart3,
+    Calendar,
+    CheckCircle2,
+    ChevronRight,
+    Clock3,
+    FileUp,
+    HardDrive,
+    ListVideo,
+    Monitor,
+    PlayCircle,
+    Plus,
+    Radio,
+    Upload,
+    Wifi,
+    XCircle,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
 import { apiFetch } from "@/lib/api";
-import { formatReportDateTime } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 
-const AnimatedGlobe = dynamic(() => import("@/components/AnimatedGlobe"), { ssr: false });
-const DonutChart = dynamic(() => import("@/components/DonutChart"), { ssr: false });
-const SparklineChart = dynamic(() => import("@/components/SparklineChart"), { ssr: false });
+type DashboardData = {
+    stats: {
+        totalDevices: number;
+        onlineDevices: number;
+        warningDevices: number;
+        offlineDevices: number;
+        totalAssets: number;
+    };
+    recentActivityLog: { id: string; action: string; time: string; type: string }[];
+    schedulePreview: { name: string; time: string; color: string; active: boolean }[];
+};
 
-const chartData = [40, 55, 42, 68, 75, 48, 52, 90, 82, 60, 45, 78, 92, 85, 96, 70, 55, 65, 42, 58, 75, 48, 88, 74];
+type ActivityView = {
+    id: string;
+    time: string;
+    title: string;
+    device: string | null;
+    relativeTime: string;
+    icon: LucideIcon;
+    color: string;
+};
 
 const quickActions = [
-    { label: "Assets", desc: "Upload media", icon: Upload, path: "/app/assets", color: "var(--accent-primary)" },
-    { label: "Schedule", desc: "Manage timing", icon: Calendar, path: "/app/schedule", color: "var(--accent-secondary)" },
-    { label: "Analytics", desc: "View reports", icon: BarChart3, path: "/app/reports", color: "var(--status-success)" },
-    { label: "Live View", desc: "Preview screen", icon: Eye, path: "/display", color: "var(--accent-tertiary)" },
-    { label: "Devices", desc: "Node manager", icon: Server, path: "/app/devices", color: "var(--status-warning)" },
-    { label: "Tickers", desc: "Broadcast text", icon: Radio, path: "/app/tickers", color: "var(--status-info)" },
+    { label: "Add a device", description: "Connect a screen", icon: Monitor, path: "/app/devices", color: "var(--accent-primary)" },
+    { label: "Upload an asset", description: "Add media files", icon: Upload, path: "/app/assets", color: "var(--accent-secondary)" },
+    { label: "Create a playlist", description: "Group your content", icon: ListVideo, path: "/app/playlists", color: "var(--status-success)" },
+    { label: "Schedule content", description: "Set play times", icon: Calendar, path: "/app/schedule", color: "var(--status-warning)" },
+    { label: "View reports", description: "Proof of play", icon: BarChart3, path: "/app/reports", color: "var(--accent-tertiary)" },
 ];
 
-const sparkData1 = [30, 45, 28, 62, 55, 70, 48, 85, 72, 90, 68, 95];
-const sparkData2 = [20, 35, 40, 30, 55, 45, 70, 60, 80, 75, 85, 92];
-const sparkData3 = [80, 75, 82, 70, 65, 60, 55, 45, 40, 35, 30, 28];
+function relativeTime(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Recently";
+
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (seconds < 60) return "Just now";
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+
+    const days = Math.floor(hours / 24);
+    if (days === 1) return "Yesterday";
+    if (days < 7) return `${days} days ago`;
+
+    return date.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+function presentActivity(action: string, type: string) {
+    const normalized = action.toLowerCase();
+    const playedAt = normalized.indexOf(" played ");
+
+    if (playedAt > -1) {
+        const asset = action.slice(playedAt + 8).trim();
+        return {
+            title: asset ? `Played ${asset}` : "Content played",
+            device: action.slice(0, playedAt).trim() || null,
+            icon: PlayCircle,
+            color: type === "danger" ? "var(--status-danger)" : "var(--status-success)",
+        };
+    }
+    if (normalized.includes("paired")) {
+        return { title: action, device: null, icon: CheckCircle2, color: "var(--status-success)" };
+    }
+    if (normalized.includes("online")) {
+        return { title: action, device: null, icon: Wifi, color: "var(--status-success)" };
+    }
+    if (normalized.includes("playlist") || normalized.includes("assigned")) {
+        return { title: action, device: null, icon: ListVideo, color: "var(--accent-primary)" };
+    }
+    if (normalized.includes("asset") || normalized.includes("upload")) {
+        return { title: action, device: null, icon: FileUp, color: "var(--accent-secondary)" };
+    }
+    return {
+        title: action,
+        device: null,
+        icon: type === "danger" ? XCircle : Radio,
+        color: type === "danger" ? "var(--status-danger)" : "var(--accent-secondary)",
+    };
+}
 
 export default function ClientDashboardPage() {
     const { activeOrganizationId } = useAuth();
-    const [dashboardData, setDashboardData] = useState<{
-        stats: {
-            totalDevices: number;
-            onlineDevices: number;
-            warningDevices: number;
-            offlineDevices: number;
-            totalAssets: number;
-        };
-        recentActivityLog: { id: string; action: string; time: string; type: string }[];
-        topDevices: { name: string; location: string; uptime: string; status: string }[];
-        schedulePreview: { name: string; time: string; color: string; active: boolean }[];
-    } | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [liveCount, setLiveCount] = useState(1105);
-    const [chartRange, setChartRange] = useState("7d");
-    const [currentTime, setCurrentTime] = useState("");
     const router = useRouter();
-
-    useEffect(() => {
-        const interval = setInterval(() => {
-            setLiveCount((prev) => prev + Math.floor(Math.random() * 3) - 1);
-        }, 5000);
-        return () => clearInterval(interval);
-    }, []);
-
-    useEffect(() => {
-        const updateTime = () => {
-            const now = new Date();
-            setCurrentTime(now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
-        };
-        updateTime();
-        const interval = setInterval(updateTime, 1000);
-        return () => clearInterval(interval);
-    }, []);
+    const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
         if (!activeOrganizationId) return;
+
+        let cancelled = false;
         void (async () => {
             setIsLoading(true);
             try {
-                const response = await apiFetch<{
-                    stats: {
-                        totalDevices: number;
-                        onlineDevices: number;
-                        warningDevices: number;
-                        offlineDevices: number;
-                        totalAssets: number;
-                    };
-                    recentActivityLog: { id: string; action: string; time: string; type: string }[];
-                    topDevices: { name: string; location: string; uptime: string; status: string }[];
-                    schedulePreview: { name: string; time: string; color: string; active: boolean }[];
-                }>("/api/client-data/dashboard", {
+                const response = await apiFetch<DashboardData>("/api/client-data/dashboard", {
                     headers: { "x-organization-id": activeOrganizationId },
+                    cache: "no-store",
                 });
-                if (response) setDashboardData(response);
+                if (!cancelled) setDashboardData(response);
             } finally {
-                setIsLoading(false);
+                if (!cancelled) setIsLoading(false);
             }
         })();
+
+        return () => {
+            cancelled = true;
+        };
     }, [activeOrganizationId]);
 
-    const recentActivityLog = useMemo(
+    const recentActivities = useMemo<ActivityView[]>(
         () =>
-            (dashboardData?.recentActivityLog ?? []).map((entry) => ({
-                ...entry,
-                time: formatReportDateTime(entry.time),
-            })),
+            [...(dashboardData?.recentActivityLog ?? [])]
+                .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                .slice(0, 10)
+                .map((activity) => ({
+                    id: activity.id,
+                    time: activity.time,
+                    relativeTime: relativeTime(activity.time),
+                    ...presentActivity(activity.action, activity.type),
+                })),
         [dashboardData],
     );
-    const topDevices = dashboardData?.topDevices ?? [];
-    const schedulePreview = dashboardData?.schedulePreview ?? [];
+
+    const totalDevices = dashboardData?.stats.totalDevices ?? 0;
+    const needsAttention =
+        (dashboardData?.stats.offlineDevices ?? 0) + (dashboardData?.stats.warningDevices ?? 0);
+    const online = dashboardData?.stats.onlineDevices ?? 0;
 
     const statCards = [
-        { title: "Total Devices", value: (dashboardData?.stats.totalDevices ?? 0).toLocaleString(), change: "Live", up: true, icon: Monitor, color: "var(--accent-primary)", spark: sparkData1 },
-        { title: "Active Streams", value: (dashboardData?.stats.onlineDevices ?? liveCount).toLocaleString(), change: "Live", up: true, icon: CheckCircle, color: "var(--status-success)", spark: sparkData2 },
-        { title: "Offline / Errors", value: ((dashboardData?.stats.offlineDevices ?? 0) + (dashboardData?.stats.warningDevices ?? 0)).toLocaleString(), change: "Live", up: false, icon: XCircle, color: "var(--status-danger)", spark: sparkData3 },
-        { title: "Assets", value: (dashboardData?.stats.totalAssets ?? 0).toLocaleString(), change: "Live", up: true, icon: HardDrive, color: "var(--accent-secondary)", spark: sparkData1.map((v) => v * 0.8) },
+        {
+            label: "Total devices",
+            value: totalDevices,
+            helper: totalDevices === 0 ? "Add your first screen" : `${online} online right now`,
+            icon: Monitor,
+            color: "var(--accent-primary)",
+            path: "/app/devices",
+        },
+        {
+            label: "Needs attention",
+            value: needsAttention,
+            helper: needsAttention === 0 ? "Everything looks good" : "Offline or reporting an issue",
+            icon: needsAttention === 0 ? CheckCircle2 : AlertTriangle,
+            color: needsAttention === 0 ? "var(--status-success)" : "var(--status-warning)",
+            path: "/app/devices",
+        },
+        {
+            label: "Assets",
+            value: dashboardData?.stats.totalAssets ?? 0,
+            helper: "Ready in your media library",
+            icon: HardDrive,
+            color: "var(--accent-secondary)",
+            path: "/app/assets",
+        },
     ];
 
-    const typeColor = (type: string) => {
-        if (type === "success") return "var(--status-success)";
-        if (type === "danger") return "var(--status-danger)";
-        if (type === "warning") return "var(--status-warning)";
-        return "var(--accent-secondary)";
-    };
+    const schedulePreview = dashboardData?.schedulePreview ?? [];
 
     return (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
-                <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 4 }}>
-                        <h1 style={{ fontSize: "1.875rem", fontWeight: 700 }}>Dashboard</h1>
-                        <motion.div
-                            animate={{ opacity: [1, 0.5, 1] }}
-                            transition={{ duration: 2, repeat: Infinity }}
-                            style={{
-                                display: "flex", alignItems: "center", gap: 6,
-                                padding: "4px 12px", borderRadius: 20,
-                                background: "hsla(var(--status-success), 0.1)",
-                                border: "1px solid hsla(var(--status-success), 0.2)",
-                            }}
-                        >
-                            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "hsl(var(--status-success))" }} />
-                            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "hsl(var(--status-success))", letterSpacing: "0.05em" }}>LIVE</span>
-                        </motion.div>
-                    </div>
-                    <p style={{ color: "hsl(var(--text-secondary))" }}>Welcome back. Here is your digital signage network at a glance.</p>
+        <div className="dash">
+            <header className="dash-header">
+                <div className="dash-header__text">
+                    <span className="dash-eyebrow">Overview</span>
+                    <h1>Welcome back</h1>
+                    <p>Manage your screens and content from one simple workspace.</p>
                 </div>
-                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                    <div style={{ textAlign: "right", marginRight: 8 }} className="desktop-only">
-                        <p style={{ fontSize: "1.5rem", fontWeight: 800, fontFamily: "monospace", letterSpacing: "0.05em", color: "hsl(var(--text-primary))" }}>{currentTime}</p>
-                        <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{new Date().toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}</p>
-                    </div>
-                    <button className="btn-primary" onClick={() => router.push("/app/playlists")} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <Sparkles size={18} />
-                        <span>New Playlist</span>
-                    </button>
-                </div>
-            </div>
+                <button className="dash-cta" onClick={() => router.push("/app/playlists")}>
+                    <Plus size={17} />
+                    Create playlist
+                </button>
+            </header>
 
-            <div className="grid-stats" style={{ marginBottom: 32 }}>
-                {statCards.map((stat, idx) => {
+            <section className="dash-stats" aria-label="Workspace summary">
+                {statCards.map((stat, index) => {
                     const Icon = stat.icon;
                     return (
-                        <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.08 }}
-                            className="glass-card" style={{ padding: 24, borderRadius: 20, position: "relative", overflow: "hidden" }}>
-                            <div style={{ position: "absolute", top: -20, right: -20, width: 100, height: 100, background: `hsl(${stat.color})`, opacity: 0.05, borderRadius: "50%", filter: "blur(30px)" }} />
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 16 }}>
-                                <div style={{ width: 48, height: 48, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `hsla(${stat.color}, 0.1)`, border: `1px solid hsla(${stat.color}, 0.2)` }}>
-                                    <Icon size={22} style={{ color: `hsl(${stat.color})` }} />
-                                </div>
-                                <SparklineChart data={stat.spark} width={80} height={32} color={`hsl(${stat.color})`} />
-                            </div>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-                                <div>
-                                    <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.8rem", marginBottom: 4 }}>{stat.title}</p>
-                                    <p style={{ fontSize: "2rem", fontWeight: 800, letterSpacing: "-0.02em" }}>{stat.value}</p>
-                                </div>
-                                <span style={{ fontSize: "0.75rem", fontWeight: 600, padding: "4px 10px", borderRadius: 20, color: stat.up ? "hsl(var(--status-success))" : "hsl(var(--status-danger))", background: stat.up ? "hsla(var(--status-success), 0.1)" : "hsla(var(--status-danger), 0.1)", display: "flex", alignItems: "center", gap: 4 }}>
-                                    {stat.change} {stat.up ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                                </span>
-                            </div>
-                        </motion.div>
+                        <motion.button
+                            key={stat.label}
+                            type="button"
+                            className="dash-stat"
+                            style={{ ["--tone" as string]: stat.color }}
+                            onClick={() => router.push(stat.path)}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3, delay: index * 0.06 }}
+                        >
+                            <span className="dash-stat__icon">
+                                <Icon size={20} />
+                            </span>
+                            <span className="dash-stat__body">
+                                <span className="dash-stat__label">{stat.label}</span>
+                                <strong className="dash-stat__value">{stat.value.toLocaleString()}</strong>
+                                <span className="dash-stat__helper">{stat.helper}</span>
+                            </span>
+                            <ChevronRight size={17} className="dash-stat__arrow" />
+                        </motion.button>
                     );
                 })}
-            </div>
+            </section>
 
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12, marginBottom: 32 }}>
-                {quickActions.map((qa, i) => (
-                    <motion.button key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 + i * 0.05 }}
-                        onClick={() => router.push(qa.path)}
-                        className="glass-panel" style={{ padding: "16px 12px", border: "1px solid hsla(var(--border-subtle), 0.3)", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, transition: "all 0.25s", textAlign: "center" }}
-                    >
-                        <div style={{ width: 40, height: 40, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `hsla(${qa.color}, 0.1)`, border: `1px solid hsla(${qa.color}, 0.15)`, flexShrink: 0 }}>
-                            <qa.icon size={18} style={{ color: `hsl(${qa.color})` }} />
-                        </div>
-                        <div>
-                            <p style={{ fontWeight: 700, fontSize: "0.8rem", color: "hsl(var(--text-primary))" }}>{qa.label}</p>
-                            <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))" }}>{qa.desc}</p>
-                        </div>
-                    </motion.button>
-                ))}
-            </div>
+            <section className="dash-block">
+                <div className="dash-block__head">
+                    <h2>Quick start</h2>
+                    <p>Choose what you would like to do next.</p>
+                </div>
+                <div className="dash-actions">
+                    {quickActions.map((action, index) => {
+                        const Icon = action.icon;
+                        return (
+                            <motion.button
+                                key={action.label}
+                                type="button"
+                                className="dash-action"
+                                style={{ ["--tone" as string]: action.color }}
+                                onClick={() => router.push(action.path)}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.28, delay: 0.1 + index * 0.04 }}
+                            >
+                                <span className="dash-action__icon">
+                                    <Icon size={18} />
+                                </span>
+                                <span className="dash-action__body">
+                                    <strong>{action.label}</strong>
+                                    <small>{action.description}</small>
+                                </span>
+                                <ChevronRight size={15} className="dash-action__arrow" />
+                            </motion.button>
+                        );
+                    })}
+                </div>
+            </section>
 
-            <div className="grid-main" style={{ marginBottom: 32 }}>
-                <div className="glass-panel" style={{ padding: 24 }}>
-                    <div className="flex-between" style={{ marginBottom: 24 }}>
+            <div className="dash-grid">
+                <section className="dash-panel">
+                    <div className="dash-panel__head">
                         <div>
-                            <h2 style={{ fontSize: "1.15rem", fontWeight: 700, marginBottom: 4 }}>Network Activity</h2>
-                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>Content delivery performance</p>
+                            <h2>Recent activity</h2>
+                            <p>The latest playback events across your screens.</p>
                         </div>
-                        <div className="glass-panel" style={{ display: "flex", padding: 4, borderRadius: 10 }}>
-                            {["24h", "7d", "30d"].map((t) => (
-                                <button key={t} onClick={() => setChartRange(t)} style={{ padding: "6px 14px", border: "none", borderRadius: 8, fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", background: chartRange === t ? "hsla(var(--accent-primary), 0.15)" : "transparent", color: chartRange === t ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))" }}>{t}</button>
+                        <button className="dash-link" onClick={() => router.push("/app/reports")}>
+                            View reports <ChevronRight size={14} />
+                        </button>
+                    </div>
+
+                    {isLoading ? (
+                        <ul className="dash-timeline">
+                            {Array.from({ length: 5 }).map((_, index) => (
+                                <li className="dash-skeleton" key={index}>
+                                    <span className="dash-skeleton__dot" />
+                                    <span className="dash-skeleton__lines">
+                                        <span />
+                                        <span />
+                                    </span>
+                                </li>
                             ))}
+                        </ul>
+                    ) : recentActivities.length === 0 ? (
+                        <div className="dash-empty">
+                            <span className="dash-empty__icon">
+                                <Clock3 size={20} />
+                            </span>
+                            <strong>No activity yet</strong>
+                            <p>Playback events will appear here once your screens start playing content.</p>
                         </div>
-                    </div>
-                    <div style={{ position: "relative", height: 220, display: "flex", alignItems: "flex-end", gap: 3, overflow: "hidden" }}>
-                        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "space-between", pointerEvents: "none" }}>
-                            {[1, 2, 3, 4].map((i) => <div key={i} style={{ width: "100%", height: 1, borderTop: "1px dashed hsla(var(--border-subtle), 0.15)" }} />)}
-                        </div>
-                        {chartData.map((h, i) => (
-                            <motion.div key={`${chartRange}-${i}`} initial={{ height: 0 }} animate={{ height: `${h}%` }} transition={{ delay: i * 0.03, duration: 0.8, ease: "circOut" }}
-                                style={{ flex: 1, background: "linear-gradient(to top, hsla(var(--accent-primary), 0.25), hsla(var(--accent-secondary), 0.7))", borderRadius: "4px 4px 0 0", minWidth: 2, position: "relative" }}>
-                                {h > 85 && (
-                                    <motion.div animate={{ opacity: [0, 1, 0] }} transition={{ duration: 2, repeat: Infinity, delay: i * 0.1 }} style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)" }}>
-                                        <Sparkles size={8} style={{ color: "hsl(var(--surface-contrast))" }} />
-                                    </motion.div>
-                                )}
-                            </motion.div>
-                        ))}
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16 }}>
-                        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-                            <span key={d} style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 500 }}>{d}</span>
-                        ))}
-                    </div>
-                </div>
+                    ) : (
+                        <ul className="dash-timeline">
+                            {recentActivities.map((activity, index) => {
+                                const Icon = activity.icon;
+                                return (
+                                    <motion.li
+                                        key={activity.id}
+                                        className="dash-event"
+                                        style={{ ["--tone" as string]: activity.color }}
+                                        initial={{ opacity: 0, x: 8 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        transition={{ duration: 0.26, delay: index * 0.03 }}
+                                    >
+                                        <span className="dash-event__icon">
+                                            <Icon size={15} />
+                                        </span>
+                                        <span className="dash-event__body">
+                                            <strong>{activity.title}</strong>
+                                            {activity.device && <small>{activity.device}</small>}
+                                        </span>
+                                        <time dateTime={activity.time}>{activity.relativeTime}</time>
+                                    </motion.li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </section>
 
-                <div className="glass-panel" style={{ padding: 24 }}>
-                    <div className="flex-between" style={{ marginBottom: 20 }}>
-                        <h2 style={{ fontSize: "1.15rem", fontWeight: 700 }}>Recent Activity</h2>
-                        <button className="btn-icon-soft" style={{ fontSize: "0.75rem", color: "hsl(var(--accent-primary))" }}>View All</button>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                        {isLoading ? <div style={{ padding: 8, color: "hsl(var(--text-muted))" }}>Loading activity...</div> : null}
-                        {recentActivityLog.map((log, idx) => (
-                            <motion.div key={log.id} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.06 }}
-                                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, background: idx === 0 ? "hsla(var(--bg-surface-elevated), 0.4)" : "transparent" }}>
-                                <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: `hsl(${typeColor(log.type)})`, boxShadow: `0 0 8px hsl(${typeColor(log.type)})` }} />
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <p style={{ fontSize: "0.85rem", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{log.action}</p>
-                                </div>
-                                <span style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>{log.time}</span>
-                            </motion.div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 24, marginBottom: 32 }}>
-                <div className="glass-panel" style={{ padding: 24, position: "relative", overflow: "hidden" }}>
-                    <div className="flex-between" style={{ marginBottom: 16 }}>
+                <section className="dash-panel">
+                    <div className="dash-panel__head">
                         <div>
-                            <h2 style={{ fontSize: "1.15rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-                                <Globe size={18} style={{ color: "hsl(var(--accent-primary))" }} /> Global Network
-                            </h2>
-                            <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>Real-time node connectivity across global regions</p>
+                            <h2>Today&apos;s schedule</h2>
+                            <p>What is planned to play today.</p>
                         </div>
+                        <button
+                            className="dash-icon-btn"
+                            aria-label="Open schedule"
+                            onClick={() => router.push("/app/schedule")}
+                        >
+                            <ChevronRight size={16} />
+                        </button>
                     </div>
-                    <AnimatedGlobe />
-                </div>
 
-                <div className="glass-panel" style={{ padding: 24 }}>
-                    <h2 style={{ fontSize: "1.15rem", fontWeight: 700, marginBottom: 24, display: "flex", alignItems: "center", gap: 10 }}>
-                        <Shield size={18} style={{ color: "hsl(var(--accent-secondary))" }} /> System Health
-                    </h2>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, justifyItems: "center" }}>
-                        <DonutChart value={99.97} max={100} color="hsl(var(--status-success))" label="Uptime" sublabel="Last 30 days" size={100} strokeWidth={8} />
-                        <DonutChart value={4.2} max={8} color="hsl(var(--accent-secondary))" label="Storage" sublabel="4.2 / 8 TB" size={100} strokeWidth={8} />
-                        <DonutChart value={85} max={100} color="hsl(var(--accent-primary))" label="Bandwidth" sublabel="14.2 Gbps peak" size={100} strokeWidth={8} />
-                        <DonutChart value={12} max={50} color="hsl(var(--status-warning))" label="Latency" sublabel="12ms avg" size={100} strokeWidth={8} />
-                    </div>
-                </div>
+                    {!isLoading && schedulePreview.length === 0 ? (
+                        <div className="dash-empty">
+                            <span className="dash-empty__icon">
+                                <Calendar size={20} />
+                            </span>
+                            <strong>No schedule today</strong>
+                            <button className="dash-link" onClick={() => router.push("/app/schedule")}>
+                                Create a schedule <ChevronRight size={14} />
+                            </button>
+                        </div>
+                    ) : (
+                        <ul className="dash-schedule">
+                            {schedulePreview.map((event) => (
+                                <li className="dash-slot" key={`${event.name}-${event.time}`}>
+                                    <span className="dash-slot__bar" style={{ background: event.color }} />
+                                    <span className="dash-slot__body">
+                                        <strong>{event.name}</strong>
+                                        <small>
+                                            <Clock3 size={11} /> {event.time}
+                                        </small>
+                                    </span>
+                                    <span className={`dash-tag${event.active ? " dash-tag--live" : ""}`}>
+                                        {event.active ? "Live" : "Upcoming"}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </section>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24 }}>
-                <div className="glass-panel" style={{ padding: 24 }}>
-                    <div className="flex-between" style={{ marginBottom: 20 }}>
-                        <h2 style={{ fontSize: "1.15rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-                            <Monitor size={18} style={{ color: "hsl(var(--accent-primary))" }} /> Top Devices
-                        </h2>
-                        <button className="btn-icon-soft" onClick={() => router.push("/app/devices")}><ChevronRight size={16} /></button>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        {topDevices.map((dev, i) => (
-                            <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.6 + i * 0.05 }}
-                                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 10, background: "hsla(var(--bg-base), 0.3)" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: dev.status === "online" ? "#4ade80" : "#f87171", boxShadow: `0 0 8px ${dev.status === "online" ? "#4ade80" : "#f87171"}` }} />
-                                    <div>
-                                        <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>{dev.name}</p>
-                                        <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{dev.location}</p>
-                                    </div>
-                                </div>
-                                <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "hsl(var(--status-success))" }}>{dev.uptime}</span>
-                            </motion.div>
-                        ))}
-                    </div>
-                </div>
+            {/*
+              Colors use `hsl(<channels> / <alpha>)`. The `hsla(<channels>, <alpha>)`
+              form is invalid for space-separated channels and silently renders
+              transparent, which is why these surfaces must not use it.
+            */}
+            <style jsx global>{`
+                .dash {
+                    max-width: 1400px;
+                    margin: 0 auto;
+                }
 
-                <div className="glass-panel" style={{ padding: 24 }}>
-                    <div className="flex-between" style={{ marginBottom: 20 }}>
-                        <h2 style={{ fontSize: "1.15rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
-                            <Calendar size={18} style={{ color: "hsl(var(--accent-secondary))" }} /> Today&apos;s Schedule
-                        </h2>
-                        <button className="btn-icon-soft" onClick={() => router.push("/app/schedule")}><ChevronRight size={16} /></button>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {schedulePreview.map((ev, i) => (
-                            <motion.div key={i} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.4 + i * 0.06 }}
-                                style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 10, background: "hsla(var(--bg-base), 0.3)", borderLeft: `3px solid ${ev.color}` }}>
-                                <div style={{ flex: 1 }}>
-                                    <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>{ev.name}</p>
-                                    <p style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", display: "flex", alignItems: "center", gap: 4 }}><Clock size={10} /> {ev.time}</p>
-                                </div>
-                                {ev.active ? (
-                                    <span style={{ fontSize: "0.6rem", fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "hsla(var(--status-success), 0.1)", color: "hsl(var(--status-success))", display: "flex", alignItems: "center", gap: 4 }}><Play size={8} /> LIVE</span>
-                                ) : (
-                                    <span style={{ fontSize: "0.6rem", fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "hsla(var(--bg-surface-elevated), 0.5)", color: "hsl(var(--text-muted))" }}>QUEUED</span>
-                                )}
-                            </motion.div>
-                        ))}
-                    </div>
-                </div>
+                .dash-header {
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: space-between;
+                    gap: 24px;
+                    padding-bottom: 22px;
+                    margin-bottom: 24px;
+                    border-bottom: 1px solid hsl(var(--border-subtle) / 0.5);
+                }
 
-                <div className="glass-panel" style={{ padding: 24, display: "flex", flexDirection: "column", justifyContent: "center", background: "radial-gradient(circle at center, rgba(0,229,255,0.05), transparent)", textAlign: "center" }}>
-                    <div style={{ display: "flex", gap: 12, justifyContent: "center", marginBottom: 20 }}>
-                        {[1, 2, 3, 4, 5].map((i) => (
-                            <motion.div key={i} animate={{ opacity: [0.3, 1, 0.3] }} transition={{ duration: 2, repeat: Infinity, delay: i * 0.2 }}
-                                style={{ width: 10, height: 10, borderRadius: "50%", background: i <= 4 ? "#4ade80" : "#f87171", boxShadow: `0 0 8px ${i <= 4 ? "#4ade80" : "#f87171"}` }} />
-                        ))}
-                    </div>
-                    <h2 style={{ fontSize: "1.35rem", fontWeight: 700, marginBottom: 8 }}>Global Grid Active</h2>
-                    <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem", marginBottom: 4 }}>Streaming 4K to <strong>{liveCount}</strong> Nodes</p>
-                    <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.7rem", marginBottom: 20 }}>5 Regions • 12 Data Centers • 99.97% Uptime</p>
-                    <div style={{ display: "flex", gap: 28, justifyContent: "center", marginBottom: 24 }}>
-                        {[
-                            { label: "Bandwidth", value: "14.2 Gbps", icon: Activity },
-                            { label: "Latency", value: "12ms", icon: Zap },
-                            { label: "Users", value: "864", icon: Users },
-                        ].map((m, i) => (
-                            <div key={i} style={{ textAlign: "center" }}>
-                                <m.icon size={14} style={{ color: "hsl(var(--text-muted))", marginBottom: 4 }} />
-                                <p style={{ fontSize: "1rem", fontWeight: 800 }}>{m.value}</p>
-                                <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))" }}>{m.label}</p>
-                            </div>
-                        ))}
-                    </div>
-                    <button className="btn-primary" onClick={() => router.push("/app/devices")} style={{ alignSelf: "center" }}>Manage Nodes</button>
-                </div>
-            </div>
-        </motion.div>
+                .dash-eyebrow {
+                    display: block;
+                    margin-bottom: 6px;
+                    color: hsl(var(--accent-primary));
+                    font-size: 0.68rem;
+                    font-weight: 700;
+                    letter-spacing: 0.13em;
+                    text-transform: uppercase;
+                }
+
+                .dash-header h1 {
+                    font-size: clamp(1.6rem, 2.6vw, 2rem);
+                    font-weight: 700;
+                    line-height: 1.15;
+                }
+
+                .dash-header__text p {
+                    margin-top: 7px;
+                    max-width: 48ch;
+                    color: hsl(var(--text-secondary));
+                    font-size: 0.875rem;
+                }
+
+                .dash-cta {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-shrink: 0;
+                    padding: 11px 20px;
+                    color: #fff;
+                    font-size: 0.85rem;
+                    font-weight: 650;
+                    white-space: nowrap;
+                    background: linear-gradient(
+                        135deg,
+                        hsl(var(--accent-primary)),
+                        hsl(var(--accent-secondary))
+                    );
+                    border: none;
+                    border-radius: 11px;
+                    box-shadow: 0 6px 18px hsl(var(--accent-primary) / 0.3);
+                    transition: transform 160ms ease, box-shadow 160ms ease, filter 160ms ease;
+                }
+
+                .dash-cta:hover {
+                    transform: translateY(-1px);
+                    filter: brightness(1.07);
+                    box-shadow: 0 10px 24px hsl(var(--accent-primary) / 0.38);
+                }
+
+                /* ---------- summary ---------- */
+                .dash-stats {
+                    display: grid;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 14px;
+                    margin-bottom: 28px;
+                }
+
+                .dash-stat {
+                    position: relative;
+                    display: grid;
+                    grid-template-columns: auto minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 15px;
+                    padding: 18px;
+                    overflow: hidden;
+                    color: hsl(var(--text-primary));
+                    text-align: left;
+                    background: linear-gradient(
+                        145deg,
+                        hsl(var(--bg-surface-elevated) / 0.9),
+                        hsl(var(--bg-surface) / 0.75)
+                    );
+                    border: 1px solid hsl(var(--border-subtle) / 0.65);
+                    border-radius: 16px;
+                    box-shadow: var(--shadow-sm);
+                    transition: transform 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+                }
+
+                .dash-stat::before {
+                    content: "";
+                    position: absolute;
+                    top: -60px;
+                    right: -50px;
+                    width: 140px;
+                    height: 140px;
+                    background: hsl(var(--tone));
+                    border-radius: 50%;
+                    opacity: 0.13;
+                    filter: blur(36px);
+                    pointer-events: none;
+                }
+
+                .dash-stat:hover {
+                    transform: translateY(-2px);
+                    border-color: hsl(var(--tone) / 0.5);
+                    box-shadow: 0 12px 28px rgb(0 0 0 / 0.3);
+                }
+
+                .dash-stat__icon {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 46px;
+                    height: 46px;
+                    flex-shrink: 0;
+                    color: hsl(var(--tone));
+                    background: hsl(var(--tone) / 0.14);
+                    border: 1px solid hsl(var(--tone) / 0.25);
+                    border-radius: 13px;
+                }
+
+                .dash-stat__body {
+                    display: grid;
+                    min-width: 0;
+                }
+
+                .dash-stat__label {
+                    color: hsl(var(--text-secondary));
+                    font-size: 0.76rem;
+                    font-weight: 500;
+                }
+
+                .dash-stat__value {
+                    margin: 2px 0 3px;
+                    font-family: "Outfit", sans-serif;
+                    font-size: 1.75rem;
+                    font-weight: 700;
+                    line-height: 1.1;
+                    letter-spacing: -0.02em;
+                }
+
+                .dash-stat__helper {
+                    overflow: hidden;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.7rem;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .dash-stat__arrow {
+                    flex-shrink: 0;
+                    color: hsl(var(--text-muted));
+                    transition: transform 180ms ease, color 180ms ease;
+                }
+
+                .dash-stat:hover .dash-stat__arrow {
+                    transform: translateX(3px);
+                    color: hsl(var(--tone));
+                }
+
+                /* ---------- quick start ---------- */
+                .dash-block {
+                    margin-bottom: 28px;
+                }
+
+                .dash-block__head {
+                    margin-bottom: 14px;
+                }
+
+                .dash-block__head h2,
+                .dash-panel__head h2 {
+                    font-size: 1.02rem;
+                    font-weight: 700;
+                }
+
+                .dash-block__head p,
+                .dash-panel__head p {
+                    margin-top: 3px;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.75rem;
+                }
+
+                .dash-actions {
+                    display: grid;
+                    grid-template-columns: repeat(5, minmax(0, 1fr));
+                    gap: 12px;
+                }
+
+                .dash-action {
+                    display: grid;
+                    grid-template-columns: auto minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 11px;
+                    padding: 14px;
+                    color: hsl(var(--text-primary));
+                    text-align: left;
+                    background: hsl(var(--bg-surface) / 0.7);
+                    border: 1px solid hsl(var(--border-subtle) / 0.55);
+                    border-radius: 14px;
+                    transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+                }
+
+                .dash-action:hover {
+                    transform: translateY(-2px);
+                    background: hsl(var(--bg-surface-elevated) / 0.85);
+                    border-color: hsl(var(--tone) / 0.45);
+                }
+
+                .dash-action__icon {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 38px;
+                    height: 38px;
+                    flex-shrink: 0;
+                    color: hsl(var(--tone));
+                    background: hsl(var(--tone) / 0.13);
+                    border-radius: 11px;
+                }
+
+                .dash-action__body {
+                    display: grid;
+                    min-width: 0;
+                }
+
+                .dash-action__body strong {
+                    overflow: hidden;
+                    font-size: 0.79rem;
+                    font-weight: 600;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .dash-action__body small {
+                    overflow: hidden;
+                    margin-top: 2px;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.68rem;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .dash-action__arrow {
+                    flex-shrink: 0;
+                    color: hsl(var(--text-muted));
+                    opacity: 0;
+                    transition: opacity 160ms ease, transform 160ms ease;
+                }
+
+                .dash-action:hover .dash-action__arrow {
+                    opacity: 1;
+                    transform: translateX(2px);
+                }
+
+                /* ---------- panels ---------- */
+                .dash-grid {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.8fr);
+                    gap: 16px;
+                    align-items: start;
+                }
+
+                .dash-panel {
+                    padding: 20px;
+                    background: hsl(var(--bg-surface) / 0.7);
+                    border: 1px solid hsl(var(--border-subtle) / 0.6);
+                    border-radius: 16px;
+                    box-shadow: var(--shadow-sm);
+                }
+
+                .dash-panel__head {
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: space-between;
+                    gap: 16px;
+                    padding-bottom: 13px;
+                    margin-bottom: 4px;
+                    border-bottom: 1px solid hsl(var(--border-subtle) / 0.45);
+                }
+
+                .dash-link {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 3px;
+                    flex-shrink: 0;
+                    padding: 0;
+                    color: hsl(var(--accent-primary));
+                    background: none;
+                    border: none;
+                    font-size: 0.73rem;
+                    font-weight: 650;
+                }
+
+                .dash-link:hover {
+                    text-decoration: underline;
+                }
+
+                .dash-icon-btn {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 30px;
+                    height: 30px;
+                    flex-shrink: 0;
+                    color: hsl(var(--text-secondary));
+                    background: transparent;
+                    border: 1px solid hsl(var(--border-subtle) / 0.6);
+                    border-radius: 9px;
+                    transition: color 150ms ease, border-color 150ms ease;
+                }
+
+                .dash-icon-btn:hover {
+                    color: hsl(var(--accent-primary));
+                    border-color: hsl(var(--accent-primary) / 0.5);
+                }
+
+                /* ---------- activity ---------- */
+                .dash-timeline,
+                .dash-schedule {
+                    list-style: none;
+                    margin: 0;
+                    padding: 0;
+                }
+
+                .dash-event {
+                    display: grid;
+                    grid-template-columns: auto minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 11px 2px;
+                    border-bottom: 1px solid hsl(var(--border-subtle) / 0.32);
+                }
+
+                .dash-event:last-child {
+                    padding-bottom: 2px;
+                    border-bottom: none;
+                }
+
+                .dash-event__icon {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 32px;
+                    height: 32px;
+                    flex-shrink: 0;
+                    color: hsl(var(--tone));
+                    background: hsl(var(--tone) / 0.13);
+                    border-radius: 10px;
+                }
+
+                .dash-event__body {
+                    display: grid;
+                    min-width: 0;
+                }
+
+                .dash-event__body strong {
+                    overflow: hidden;
+                    font-size: 0.79rem;
+                    font-weight: 550;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .dash-event__body small {
+                    overflow: hidden;
+                    margin-top: 2px;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.68rem;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .dash-event time {
+                    flex-shrink: 0;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.68rem;
+                    white-space: nowrap;
+                }
+
+                /* ---------- schedule ---------- */
+                .dash-slot {
+                    display: grid;
+                    grid-template-columns: auto minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 11px;
+                    padding: 12px 2px;
+                    border-bottom: 1px solid hsl(var(--border-subtle) / 0.32);
+                }
+
+                .dash-slot:last-child {
+                    border-bottom: none;
+                }
+
+                .dash-slot__bar {
+                    width: 3px;
+                    height: 30px;
+                    flex-shrink: 0;
+                    border-radius: 999px;
+                }
+
+                .dash-slot__body {
+                    display: grid;
+                    min-width: 0;
+                }
+
+                .dash-slot__body strong {
+                    overflow: hidden;
+                    font-size: 0.78rem;
+                    font-weight: 600;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+
+                .dash-slot__body small {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 4px;
+                    margin-top: 3px;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.67rem;
+                }
+
+                .dash-tag {
+                    flex-shrink: 0;
+                    padding: 4px 9px;
+                    color: hsl(var(--text-muted));
+                    background: hsl(var(--bg-surface-elevated) / 0.9);
+                    border-radius: 999px;
+                    font-size: 0.58rem;
+                    font-weight: 700;
+                    letter-spacing: 0.04em;
+                    text-transform: uppercase;
+                }
+
+                .dash-tag--live {
+                    color: hsl(var(--status-success));
+                    background: hsl(var(--status-success) / 0.14);
+                }
+
+                /* ---------- empty + loading ---------- */
+                .dash-empty {
+                    display: flex;
+                    min-height: 210px;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                }
+
+                .dash-empty__icon {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 44px;
+                    height: 44px;
+                    margin-bottom: 12px;
+                    color: hsl(var(--text-muted));
+                    background: hsl(var(--bg-surface-elevated) / 0.85);
+                    border-radius: 13px;
+                }
+
+                .dash-empty strong {
+                    color: hsl(var(--text-secondary));
+                    font-size: 0.82rem;
+                }
+
+                .dash-empty p {
+                    max-width: 34ch;
+                    margin-top: 5px;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.72rem;
+                    line-height: 1.5;
+                }
+
+                .dash-empty .dash-link {
+                    margin-top: 10px;
+                }
+
+                .dash-skeleton {
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    padding: 11px 2px;
+                    border-bottom: 1px solid hsl(var(--border-subtle) / 0.25);
+                }
+
+                .dash-skeleton:last-child {
+                    border-bottom: none;
+                }
+
+                .dash-skeleton__dot {
+                    width: 32px;
+                    height: 32px;
+                    flex-shrink: 0;
+                    border-radius: 10px;
+                    background: hsl(var(--bg-surface-elevated) / 0.9);
+                    animation: dash-pulse 1.5s ease-in-out infinite;
+                }
+
+                .dash-skeleton__lines {
+                    display: grid;
+                    flex: 1;
+                    gap: 7px;
+                }
+
+                .dash-skeleton__lines span {
+                    height: 8px;
+                    border-radius: 999px;
+                    background: hsl(var(--bg-surface-elevated) / 0.9);
+                    animation: dash-pulse 1.5s ease-in-out infinite;
+                }
+
+                .dash-skeleton__lines span:first-child {
+                    width: 62%;
+                }
+
+                .dash-skeleton__lines span:last-child {
+                    width: 34%;
+                }
+
+                @keyframes dash-pulse {
+                    50% {
+                        opacity: 0.45;
+                    }
+                }
+
+                /* ---------- responsive ---------- */
+                @media (max-width: 1160px) {
+                    .dash-actions {
+                        grid-template-columns: repeat(3, minmax(0, 1fr));
+                    }
+                }
+
+                @media (max-width: 900px) {
+                    .dash-stats,
+                    .dash-grid {
+                        grid-template-columns: 1fr;
+                    }
+
+                    .dash-actions {
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                    }
+                }
+
+                @media (max-width: 560px) {
+                    .dash-header {
+                        align-items: stretch;
+                        flex-direction: column;
+                        gap: 16px;
+                    }
+
+                    .dash-cta {
+                        justify-content: center;
+                    }
+
+                    .dash-actions {
+                        grid-template-columns: 1fr;
+                    }
+                }
+            `}</style>
+        </div>
     );
 }

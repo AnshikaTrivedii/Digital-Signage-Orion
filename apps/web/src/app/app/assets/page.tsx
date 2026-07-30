@@ -5,8 +5,10 @@ import {
     UploadCloud, Search, Image as ImageIcon, Video,
     FileText, Trash2, Link as LinkIcon, X,
     Eye, CloudUpload, Archive, AlertCircle, Loader2, Tag, Globe, Plus,
-    Folder as FolderIcon, FolderPlus, FolderInput, Pencil, ChevronRight, Home, Check
+    Folder as FolderIcon, FolderPlus, FolderInput, Pencil, ChevronRight, Home, Check,
+    LayoutGrid
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
@@ -14,7 +16,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { API_BASE, apiRequest } from "@/lib/api";
 import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
 import { ASSET_UPLOAD_ACCEPT, resolveFileMimeType, SUPPORTED_UPLOAD_LABEL } from "@/lib/asset-media";
-import { AssetPreview } from "@/components/assets/AssetPreview";
+import { AssetPreview, AssetTypeIcon } from "@/components/assets/AssetPreview";
 
 interface Asset {
     id: string;
@@ -100,9 +102,39 @@ const TAB_TO_TYPE: Record<string, string | undefined> = {
     URLs: "URL",
 };
 
+type FilterTab = {
+    id: string;
+    label: string;
+    icon: LucideIcon;
+    /** Shown when the filter matches nothing. */
+    emptyTitle: string;
+    emptyHint: string;
+};
+
+const FILTER_TABS: FilterTab[] = [
+    { id: "All", label: "All", icon: LayoutGrid, emptyTitle: "No Assets Found", emptyHint: "Upload media or create a folder to organize your content." },
+    { id: "Images", label: "Images", icon: ImageIcon, emptyTitle: "No Images Found", emptyHint: "Upload JPG, PNG, WEBP, GIF, or SVG files to see them here." },
+    { id: "Videos", label: "Videos", icon: Video, emptyTitle: "No Videos Found", emptyHint: "Upload MP4, MOV, or WEBM files to see them here." },
+    { id: "Documents", label: "Documents", icon: FileText, emptyTitle: "No Documents Found", emptyHint: "Upload PDF, DOC, DOCX, PPT, or PPTX files to see them here." },
+    { id: "URLs", label: "URLs", icon: Globe, emptyTitle: "No URLs Found", emptyHint: "Use \"Add URL Asset\" to display a live web page on your screens." },
+];
+
+/** Per-type label + accent used by the icon chip and the type badge. */
+const TYPE_META: Record<string, { label: string; tone: string }> = {
+    IMAGE: { label: "Image", tone: "var(--accent-secondary)" },
+    VIDEO: { label: "Video", tone: "var(--accent-primary)" },
+    DOCUMENT: { label: "Document", tone: "var(--status-danger)" },
+    URL: { label: "URL", tone: "var(--status-info)" },
+    HTML: { label: "Legacy HTML", tone: "var(--text-muted)" },
+};
+
+function typeMeta(type: string) {
+    return TYPE_META[type] ?? { label: type, tone: "var(--text-muted)" };
+}
+
 const inputStyle: React.CSSProperties = {
-    width: "100%", padding: "10px 14px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)",
-    border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none",
+    width: "100%", padding: "10px 14px", borderRadius: 10, background: "hsl(var(--bg-base) / 0.8)",
+    border: "1px solid hsl(var(--border-subtle))", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none",
 };
 
 // ---------------------------------------------------------------------------
@@ -150,7 +182,7 @@ function FolderPickerDialog({
 
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.78)", backdropFilter: "blur(12px)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+            style={{ position: "fixed", inset: 0, background: "hsl(var(--overlay-base) / 0.78)", backdropFilter: "blur(12px)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
             onClick={onCancel}>
             <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                 className="glass-panel" style={{ width: "100%", maxWidth: 520, padding: 28 }} onClick={(e) => e.stopPropagation()}>
@@ -173,7 +205,7 @@ function FolderPickerDialog({
                     ))}
                 </div>
 
-                <div style={{ minHeight: 180, maxHeight: 280, overflowY: "auto", background: "hsla(var(--bg-base), 0.4)", borderRadius: 12, padding: 12, marginBottom: 20 }}>
+                <div style={{ minHeight: 180, maxHeight: 280, overflowY: "auto", background: "hsl(var(--bg-base) / 0.4)", borderRadius: 12, padding: 12, marginBottom: 20 }}>
                     {isLoading ? (
                         <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Loader2 size={24} className="animate-spin-slow" style={{ color: "hsl(var(--accent-primary))" }} /></div>
                     ) : visibleFolders.length === 0 ? (
@@ -182,7 +214,7 @@ function FolderPickerDialog({
                         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                             {visibleFolders.map((f) => (
                                 <button key={f.id} onClick={() => load(f.id)}
-                                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "hsla(var(--bg-surface-elevated), 0.6)", border: "1px solid hsla(var(--border-subtle), 0.6)", cursor: "pointer", textAlign: "left", color: "hsl(var(--text-primary))" }}>
+                                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "hsl(var(--bg-surface-elevated) / 0.6)", border: "1px solid hsl(var(--border-subtle) / 0.6)", cursor: "pointer", textAlign: "left", color: "hsl(var(--text-primary))" }}>
                                     <FolderIcon size={18} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
                                     <span style={{ flex: 1, fontSize: "0.85rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
                                     <ChevronRight size={16} style={{ color: "hsl(var(--text-muted))" }} />
@@ -239,6 +271,7 @@ export default function AssetsPage() {
 
     const orgId = activeOrganizationId;
     const isSearching = Boolean(search.trim());
+    const activeFilter = FILTER_TABS.find(t => t.id === activeTab) ?? FILTER_TABS[0];
 
     // Initialise folder from URL (?folder=...) on first mount.
     useEffect(() => {
@@ -321,24 +354,6 @@ export default function AssetsPage() {
             if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
         };
     }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
-
-    const getIcon = (type: string, size = 32) => {
-        switch (type) {
-            case "VIDEO": return <Video size={size} style={{ color: "hsl(var(--accent-primary))" }} />;
-            case "IMAGE": return <ImageIcon size={size} style={{ color: "hsl(var(--accent-secondary))" }} />;
-            case "URL": return <Globe size={size} style={{ color: "hsl(var(--accent-primary))" }} />;
-            case "DOCUMENT": return <FileText size={size} style={{ color: "#f87171" }} />;
-            default: return <FileText size={size} style={{ color: "hsl(var(--text-muted))" }} />;
-        }
-    };
-
-    const getGlowColor = (type: string) => {
-        if (type === "VIDEO") return "hsl(var(--accent-primary))";
-        if (type === "IMAGE") return "hsl(var(--accent-secondary))";
-        if (type === "URL") return "hsl(var(--accent-primary))";
-        if (type === "DOCUMENT") return "#f87171";
-        return "hsl(var(--text-muted))";
-    };
 
     const handleDelete = async (id: string) => {
         if (!canEdit || !orgId) return toast.error("You only have view access to assets.");
@@ -596,7 +611,7 @@ export default function AssetsPage() {
                     <Loader2 size={20} className="animate-spin-slow" style={{ color: "hsl(var(--accent-primary))" }} />
                     <div style={{ flex: 1 }}>
                         <div style={{ fontSize: "0.85rem", fontWeight: 600, marginBottom: 6 }}>Uploading assets...</div>
-                        <div style={{ height: 6, borderRadius: 3, background: "hsla(var(--border-subtle), 0.5)", overflow: "hidden" }}>
+                        <div style={{ height: 6, borderRadius: 3, background: "hsl(var(--border-subtle) / 0.5)", overflow: "hidden" }}>
                             <motion.div
                                 initial={{ width: 0 }}
                                 animate={{ width: `${uploadProgress}%` }}
@@ -608,12 +623,12 @@ export default function AssetsPage() {
                 </div>
             )}
 
-            <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
+            <div className="assets-header">
                 <div>
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Asset Library</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>Centralized repository for all your digital signage content.</p>
                 </div>
-                <div style={{ display: "flex", gap: 12 }}>
+                <div className="assets-header-actions">
                     <button className="btn-outline" disabled={!canEdit} onClick={() => canEdit && setIsNewFolderOpen(true)} style={{ display: "flex", alignItems: "center", gap: 10, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
                         <FolderPlus size={18} /> <span>New Folder</span>
                     </button>
@@ -626,22 +641,40 @@ export default function AssetsPage() {
                 </div>
             </div>
 
-            <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", flexWrap: "wrap", gap: 20, justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", gap: 6, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
-                    {["All", "Images", "Videos", "Documents", "URLs"].map(tab => (
-                        <button key={tab} onClick={() => setActiveTab(tab)} style={{
-                            padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: "0.85rem", fontWeight: 500,
-                            background: activeTab === tab ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                            color: activeTab === tab ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))"
-                        }}>{tab}</button>
-                    ))}
+            <div className="assets-toolbar">
+                <div className="assets-search">
+                    <Search size={16} className="assets-search-icon" />
+                    <input
+                        type="text"
+                        placeholder="Search all folders by name..."
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="assets-search-input"
+                    />
+                    {search && (
+                        <button type="button" className="assets-search-clear" onClick={() => setSearch("")} title="Clear search" aria-label="Clear search">
+                            <X size={14} />
+                        </button>
+                    )}
                 </div>
-                <div style={{ display: "flex", gap: 12, flex: 1, minWidth: 260, maxWidth: 500 }}>
-                    <div style={{ position: "relative", width: "100%" }}>
-                        <Search size={16} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "hsl(var(--text-muted))" }} />
-                        <input type="text" placeholder="Search all folders by name..." value={search} onChange={e => setSearch(e.target.value)}
-                            style={{ width: "100%", padding: "10px 14px 10px 38px", borderRadius: 10, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.9rem", outline: "none" }} />
-                    </div>
+
+                <div className="assets-filters" role="tablist" aria-label="Filter assets by type">
+                    {FILTER_TABS.map(tab => {
+                        const Icon = tab.icon;
+                        const isActive = activeTab === tab.id;
+                        return (
+                            <button
+                                key={tab.id}
+                                role="tab"
+                                aria-selected={isActive}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={`assets-filter-pill${isActive ? " is-active" : ""}`}
+                            >
+                                <Icon size={15} />
+                                <span>{tab.label}</span>
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
@@ -683,7 +716,7 @@ export default function AssetsPage() {
                             onDoubleClick={() => navigateToFolder(folder.id)}
                         >
                             <div style={{ display: "flex", alignItems: "center", gap: 12 }} onClick={() => navigateToFolder(folder.id)}>
-                                <div style={{ width: 44, height: 44, borderRadius: 10, background: "hsla(var(--accent-primary), 0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                <div style={{ width: 44, height: 44, borderRadius: 10, background: "hsl(var(--accent-primary) / 0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                                     <FolderIcon size={24} style={{ color: "hsl(var(--accent-primary))" }} />
                                 </div>
                                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -708,7 +741,7 @@ export default function AssetsPage() {
                                 </div>
                             </div>
                             {canEdit && (
-                                <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, borderTop: "1px solid hsla(var(--border-subtle), 0.5)", paddingTop: 10 }} onClick={e => e.stopPropagation()}>
+                                <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, borderTop: "1px solid hsl(var(--border-subtle) / 0.5)", paddingTop: 10 }} onClick={e => e.stopPropagation()}>
                                     <button className="btn-icon-soft" style={{ padding: 6 }} title="Rename" onClick={() => { setRenamingFolderId(folder.id); setRenameValue(folder.name); }}><Pencil size={15} /></button>
                                     <button className="btn-icon-soft" style={{ padding: 6 }} title="Move" onClick={() => setMoveTarget({ kind: "folder", id: folder.id, name: folder.name })}><FolderInput size={15} /></button>
                                     <button className="btn-icon-soft" style={{ padding: 6, color: "hsl(var(--status-danger))" }} title="Delete" onClick={() => handleDeleteFolder(folder)}><Trash2 size={15} /></button>
@@ -725,43 +758,81 @@ export default function AssetsPage() {
                     <Loader2 size={40} className="animate-spin-slow" style={{ color: "hsl(var(--accent-primary))", opacity: 0.5 }} />
                 </div>
             ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 24 }}>
+                <div className="assets-grid">
                     <AnimatePresence mode="popLayout">
                         {assets.length === 0 ? (
-                            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} style={{ gridColumn: "1 / -1", textAlign: "center", padding: "80px 40px", color: "hsl(var(--text-muted))" }}>
-                                <Archive size={64} style={{ marginBottom: 20, opacity: 0.2, margin: "0 auto 20px" }} />
-                                <p style={{ fontSize: "1.2rem", fontWeight: 500 }}>{folders.length > 0 && !isSearching ? "No assets in this folder" : "No assets detected"}</p>
-                                <p style={{ fontSize: "0.9rem" }}>
-                                    {canEdit ? "Upload media or create a folder to organize your content." : "No assets have been uploaded yet."}
+                            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="assets-empty">
+                                <div className="assets-empty-icon">
+                                    {(() => {
+                                        const EmptyIcon = isSearching ? Search : (activeFilter.id === "All" ? Archive : activeFilter.icon);
+                                        return <EmptyIcon size={34} />;
+                                    })()}
+                                </div>
+                                <p className="assets-empty-title">
+                                    {isSearching
+                                        ? `No results for "${search.trim()}"`
+                                        : folders.length > 0 && activeFilter.id === "All"
+                                            ? "This Folder Is Empty"
+                                            : activeFilter.emptyTitle}
+                                </p>
+                                <p className="assets-empty-hint">
+                                    {isSearching
+                                        ? activeFilter.id === "All"
+                                            ? "Try a different search term."
+                                            : `No ${activeFilter.label.toLowerCase()} match this search. Try "All" or a different term.`
+                                        : canEdit
+                                            ? activeFilter.emptyHint
+                                            : "No assets have been uploaded yet."}
                                 </p>
                             </motion.div>
                         ) : (
-                            assets.map((asset, idx) => (
-                                <motion.div layout key={asset.id} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ delay: idx * 0.03 }}
-                                    className="glass-card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
-                                    <div style={{ height: 160, position: "relative", background: "hsla(var(--bg-base), 0.4)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-                                        <div style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at center, ${getGlowColor(asset.type)}15, transparent 70%)`, pointerEvents: "none" }} />
-                                        <div style={{ position: "absolute", inset: 0, zIndex: 1 }}>
-                                            <AssetPreview asset={asset} size="card" iconSize={48} />
-                                        </div>
-                                        <div className="card-overlay" style={{ position: "absolute", inset: 0, background: "hsla(var(--overlay-base), 0.58)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, opacity: 0, transition: "opacity 0.3s", zIndex: 2 }}>
-                                            <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleViewAsset(asset)}><Eye size={18} /></button>
-                                        </div>
-                                        {asset.durationMs && (
-                                            <div style={{ position: "absolute", bottom: 8, right: 8, background: "hsla(var(--overlay-base), 0.7)", color: "hsl(var(--surface-contrast))", padding: "2px 8px", borderRadius: 6, fontSize: "0.7rem", fontWeight: 600, zIndex: 3 }}>{formatDuration(asset.durationMs)}</div>
-                                        )}
-                                    </div>
-                                    <div style={{ padding: 20, flex: 1, display: "flex", flexDirection: "column" }}>
-                                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                                            <h3 style={{ fontSize: "0.95rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }} title={asset.name}>{asset.name}</h3>
-                                            {canEdit && (
-                                                <button className="btn-icon-soft" style={{ padding: 4 }} onClick={() => { setEditingTags(asset.id); setTagInput(asset.tags.join(", ")); }} title="Edit tags">
-                                                    <Tag size={14} />
-                                                </button>
+                            assets.map((asset, idx) => {
+                                const meta = typeMeta(asset.type);
+                                return (
+                                    <motion.div layout key={asset.id} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} transition={{ delay: Math.min(idx, 12) * 0.025 }}
+                                        className="asset-card">
+                                        <div className="asset-thumb" style={{ ["--asset-tone" as string]: meta.tone }}>
+                                            <div className="asset-thumb-media">
+                                                <AssetPreview asset={asset} size="card" iconSize={44} />
+                                            </div>
+                                            <span className="asset-type-badge">
+                                                <AssetTypeIcon type={asset.type} documentFormat={asset.documentFormat} previewKind={asset.previewKind} size={13} />
+                                                {asset.type === "DOCUMENT" && asset.documentFormat ? asset.documentFormat.toUpperCase() : meta.label}
+                                            </span>
+                                            <div className="card-overlay">
+                                                <button className="btn-icon-soft" style={{ background: "hsl(var(--surface-contrast))", color: "hsl(var(--surface-contrast-text))" }} onClick={() => handleViewAsset(asset)} title="Preview asset"><Eye size={18} /></button>
+                                            </div>
+                                            {asset.durationMs && (
+                                                <span className="asset-duration">{formatDuration(asset.durationMs)}</span>
                                             )}
                                         </div>
-                                        {editingTags === asset.id ? (
-                                            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+
+                                        <div className="asset-body">
+                                            <div className="asset-title-row">
+                                                <span className="asset-icon-chip" style={{ ["--asset-tone" as string]: meta.tone }}>
+                                                    <AssetTypeIcon type={asset.type} documentFormat={asset.documentFormat} previewKind={asset.previewKind} size={18} />
+                                                </span>
+                                                <h3 className="asset-name" title={asset.name}>{asset.name}</h3>
+                                                {canEdit && (
+                                                    <button className="btn-icon-soft" style={{ padding: 4, flexShrink: 0 }} onClick={() => { setEditingTags(asset.id); setTagInput(asset.tags.join(", ")); }} title="Edit tags">
+                                                        <Tag size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            <div className="asset-meta">
+                                                <span>{meta.label}</span>
+                                                <span className="asset-meta-dot" />
+                                                <span>{asset.type === "URL" ? `${asset.defaultDurationSeconds ?? 15}s default` : formatFileSize(asset.fileSize)}</span>
+                                                <span className="asset-meta-dot" />
+                                                <span>{formatDate(asset.createdAt)}</span>
+                                            </div>
+
+                                            {asset.type === "URL" && asset.url && (
+                                                <p className="asset-url" title={asset.url}>{asset.url}</p>
+                                            )}
+
+                                            {editingTags === asset.id ? (
                                                 <input
                                                     type="text"
                                                     value={tagInput}
@@ -775,31 +846,25 @@ export default function AssetsPage() {
                                                     }}
                                                     placeholder="tag1, tag2, ..."
                                                     autoFocus
-                                                    style={{ flex: 1, padding: "4px 8px", borderRadius: 6, background: "hsla(var(--bg-base), 0.8)", border: "1px solid hsla(var(--border-subtle), 1)", color: "hsl(var(--text-primary))", fontSize: "0.75rem", outline: "none" }}
+                                                    className="asset-tag-input"
                                                 />
+                                            ) : asset.tags.length > 0 ? (
+                                                <div className="asset-tags">
+                                                    {asset.tags.map(tag => (
+                                                        <span key={tag} className="asset-tag">{tag}</span>
+                                                    ))}
+                                                </div>
+                                            ) : null}
+
+                                            <div className="asset-actions">
+                                                <button className="btn-icon-soft" style={{ padding: "6px" }} onClick={() => handleCopyLink(asset.id)} title="Copy Link"><LinkIcon size={16} /></button>
+                                                <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => canEdit && setMoveTarget({ kind: "asset", id: asset.id, name: asset.name })} title="Move to folder"><FolderInput size={16} /></button>
+                                                <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(asset.id)} title="Delete"><Trash2 size={16} /></button>
                                             </div>
-                                        ) : (
-                                            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", minHeight: 22 }}>
-                                                {asset.tags.map(tag => (
-                                                    <span key={tag} style={{ fontSize: "0.65rem", padding: "2px 8px", background: "hsla(var(--accent-primary), 0.1)", color: "hsl(var(--accent-primary))", borderRadius: 6, fontWeight: 600 }}>{tag}</span>
-                                                ))}
-                                            </div>
-                                        )}
-                                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 12 }}>
-                                            <span>{asset.type === "URL" ? `${asset.defaultDurationSeconds ?? 15}s default` : formatFileSize(asset.fileSize)}</span>
-                                            <span>{formatDate(asset.createdAt)}</span>
                                         </div>
-                                        {asset.type === "URL" && asset.url && (
-                                            <p style={{ fontSize: "0.72rem", color: "hsl(var(--text-secondary))", marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={asset.url}>{asset.url}</p>
-                                        )}
-                                        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: "auto", borderTop: "1px solid hsla(var(--border-subtle), 0.5)", paddingTop: 12 }}>
-                                            <button className="btn-icon-soft" style={{ padding: "6px" }} onClick={() => handleCopyLink(asset.id)} title="Copy Link"><LinkIcon size={16} /></button>
-                                            <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => canEdit && setMoveTarget({ kind: "asset", id: asset.id, name: asset.name })} title="Move to folder"><FolderInput size={16} /></button>
-                                            <button className="btn-icon-soft" disabled={!canEdit} style={{ padding: "6px", color: "hsl(var(--status-danger))", opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }} onClick={() => handleDelete(asset.id)} title="Delete"><Trash2 size={16} /></button>
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            ))
+                                    </motion.div>
+                                );
+                            })
                         )}
                     </AnimatePresence>
                 </div>
@@ -809,7 +874,7 @@ export default function AssetsPage() {
             <AnimatePresence>
                 {isNewFolderOpen && (
                     <motion.div key="new-folder" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsl(var(--overlay-base) / 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => !isCreatingFolder && setIsNewFolderOpen(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 440, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -858,7 +923,7 @@ export default function AssetsPage() {
             <AnimatePresence>
                 {isUrlModalOpen && (
                     <motion.div key="url-asset" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsl(var(--overlay-base) / 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => !isCreatingUrl && setIsUrlModalOpen(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 500, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -901,7 +966,7 @@ export default function AssetsPage() {
             <AnimatePresence>
                 {isUploadOpen && (
                     <motion.div key="upload" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsl(var(--overlay-base) / 0.74)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setIsUploadOpen(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 500, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -918,17 +983,17 @@ export default function AssetsPage() {
                                 onClick={() => fileInputRef.current?.click()}
                                 style={{
                                     width: "100%", height: 220, border: "2px dashed", borderRadius: 16, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                                    borderColor: dragActive ? "hsl(var(--accent-primary))" : "hsla(var(--border-strong), 0.6)",
-                                    background: dragActive ? "hsla(var(--accent-primary), 0.1)" : "hsla(var(--bg-base), 0.4)"
+                                    borderColor: dragActive ? "hsl(var(--accent-primary))" : "hsl(var(--border-strong) / 0.6)",
+                                    background: dragActive ? "hsl(var(--accent-primary) / 0.1)" : "hsl(var(--bg-base) / 0.4)"
                                 }}>
                                 <input ref={fileInputRef} type="file" multiple accept={ASSET_UPLOAD_ACCEPT} style={{ display: "none" }} onChange={e => handleFileUpload(e.target.files)} />
-                                <div style={{ width: 64, height: 64, borderRadius: "50%", background: "hsla(var(--bg-surface-elevated), 0.8)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "hsl(var(--accent-primary))" }}>
+                                <div style={{ width: 64, height: 64, borderRadius: "50%", background: "hsl(var(--bg-surface-elevated) / 0.8)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: "hsl(var(--accent-primary))" }}>
                                     <UploadCloud size={32} />
                                 </div>
                                 <p style={{ fontWeight: 600, fontSize: "1.1rem" }}>{dragActive ? "Drop to sync" : "Drop media here"}</p>
                                 <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>or browse local file system</p>
                             </div>
-                            <div style={{ marginTop: 24, padding: "12px 16px", background: "hsla(var(--status-info), 0.1)", borderRadius: 10, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                            <div style={{ marginTop: 24, padding: "12px 16px", background: "hsl(var(--status-info) / 0.1)", borderRadius: 10, display: "flex", gap: 12, alignItems: "flex-start" }}>
                                 <AlertCircle size={18} style={{ color: "hsl(var(--status-info))", flexShrink: 0, marginTop: 2 }} />
                                 <p style={{ fontSize: "0.75rem", color: "hsl(var(--status-info))", lineHeight: 1.4 }}>Max file size: 500MB. Supported: {SUPPORTED_UPLOAD_LABEL}.</p>
                             </div>
@@ -945,7 +1010,7 @@ export default function AssetsPage() {
             <AnimatePresence>
                 {selectedAsset && (
                     <motion.div key="asset-info" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.82)", backdropFilter: "blur(20px)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+                        style={{ position: "fixed", inset: 0, background: "hsl(var(--overlay-base) / 0.82)", backdropFilter: "blur(20px)", zIndex: 110, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
                         onClick={() => setSelectedAsset(null)}>
                         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 640, padding: 32 }} onClick={e => e.stopPropagation()}>
@@ -954,7 +1019,7 @@ export default function AssetsPage() {
                                 <button className="btn-icon-soft" onClick={() => setSelectedAsset(null)}><X size={24} /></button>
                             </div>
 
-                            <div style={{ height: 220, background: "hsla(var(--bg-base), 0.85)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
+                            <div style={{ height: 220, background: "hsl(var(--bg-base) / 0.85)", borderRadius: 12, marginBottom: 24, overflow: "hidden" }}>
                                 <AssetPreview asset={selectedAsset} size="inspector" iconSize={64} />
                             </div>
 
@@ -996,7 +1061,7 @@ export default function AssetsPage() {
                                     <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Tags</p>
                                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                                         {selectedAsset.tags.map(tag => (
-                                            <span key={tag} style={{ fontSize: "0.72rem", padding: "3px 10px", background: "hsla(var(--accent-primary), 0.1)", color: "hsl(var(--accent-primary))", borderRadius: 6, fontWeight: 600 }}>{tag}</span>
+                                            <span key={tag} style={{ fontSize: "0.72rem", padding: "3px 10px", background: "hsl(var(--accent-primary) / 0.1)", color: "hsl(var(--accent-primary))", borderRadius: 6, fontWeight: 600 }}>{tag}</span>
                                         ))}
                                     </div>
                                 </div>
@@ -1014,7 +1079,336 @@ export default function AssetsPage() {
                     </motion.div>
                 )}
             </AnimatePresence>
-            <style jsx>{`.glass-card:hover .card-overlay { opacity: 1 !important; }`}</style>
+            <style jsx global>{`
+                .assets-header {
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: space-between;
+                    gap: 20px;
+                    flex-wrap: wrap;
+                    margin-bottom: 20px;
+                }
+                .assets-header-actions {
+                    display: flex;
+                    gap: 10px;
+                    flex-wrap: wrap;
+                }
+
+                /* ---------- Toolbar: search + type filter pills ---------- */
+                .assets-toolbar {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 16px;
+                    flex-wrap: wrap;
+                    margin-bottom: 22px;
+                    padding: 12px 14px;
+                    border-radius: 14px;
+                    background: hsl(var(--bg-surface) / 0.6);
+                    border: 1px solid hsl(var(--border-subtle) / 0.7);
+                }
+                .assets-search {
+                    position: relative;
+                    flex: 1 1 260px;
+                    min-width: 220px;
+                    max-width: 420px;
+                }
+                .assets-search-icon {
+                    position: absolute;
+                    left: 12px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    color: hsl(var(--text-muted));
+                    pointer-events: none;
+                }
+                .assets-search-input {
+                    width: 100%;
+                    padding: 10px 34px 10px 38px;
+                    border-radius: 10px;
+                    background: hsl(var(--bg-base) / 0.75);
+                    border: 1px solid hsl(var(--border-subtle) / 0.9);
+                    color: hsl(var(--text-primary));
+                    font-size: 0.88rem;
+                    outline: none;
+                    transition: border-color 0.18s ease, box-shadow 0.18s ease;
+                }
+                .assets-search-input::placeholder { color: hsl(var(--text-muted)); }
+                .assets-search-input:focus {
+                    border-color: hsl(var(--accent-primary) / 0.7);
+                    box-shadow: 0 0 0 3px hsl(var(--accent-primary) / 0.15);
+                }
+                .assets-search-clear {
+                    position: absolute;
+                    right: 8px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 22px;
+                    height: 22px;
+                    border: none;
+                    border-radius: 50%;
+                    background: hsl(var(--border-subtle) / 0.6);
+                    color: hsl(var(--text-secondary));
+                    cursor: pointer;
+                    transition: background 0.18s ease, color 0.18s ease;
+                }
+                .assets-search-clear:hover {
+                    background: hsl(var(--accent-primary) / 0.2);
+                    color: hsl(var(--accent-primary));
+                }
+
+                .assets-filters {
+                    display: flex;
+                    gap: 4px;
+                    padding: 4px;
+                    border-radius: 999px;
+                    background: hsl(var(--bg-base) / 0.7);
+                    border: 1px solid hsl(var(--border-subtle) / 0.6);
+                    flex-wrap: wrap;
+                }
+                .assets-filter-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 7px;
+                    padding: 8px 16px;
+                    border: none;
+                    border-radius: 999px;
+                    background: transparent;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.84rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    white-space: nowrap;
+                    transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+                }
+                .assets-filter-pill:hover {
+                    background: hsl(var(--bg-surface-elevated) / 0.9);
+                    color: hsl(var(--text-primary));
+                }
+                .assets-filter-pill.is-active {
+                    background: hsl(var(--accent-primary) / 0.16);
+                    color: hsl(var(--accent-primary));
+                    box-shadow: inset 0 0 0 1px hsl(var(--accent-primary) / 0.35);
+                }
+                .assets-filter-pill:active { transform: scale(0.97); }
+
+                /* ---------- Asset grid ---------- */
+                .assets-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+                    gap: 20px;
+                }
+
+                .asset-card {
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                    border-radius: 16px;
+                    background: hsl(var(--bg-surface) / 0.72);
+                    border: 1px solid hsl(var(--border-subtle) / 0.8);
+                    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+                }
+                .asset-card:hover {
+                    transform: translateY(-3px);
+                    border-color: hsl(var(--accent-primary) / 0.45);
+                    box-shadow: var(--shadow-md);
+                }
+
+                .asset-thumb {
+                    position: relative;
+                    height: 150px;
+                    overflow: hidden;
+                    background:
+                        radial-gradient(circle at 50% 45%, hsl(var(--asset-tone) / 0.14), transparent 68%),
+                        hsl(var(--bg-base) / 0.5);
+                    border-bottom: 1px solid hsl(var(--border-subtle) / 0.6);
+                }
+                .asset-thumb-media { position: absolute; inset: 0; }
+                .asset-type-badge {
+                    position: absolute;
+                    top: 10px;
+                    left: 10px;
+                    z-index: 3;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 5px;
+                    padding: 4px 9px;
+                    border-radius: 999px;
+                    background: hsl(var(--overlay-base) / 0.72);
+                    border: 1px solid hsl(var(--asset-tone) / 0.4);
+                    color: hsl(var(--text-primary));
+                    font-size: 0.66rem;
+                    font-weight: 700;
+                    letter-spacing: 0.03em;
+                    text-transform: uppercase;
+                    backdrop-filter: blur(6px);
+                }
+                .asset-duration {
+                    position: absolute;
+                    bottom: 10px;
+                    right: 10px;
+                    z-index: 3;
+                    padding: 3px 8px;
+                    border-radius: 6px;
+                    background: hsl(var(--overlay-base) / 0.75);
+                    color: hsl(var(--surface-contrast));
+                    font-size: 0.7rem;
+                    font-weight: 600;
+                }
+                .asset-card .card-overlay {
+                    position: absolute;
+                    inset: 0;
+                    z-index: 2;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 12px;
+                    background: hsl(var(--overlay-base) / 0.55);
+                    backdrop-filter: blur(4px);
+                    opacity: 0;
+                    transition: opacity 0.22s ease;
+                }
+                .asset-card:hover .card-overlay,
+                .asset-card:focus-within .card-overlay { opacity: 1; }
+
+                .asset-body {
+                    display: flex;
+                    flex-direction: column;
+                    flex: 1;
+                    gap: 10px;
+                    padding: 16px 18px 14px;
+                }
+                .asset-title-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                .asset-icon-chip {
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 34px;
+                    height: 34px;
+                    flex-shrink: 0;
+                    border-radius: 10px;
+                    background: hsl(var(--asset-tone) / 0.14);
+                    border: 1px solid hsl(var(--asset-tone) / 0.28);
+                }
+                .asset-name {
+                    flex: 1;
+                    min-width: 0;
+                    font-size: 0.92rem;
+                    font-weight: 600;
+                    line-height: 1.35;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .asset-meta {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    font-size: 0.74rem;
+                    color: hsl(var(--text-muted));
+                }
+                .asset-meta-dot {
+                    width: 3px;
+                    height: 3px;
+                    border-radius: 50%;
+                    background: hsl(var(--text-muted) / 0.6);
+                }
+                .asset-url {
+                    font-size: 0.72rem;
+                    color: hsl(var(--text-secondary));
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .asset-tags {
+                    display: flex;
+                    gap: 6px;
+                    flex-wrap: wrap;
+                }
+                .asset-tag {
+                    padding: 2px 8px;
+                    border-radius: 6px;
+                    background: hsl(var(--accent-primary) / 0.12);
+                    color: hsl(var(--accent-primary));
+                    font-size: 0.65rem;
+                    font-weight: 600;
+                }
+                .asset-tag-input {
+                    width: 100%;
+                    padding: 5px 9px;
+                    border-radius: 7px;
+                    background: hsl(var(--bg-base) / 0.8);
+                    border: 1px solid hsl(var(--border-subtle));
+                    color: hsl(var(--text-primary));
+                    font-size: 0.75rem;
+                    outline: none;
+                }
+                .asset-actions {
+                    display: flex;
+                    justify-content: flex-end;
+                    gap: 8px;
+                    margin-top: auto;
+                    padding-top: 12px;
+                    border-top: 1px solid hsl(var(--border-subtle) / 0.5);
+                }
+
+                /* ---------- Empty state ---------- */
+                .assets-empty {
+                    grid-column: 1 / -1;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 8px;
+                    padding: 72px 32px;
+                    text-align: center;
+                    border-radius: 16px;
+                    border: 1px dashed hsl(var(--border-subtle));
+                    background: hsl(var(--bg-surface) / 0.35);
+                }
+                .assets-empty-icon {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 68px;
+                    height: 68px;
+                    margin-bottom: 6px;
+                    border-radius: 50%;
+                    background: hsl(var(--bg-surface-elevated) / 0.8);
+                    border: 1px solid hsl(var(--border-subtle));
+                    color: hsl(var(--text-muted));
+                }
+                .assets-empty-title {
+                    font-size: 1.05rem;
+                    font-weight: 600;
+                    color: hsl(var(--text-primary));
+                }
+                .assets-empty-hint {
+                    font-size: 0.85rem;
+                    color: hsl(var(--text-muted));
+                    max-width: 400px;
+                }
+
+                @media (max-width: 900px) {
+                    .assets-toolbar { align-items: stretch; }
+                    .assets-search { max-width: none; }
+                    .assets-filters { width: 100%; justify-content: flex-start; }
+                    .assets-filter-pill { flex: 1 1 auto; justify-content: center; }
+                }
+                @media (max-width: 560px) {
+                    .assets-grid { grid-template-columns: 1fr; }
+                    .assets-header-actions { width: 100%; }
+                    .assets-header-actions > button { flex: 1 1 auto; justify-content: center; }
+                    .assets-filter-pill { padding: 8px 12px; font-size: 0.8rem; }
+                }
+            `}</style>
         </motion.div>
     );
 }

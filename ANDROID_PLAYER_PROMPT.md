@@ -627,12 +627,21 @@ Submit queued proof-of-play analytics. Call every ~5 minutes, or when the offlin
 
 **Delayed / offline logs:** The server accepts logs with historical `startTime` values (e.g. generated days ago while offline). There is no maximum age — only timestamps more than 24 hours in the future are rejected. Reports include offline-generated and re-synced PoP logs using the original playback timestamps.
 
+**The device clock must be correct — this is a hard requirement.** Reports group playback by the calendar day of `startTime` in the operator's timezone. A device whose clock runs ahead writes logs stamped in the future, and those rows cannot appear under **Today** or **Last 7 Days** (a range can never end later than the end of today). Therefore:
+
+- Send `startTime` as a **UTC instant** in ISO 8601 with a real offset — `2026-04-22T10:30:00.000Z` or `2026-04-22T16:00:00+05:30`.
+- **Never format local wall-clock time and append a literal `Z`.** `SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'")` without `timeZone = TimeZone.getTimeZone("UTC")` is the classic form of this bug and shifts every log by the device's UTC offset.
+  Prefer `Instant.now().toString()` (or `java.time` with `ZoneOffset.UTC`).
+- Enable **automatic date & time** (NTP) on the device. If `android.provider.Settings.Global.AUTO_TIME` is off, surface it during pairing.
+- The response field `clockSkewed` counts entries in the batch whose `startTime` was more than 5 minutes ahead of server time. **A non-zero value means the device clock is wrong** — log it and show it in the player's diagnostics screen. The rows are still stored (playback is never dropped), but they will be reported under the wrong day until the clock is fixed.
+
 **Response (200):**
 ```json
 {
   "received": 3,
   "skipped": 0,
   "duplicates": 0,
+  "clockSkewed": 0,
   "accepted": true,
   "deviceId": "clx...",
   "deviceName": "Lobby Screen",
@@ -642,6 +651,7 @@ Submit queued proof-of-play analytics. Call every ~5 minutes, or when the offlin
 - `received`: rows newly stored
 - `duplicates`: entries the server already had (safe to drop from the queue)
 - `skipped`: entries not stored (`duplicates` + malformed entries)
+- `clockSkewed`: entries stamped >5 min ahead of server time — fix the device clock
 
 ---
 
@@ -923,7 +933,11 @@ data class PopLogEntry(
     val timestamp: String? = null,   // legacy alias for startTime
 )
 data class PopLogsRequest(val logs: List<PopLogEntry>)
-data class PopLogsResponse(val received: Int)
+data class PopLogsResponse(
+    val received: Int,
+    val duplicates: Int = 0,
+    val clockSkewed: Int = 0, // >0 means the device clock is ahead of the server
+)
 
 data class CacheReportAsset(
     val assetId: String,

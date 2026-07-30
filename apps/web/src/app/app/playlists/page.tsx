@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
     Play, Plus, Search, Trash2, Clock, X,
-    List, Monitor, Music, LayoutGrid, Image as ImageIcon, Send, Settings2
+    List, Monitor, LayoutGrid, Image as ImageIcon, Send, Settings2
 } from "lucide-react";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
@@ -255,7 +255,7 @@ export default function PlaylistsPage() {
                                 <div className="flex-between" style={{ marginBottom: 12 }}>
                                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                                         <div style={{ width: 40, height: 40, borderRadius: 10, background: `${p.color}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                            <Music size={20} style={{ color: p.color }} />
+                                            <List size={20} style={{ color: p.color }} />
                                         </div>
                                         <div>
                                             <h3 style={{ fontSize: "1.05rem", fontWeight: 700 }}>{p.name}</h3>

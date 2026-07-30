@@ -77,6 +77,12 @@ type ReportResponse = {
     };
     lastLogAt: string | null;
     lastLogDevice: string | null;
+    rangeDiagnostics?: {
+        logsAheadOfRange: number;
+        logsBehindRange: number;
+        latestMatchingLogAt: string | null;
+        latestMatchingLogDevice: string | null;
+    };
 };
 
 const RANGE_LABEL: Record<Range, string> = {
@@ -220,6 +226,9 @@ export default function ReportsPage() {
                 setReportData(response);
             } catch (error) {
                 setLoadError(describeError(error));
+                // Never leave the previous range's rows on screen under a new
+                // range label — an audit table must match its own header.
+                if (!options.silent) setReportData(null);
             } finally {
                 if (!options.silent) setIsLoading(false);
             }
@@ -230,6 +239,9 @@ export default function ReportsPage() {
     useEffect(() => {
         if (prevFilterKey.current !== filterKey) {
             prevFilterKey.current = filterKey;
+            // Drop the previous range's response so the table can never render
+            // rows that belong to a different filter than the header shows.
+            setReportData(null);
             if (page !== 1) {
                 setPage(1);
                 return;
@@ -381,6 +393,10 @@ export default function ReportsPage() {
     const hasData = (meta?.total ?? 0) > 0;
     const lastLogAt = reportData?.lastLogAt ? new Date(reportData.lastLogAt) : null;
     const showStaleLogHint = !hasData && !!lastLogAt && customRangeValid;
+    // Logs timestamped after the window exist but no range can ever reach them,
+    // which is what makes "Last log = today" coexist with an empty table.
+    const logsAheadOfRange = reportData?.rangeDiagnostics?.logsAheadOfRange ?? 0;
+    const showClockSkewNotice = logsAheadOfRange > 0 && customRangeValid;
     const breakdownMax = Math.max(
         ...(groupBy === "device"
             ? (reportData?.deviceBreakdown ?? []).map((entry) => entry.impressions)
@@ -483,6 +499,25 @@ export default function ReportsPage() {
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{loadError}</p>
                     </div>
                     <button className="btn-outline" onClick={() => void loadReport(page)}>Retry</button>
+                </div>
+            )}
+
+            {showClockSkewNotice && (
+                <div className="reports-notice reports-notice--warning">
+                    <Clock size={18} style={{ color: "hsl(var(--status-warning))", marginTop: 2 }} />
+                    <div style={{ flex: 1 }}>
+                        <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                            {logsAheadOfRange.toLocaleString()} log{logsAheadOfRange === 1 ? " is" : "s are"} timestamped after this range
+                        </p>
+                        <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 4 }}>
+                            Their playback time is later than the end of the selected window
+                            {reportData?.rangeDiagnostics?.latestMatchingLogAt
+                                ? ` (newest: ${formatReportDateTime(reportData.rangeDiagnostics.latestMatchingLogAt)})`
+                                : ""}
+                            , usually because a device clock is ahead. Correct the device date/time so new playback
+                            is recorded under the right day.
+                        </p>
+                    </div>
                 </div>
             )}
 

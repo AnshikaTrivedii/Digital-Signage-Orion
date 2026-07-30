@@ -1699,7 +1699,10 @@ export class ClientDataService {
     const range = query.range ?? 'today';
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(500, Math.max(1, query.limit ?? 100));
-    const { where, rangeStart, rangeEnd } = await this.buildPopLogWhere(organizationId, query);
+    const { where, whereIgnoringDate, rangeStart, rangeEnd } = await this.buildPopLogWhere(
+      organizationId,
+      query,
+    );
 
     const verifiedWhere: Prisma.ProofOfPlayLogWhereInput = {
       ...where,
@@ -1741,6 +1744,28 @@ export class ClientDataService {
       }),
       this.prisma.proofOfPlayLog.findFirst({
         where: { organizationId },
+        orderBy: POP_LOG_SCAN_ORDER,
+        select: { startTime: true, device: true },
+      }),
+    ]);
+
+    // "Last log" is org-wide, so it can legitimately point at a row the selected
+    // range cannot contain (different filters, or a playback timestamp ahead of
+    // the window because a device clock is skewed). Measure that explicitly so
+    // the UI can explain the gap instead of looking broken.
+    const [logsAheadOfRange, logsBehindRange, latestMatchingLog] = await Promise.all([
+      rangeEnd
+        ? this.prisma.proofOfPlayLog.count({
+            where: { AND: [whereIgnoringDate, { startTime: { gt: rangeEnd } }] },
+          })
+        : Promise.resolve(0),
+      rangeStart
+        ? this.prisma.proofOfPlayLog.count({
+            where: { AND: [whereIgnoringDate, { startTime: { lt: rangeStart } }] },
+          })
+        : Promise.resolve(0),
+      this.prisma.proofOfPlayLog.findFirst({
+        where: whereIgnoringDate,
         orderBy: POP_LOG_SCAN_ORDER,
         select: { startTime: true, device: true },
       }),
@@ -1978,6 +2003,13 @@ export class ClientDataService {
       },
       lastLogAt: latestLog?.startTime ?? null,
       lastLogDevice: latestLog?.device ?? null,
+      // Reconciles "Last log says today" against an empty table.
+      rangeDiagnostics: {
+        logsAheadOfRange,
+        logsBehindRange,
+        latestMatchingLogAt: latestMatchingLog?.startTime ?? null,
+        latestMatchingLogDevice: latestMatchingLog?.device ?? null,
+      },
     };
   }
 
@@ -2109,13 +2141,17 @@ export class ClientDataService {
     );
     const andClauses: Prisma.ProofOfPlayLogWhereInput[] = [{ organizationId }];
 
+    // Kept by reference so the date clause can be subtracted below, letting
+    // callers ask "what matches these filters *outside* the window?".
+    let dateClause: Prisma.ProofOfPlayLogWhereInput | null = null;
     if (rangeStart || rangeEnd) {
-      andClauses.push({
+      dateClause = {
         startTime: {
           ...(rangeStart ? { gte: rangeStart } : {}),
           ...(rangeEnd ? { lte: rangeEnd } : {}),
         },
-      });
+      };
+      andClauses.push(dateClause);
     }
 
     if (query.deviceId) {
@@ -2229,7 +2265,14 @@ export class ClientDataService {
       });
     }
 
-    return { where: { AND: andClauses }, rangeStart, rangeEnd };
+    return {
+      where: { AND: andClauses },
+      whereIgnoringDate: {
+        AND: andClauses.filter((clause) => clause !== dateClause),
+      } satisfies Prisma.ProofOfPlayLogWhereInput,
+      rangeStart,
+      rangeEnd,
+    };
   }
 
   /**

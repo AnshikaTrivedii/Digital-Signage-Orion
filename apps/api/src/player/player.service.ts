@@ -1325,6 +1325,13 @@ export class PlayerService {
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
 
+    // A playback timestamp ahead of "now" means the device clock is wrong. Such a
+    // row is still stored (never drop real playback), but no date filter can ever
+    // reach past the end of today, so it must be reported back loudly.
+    const clockSkewToleranceMs = 5 * 60 * 1000;
+    let clockSkewed = 0;
+    let maxSkewMs = 0;
+
     const rows = logs.flatMap((log) => {
       if (!log.assetName?.trim() && !log.content?.trim()) {
         this.logger.warn(`Skipping PoP log from ${device.name}: missing assetName/content`);
@@ -1340,9 +1347,14 @@ export class PlayerService {
       }
 
       const maxFutureMs = 24 * 60 * 60 * 1000;
-      if (startTime.getTime() > Date.now() + maxFutureMs) {
+      const skewMs = startTime.getTime() - Date.now();
+      if (skewMs > maxFutureMs) {
         this.logger.warn(`Skipping PoP log from ${device.name}: start time too far in the future for ${assetName}`);
         return [];
+      }
+      if (skewMs > clockSkewToleranceMs) {
+        clockSkewed += 1;
+        maxSkewMs = Math.max(maxSkewMs, skewMs);
       }
 
       const playbackContext = contextIndex.resolve(assetName, device.currentPlaylistId);
@@ -1415,10 +1427,19 @@ export class PlayerService {
         (duplicates ? ` (${duplicates} already recorded)` : ''),
     );
 
+    if (clockSkewed > 0) {
+      this.logger.warn(
+        `Device clock ahead of server for deviceId=${device.id} (${device.name}): ` +
+          `${clockSkewed} log(s) up to ${Math.round(maxSkewMs / 60000)} min in the future. ` +
+          `These will not appear under Today/Last 7 days until the device clock is corrected.`,
+      );
+    }
+
     return this.buildPopLogSubmitResponse(device, {
       received: stored,
       skipped: batchSize - stored,
       duplicates,
+      clockSkewed,
       accepted: true,
     });
   }
@@ -1429,6 +1450,7 @@ export class PlayerService {
       received: number;
       skipped: number;
       duplicates?: number;
+      clockSkewed?: number;
       accepted: boolean;
       reason?: string;
     },
@@ -1437,6 +1459,7 @@ export class PlayerService {
       received: result.received,
       skipped: result.skipped,
       duplicates: result.duplicates ?? 0,
+      clockSkewed: result.clockSkewed ?? 0,
       accepted: result.accepted,
       deviceId: device.id,
       deviceName: device.name,
