@@ -19,8 +19,8 @@ import {
 import { randomBytes } from 'crypto';
 import {
   enrichPopLogFields,
-  expandPopLogPlaybackEvents,
   PopLogContextIndex,
+  popLogNaturalKey,
 } from '../common/pop-log-enrichment';
 import {
   buildManifestSequenceSignature,
@@ -174,8 +174,8 @@ export class PlayerService {
         });
       }
 
-      // Already paired — return token info
-      if (existing.isPaired && existing.deviceToken) {
+      // Still registered with a live token — player already has credentials.
+      if (existing.isPaired && existing.deviceToken && existing.organizationId) {
         return {
           hardwareId: trimmedId,
           isPaired: true,
@@ -184,18 +184,8 @@ export class PlayerService {
         };
       }
 
-      // Already has a pending pairing code — return it
-      if (existing.pairingCode) {
-        const pairingSecret = await this.ensurePairingSecret(existing.id, existing.pairingSecret);
-        return {
-          hardwareId: trimmedId,
-          isPaired: false,
-          pairingCode: existing.pairingCode,
-          pairingSecret,
-        };
-      }
-
-      // Regenerate code (e.g. previous code consumed without completing pair)
+      // Unregistered / unpaired / deleted-session: always mint a fresh pairing
+      // code so the CMS "Add Device" flow can claim this hardware again.
       const pairingCode = await this.getUniquePairingCode();
       const pairingSecret = this.generatePairingSecret();
       await this.prisma.device.update({
@@ -205,9 +195,16 @@ export class PlayerService {
           pairingSecret,
           isPaired: false,
           deviceToken: null,
+          organizationId: null,
+          currentPlaylistId: null,
+          currentLayoutId: null,
           ...registrationMetadata,
         },
       });
+
+      this.logger.log(
+        `Re-init pairing for hardwareId=${trimmedId} deviceId=${existing.id} code=${pairingCode}`,
+      );
 
       return {
         hardwareId: trimmedId,
@@ -330,11 +327,15 @@ export class PlayerService {
 
   /**
    * Resolve a device from its device token (used by heartbeat, sync, pop-logs).
-   * Draft/unpaired devices are rejected — only paired devices with an organization may call player APIs.
+   * Soft-unregistered devices keep their token so the player receives an explicit
+   * UNREGISTERED status. Missing tokens mean the device row was hard-deleted.
    */
   private async resolveDeviceByToken(authHeader: string | undefined): Promise<PairedDevice> {
     if (!authHeader?.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Missing device token');
+      throw new UnauthorizedException({
+        message: 'Missing device token',
+        deviceStatus: 'DELETED',
+      });
     }
 
     const token = authHeader.replace('Bearer ', '').trim();
@@ -342,8 +343,18 @@ export class PlayerService {
       where: { deviceToken: token },
     });
 
-    if (!device || !device.isPaired || !device.organizationId) {
-      throw new UnauthorizedException('Invalid or unpaired device token');
+    if (!device) {
+      throw new UnauthorizedException({
+        message: 'Device has been deleted',
+        deviceStatus: 'DELETED',
+      });
+    }
+
+    if (!device.isPaired || !device.organizationId) {
+      throw new UnauthorizedException({
+        message: 'Device has been unregistered',
+        deviceStatus: 'UNREGISTERED',
+      });
     }
 
     return { ...device, organizationId: device.organizationId };
@@ -419,6 +430,7 @@ export class PlayerService {
 
     return {
       status: 'ok',
+      deviceStatus: 'REGISTERED',
       contentRevision: contentRevision.revision,
       syncRequired,
       configVersion: playerConfig.configVersion,
@@ -537,6 +549,7 @@ export class PlayerService {
     const playerConfig = this.deviceManagement.getPlayerConfig(device);
 
     return {
+      deviceStatus: 'REGISTERED',
       revision: contentRevision.revision,
       updatedAt: contentRevision.updatedAt,
       syncRequired,
@@ -585,6 +598,7 @@ export class PlayerService {
 
     return {
       ...payload,
+      deviceStatus: 'REGISTERED',
       syncRequired,
       pendingDownloadCount,
       contentRevision: contentRevision.revision,
@@ -1364,12 +1378,7 @@ export class PlayerService {
         durationSeconds: enriched.durationSeconds,
       };
 
-      return expandPopLogPlaybackEvents(baseRow, playbackContext?.durationSeconds ?? null).map(
-        (entry) => ({
-          ...entry,
-          timestamp: entry.startTime,
-        }),
-      );
+      return [baseRow];
     });
 
     if (!rows.length) {
@@ -1381,35 +1390,35 @@ export class PlayerService {
       });
     }
 
-    // Deduplicate identical events within this batch (device retries / double flush).
+    // Collapse repeats of the same playback event inside this batch, then let the
+    // `ProofOfPlayLog_natural_key` unique index reject anything already stored, so
+    // a device that re-flushes after a timeout cannot duplicate its history.
     const batchSeen = new Set<string>();
-    const dedupedRows = rows.filter((row) => {
-      const key = [
-        row.deviceId ?? '',
-        row.assetName,
-        row.startTime.toISOString(),
-        row.endTime?.toISOString() ?? '',
-        String(row.durationSeconds ?? ''),
-        row.playlistName ?? '',
-        row.status,
-      ].join('|');
+    const uniqueRows = rows.filter((row) => {
+      const key = popLogNaturalKey(row);
       if (batchSeen.has(key)) return false;
       batchSeen.add(key);
       return true;
     });
 
-    await this.prisma.proofOfPlayLog.createMany({ data: dedupedRows });
+    const { count: stored } = await this.prisma.proofOfPlayLog.createMany({
+      data: uniqueRows,
+      skipDuplicates: true,
+    });
+
+    const invalid = batchSize - rows.length;
+    const duplicates = rows.length - stored;
 
     this.logger.log(
-      `Received ${dedupedRows.length} PoP logs from deviceId=${device.id} (${device.name})` +
-        (dedupedRows.length < batchSize
-          ? ` (${batchSize - dedupedRows.length} skipped/deduped)`
-          : ''),
+      `Stored ${stored} PoP logs from deviceId=${device.id} (${device.name})` +
+        (invalid ? ` (${invalid} invalid)` : '') +
+        (duplicates ? ` (${duplicates} already recorded)` : ''),
     );
 
     return this.buildPopLogSubmitResponse(device, {
-      received: dedupedRows.length,
-      skipped: batchSize - dedupedRows.length,
+      received: stored,
+      skipped: batchSize - stored,
+      duplicates,
       accepted: true,
     });
   }
@@ -1419,6 +1428,7 @@ export class PlayerService {
     result: {
       received: number;
       skipped: number;
+      duplicates?: number;
       accepted: boolean;
       reason?: string;
     },
@@ -1426,6 +1436,7 @@ export class PlayerService {
     return {
       received: result.received,
       skipped: result.skipped,
+      duplicates: result.duplicates ?? 0,
       accepted: result.accepted,
       deviceId: device.id,
       deviceName: device.name,

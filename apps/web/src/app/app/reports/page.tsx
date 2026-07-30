@@ -74,7 +74,6 @@ type ReportResponse = {
         limit: number;
         totalPages: number;
         distinctDevicesInRange?: number;
-        aggregatesTruncated?: boolean;
     };
     lastLogAt: string | null;
     lastLogDevice: string | null;
@@ -89,6 +88,8 @@ const RANGE_LABEL: Record<Range, string> = {
 };
 
 const RANGE_OPTIONS: Range[] = ["today", "yesterday", "7d", "15d", "custom"];
+
+const AUTO_REFRESH_MS = 30_000;
 
 const statusFromLog = (status: string) => status.toLowerCase();
 
@@ -210,7 +211,11 @@ export default function ReportsPage() {
             try {
                 const response = await apiRequest<ReportResponse>(
                     `/api/client-data/reports?${buildQuery(pageNumber).toString()}`,
-                    { headers: { "x-organization-id": activeOrganizationId } },
+                    {
+                        headers: { "x-organization-id": activeOrganizationId },
+                        // Audit surface: never read a report out of any HTTP cache.
+                        cache: "no-store",
+                    },
                 );
                 setReportData(response);
             } catch (error) {
@@ -238,6 +243,17 @@ export default function ReportsPage() {
         }
         void loadReport(page);
     }, [filterKey, page, loadReport, customRangeValid]);
+
+    // Logs that arrive from a device while the page is open show up on their own,
+    // without a manual refresh. Silent, so it never flashes the loading skeleton.
+    useEffect(() => {
+        if (!customRangeValid) return;
+        const timer = window.setInterval(() => {
+            if (document.visibilityState !== "visible") return;
+            void loadReport(page, { silent: true });
+        }, AUTO_REFRESH_MS);
+        return () => window.clearInterval(timer);
+    }, [loadReport, page, customRangeValid]);
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
@@ -291,6 +307,7 @@ export default function ReportsPage() {
                         ...(token ? { Authorization: `Bearer ${token}` } : {}),
                         "x-organization-id": organizationId,
                     },
+                    cache: "no-store",
                 },
             );
             if (!response.ok) {

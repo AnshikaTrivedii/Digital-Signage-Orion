@@ -21,43 +21,17 @@ export function normalizeAssetName(name: string): string {
 }
 
 /**
- * Drop accidental identical PoP rows (device retries / double flush).
- * Keeps the first occurrence; legitimate replays at different times remain.
+ * Natural key of a playback event: a device plays one asset at a time, so the
+ * device, the asset and the playback start instant identify it uniquely. Must
+ * stay in sync with the `ProofOfPlayLog_natural_key` unique index.
  */
-export function dedupeIdenticalPopLogs<
-  T extends {
-    deviceId?: string | null;
-    device: string;
-    assetName?: string | null;
-    content?: string | null;
-    playlistName?: string | null;
-    campaignName?: string | null;
-    startTime: Date;
-    endTime?: Date | null;
-    durationSeconds?: number | null;
-    status: string;
-  },
->(logs: T[]): T[] {
-  const seen = new Set<string>();
-  return logs.filter((log) => {
-    const key = [
-      log.deviceId ?? '',
-      log.device,
-      log.assetName || log.content || '',
-      log.playlistName ?? '',
-      log.campaignName ?? '',
-      log.startTime.toISOString(),
-      log.endTime?.toISOString() ?? '',
-      String(log.durationSeconds ?? ''),
-      log.status,
-    ].join('|');
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+export function popLogNaturalKey(log: {
+  deviceId?: string | null;
+  assetName: string;
+  startTime: Date;
+}): string {
+  return [log.deviceId ?? '', log.assetName, log.startTime.toISOString()].join('|');
 }
-
-const MULTIPLE_TOLERANCE = 0.15;
 
 function resolveSinglePlaybackDuration(
   log: {
@@ -87,48 +61,6 @@ function resolveSinglePlaybackDuration(
   }
 
   return { durationSeconds, endTime };
-}
-
-/**
- * When a single stored log covers multiple loop iterations (e.g. 60s for six
- * 10s slots), expand it into one event per configured slot duration.
- *
- * IMPORTANT: Call this only at **ingest** (player PoP submit). Reports and Excel
- * export must not re-expand — that duplicates rows already stored in the DB.
- */
-export function expandPopLogPlaybackEvents<
-  T extends {
-    startTime: Date;
-    endTime?: Date | null;
-    durationSeconds?: number | null;
-  },
->(log: T, slotDurationSeconds: number | null): T[] {
-  const { durationSeconds, endTime } = resolveSinglePlaybackDuration(log, slotDurationSeconds);
-  const normalized = { ...log, durationSeconds, endTime };
-
-  if (!durationSeconds || !slotDurationSeconds || slotDurationSeconds < 1) {
-    return [normalized];
-  }
-
-  const ratio = durationSeconds / slotDurationSeconds;
-  const estimatedPlays = Math.round(ratio);
-  const isCleanMultiple =
-    estimatedPlays > 1 && Math.abs(ratio - estimatedPlays) <= MULTIPLE_TOLERANCE;
-
-  if (!isCleanMultiple) {
-    return [normalized];
-  }
-
-  return Array.from({ length: estimatedPlays }, (_, index) => {
-    const startTime = new Date(log.startTime.getTime() + index * slotDurationSeconds * 1000);
-    const eventEndTime = new Date(startTime.getTime() + slotDurationSeconds * 1000);
-    return {
-      ...log,
-      startTime,
-      endTime: eventEndTime,
-      durationSeconds: slotDurationSeconds,
-    };
-  });
 }
 
 export function enrichPopLogFields(

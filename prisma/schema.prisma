@@ -215,44 +215,43 @@ enum AssetStatus {
 }
 
 model User {
-  id               String                   @id @default(cuid())
-  email            String                   @unique
-  fullName         String
-  passwordHash     String
-  platformRole     PlatformRole?
-  status           UserStatus               @default(ACTIVE)
-  memberships      OrganizationMembership[]
-  sentInvitations  Invitation[]             @relation("InvitationSender")
-  uploadedAssets   Asset[]                  @relation("AssetUploader")
-  auditLogs        AuditLog[]               @relation("AuditActor")
-  deviceCacheCommands DeviceCacheCommand[]  @relation("DeviceCacheCommandRequester")
-  createdAt        DateTime                 @default(now())
-  updatedAt        DateTime                 @updatedAt
+  id                  String                   @id @default(cuid())
+  email               String                   @unique
+  fullName            String
+  passwordHash        String
+  platformRole        PlatformRole?
+  status              UserStatus               @default(ACTIVE)
+  memberships         OrganizationMembership[]
+  sentInvitations     Invitation[]             @relation("InvitationSender")
+  uploadedAssets      Asset[]                  @relation("AssetUploader")
+  auditLogs           AuditLog[]               @relation("AuditActor")
+  deviceCacheCommands DeviceCacheCommand[]     @relation("DeviceCacheCommandRequester")
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
 }
 
 model Organization {
-  id                 String                   @id @default(cuid())
-  name               String
-  slug               String                   @unique
-  status             OrganizationStatus       @default(DRAFT)
-  primaryContactName String?
+  id                  String                   @id @default(cuid())
+  name                String
+  slug                String                   @unique
+  status              OrganizationStatus       @default(DRAFT)
+  primaryContactName  String?
   primaryContactEmail String?
-  salesNotes         String?
-  memberships        OrganizationMembership[]
-  invitations        Invitation[]
-  assets             Asset[]
-  assetFolders       AssetFolder[]
-  playlists          Playlist[]
-  layouts            Layout[]
-  scheduleEvents     ScheduleEvent[]
-  devices            Device[]
-  tickers            Ticker[]
-  proofOfPlayLogs    ProofOfPlayLog[]
-  auditLogs          AuditLog[]
-  createdAt          DateTime                 @default(now())
-  updatedAt          DateTime                 @updatedAt
+  salesNotes          String?
+  memberships         OrganizationMembership[]
+  invitations         Invitation[]
+  assets              Asset[]
+  assetFolders        AssetFolder[]
+  playlists           Playlist[]
+  layouts             Layout[]
+  scheduleEvents      ScheduleEvent[]
+  devices             Device[]
+  tickers             Ticker[]
+  proofOfPlayLogs     ProofOfPlayLog[]
+  auditLogs           AuditLog[]
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
 }
-
 
 model Playlist {
   id             String         @id @default(cuid())
@@ -266,7 +265,7 @@ model Playlist {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   items          PlaylistItem[]
   playlistAssets PlaylistAsset[]
   layoutZones    LayoutZone[]
@@ -285,7 +284,7 @@ model PlaylistItem {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
 
   @@index([playlistId, position])
 }
@@ -299,8 +298,8 @@ model PlaylistAsset {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  playlist        Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
-  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  asset    Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
   // Same asset may appear multiple times in one playlist; each row is a distinct occurrence.
   @@index([playlistId, position])
@@ -319,9 +318,9 @@ model Layout {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  zones          LayoutZone[]
-  devices        Device[]
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  zones        LayoutZone[]
+  devices      Device[]
 
   @@index([organizationId, updatedAt])
 }
@@ -342,9 +341,9 @@ model LayoutZone {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  layout     Layout    @relation(fields: [layoutId], references: [id], onDelete: Cascade)
-  playlist   Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
-  asset      Asset?    @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  layout   Layout    @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  playlist Playlist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  asset    Asset?    @relation(fields: [assetId], references: [id], onDelete: SetNull)
 
   @@index([layoutId, zIndex])
 }
@@ -365,117 +364,117 @@ model ScheduleEvent {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, createdAt])
 }
 
 model Device {
-  id              String           @id @default(cuid())
-  organizationId  String?
-  name            String
-  status         DeviceStatus @default(OFFLINE)
-  location       String       @default("Pending")
-  ip             String       @default("Pending")
-  resolution     String       @default("1920x1080")
-  uptime         String       @default("0s")
-  cpu            Int          @default(0)
-  ram            Int          @default(0)
-  temp           Int          @default(0)
-  lastSync       String       @default("Awaiting first sync")
-  os             String       @default("Unknown")
-  currentContent String?
-  currentPlaylistId String?
-  currentLayoutId   String?
+  id                       String       @id @default(cuid())
+  organizationId           String?
+  name                     String
+  status                   DeviceStatus @default(OFFLINE)
+  location                 String       @default("Pending")
+  ip                       String       @default("Pending")
+  resolution               String       @default("1920x1080")
+  uptime                   String       @default("0s")
+  cpu                      Int          @default(0)
+  ram                      Int          @default(0)
+  temp                     Int          @default(0)
+  lastSync                 String       @default("Awaiting first sync")
+  os                       String       @default("Unknown")
+  currentContent           String?
+  currentPlaylistId        String?
+  currentLayoutId          String?
   lastAckedPlaylistVersion Int?
   lastAckedLayoutVersion   Int?
 
   // Initial onboarding sync (first playlist download after pairing)
-  pendingInitialSync       Boolean   @default(false)
-  initialSyncRequestedAt   DateTime?
+  pendingInitialSync     Boolean   @default(false)
+  initialSyncRequestedAt DateTime?
 
-  cachePlaylistName        String?
-  cachePlaylistVersion     Int?
-  cacheLayoutName          String?
-  cacheLayoutVersion       Int?
-  cacheTotalBytes          Int          @default(0)
-  cacheUsedBytes           Int          @default(0)
-  cacheStorageTotalBytes   Int          @default(0)
-  cachedAssetCount         Int          @default(0)
-  expectedAssetCount       Int          @default(0)
-  pendingDownloadCount     Int          @default(0)
-  cacheLastReportedAt      DateTime?
-  lastSuccessfulSyncAt     DateTime?
-  lastFailedSyncAt         DateTime?
-  lastSyncError            String?
-  syncReportStatus         DeviceSyncReportStatus?
+  cachePlaylistName      String?
+  cachePlaylistVersion   Int?
+  cacheLayoutName        String?
+  cacheLayoutVersion     Int?
+  cacheTotalBytes        Int                     @default(0)
+  cacheUsedBytes         Int                     @default(0)
+  cacheStorageTotalBytes Int                     @default(0)
+  cachedAssetCount       Int                     @default(0)
+  expectedAssetCount     Int                     @default(0)
+  pendingDownloadCount   Int                     @default(0)
+  cacheLastReportedAt    DateTime?
+  lastSuccessfulSyncAt   DateTime?
+  lastFailedSyncAt       DateTime?
+  lastSyncError          String?
+  syncReportStatus       DeviceSyncReportStatus?
 
   // Pairing fields
-  pairingCode    String?      @unique
-  pairingSecret  String?
-  deviceToken    String?      @unique
-  hardwareId     String?      @unique
-  isPaired       Boolean      @default(false)
+  pairingCode   String? @unique
+  pairingSecret String?
+  deviceToken   String? @unique
+  hardwareId    String? @unique
+  isPaired      Boolean @default(false)
 
   // Enterprise device identity
-  playerVersion       String    @default("")
-  androidVersion      String    @default("")
-  lastSeenAt          DateTime?
-  macAddress          String    @default("")
-  deviceModel         String    @default("")
-  manufacturer        String    @default("")
-  orientation         String    @default("LANDSCAPE")
-  timezone            String    @default("UTC")
+  playerVersion  String    @default("")
+  androidVersion String    @default("")
+  lastSeenAt     DateTime?
+  macAddress     String    @default("")
+  deviceModel    String    @default("")
+  manufacturer   String    @default("")
+  orientation    String    @default("LANDSCAPE")
+  timezone       String    @default("UTC")
 
   // Health telemetry
-  storageTotalBytes     BigInt  @default(0)
-  storageFreeBytes      BigInt  @default(0)
-  networkStatus         String  @default("UNKNOWN")
-  wifiSignalStrength    Int     @default(0)
+  storageTotalBytes     BigInt    @default(0)
+  storageFreeBytes      BigInt    @default(0)
+  networkStatus         String    @default("UNKNOWN")
+  wifiSignalStrength    Int       @default(0)
   currentAsset          String?
   currentPlaylistName   String?
-  playbackStatus        String  @default("UNKNOWN")
-  playbackUptimeSeconds Int     @default(0)
+  playbackStatus        String    @default("UNKNOWN")
+  playbackUptimeSeconds Int       @default(0)
   lastDownloadAt        DateTime?
 
   // Permission status (reported by player)
-  permInternet              Boolean @default(false)
-  permStorage               Boolean @default(false)
-  permForegroundService     Boolean @default(false)
-  permBootReceiver          Boolean @default(false)
-  permWakeLock              Boolean @default(false)
-  permNotification          Boolean @default(false)
-  permBatteryOptDisabled    Boolean @default(false)
-  permAutoStart             Boolean @default(false)
-  permKioskMode             Boolean @default(false)
+  permInternet           Boolean @default(false)
+  permStorage            Boolean @default(false)
+  permForegroundService  Boolean @default(false)
+  permBootReceiver       Boolean @default(false)
+  permWakeLock           Boolean @default(false)
+  permNotification       Boolean @default(false)
+  permBatteryOptDisabled Boolean @default(false)
+  permAutoStart          Boolean @default(false)
+  permKioskMode          Boolean @default(false)
 
   // Device settings (reported + CMS-managed)
-  brightness            Int     @default(100)
-  volume                Int     @default(100)
-  screenTimeoutSeconds  Int     @default(300)
+  brightness           Int @default(100)
+  volume               Int @default(100)
+  screenTimeoutSeconds Int @default(300)
 
   // Player features (CMS-managed, synced to player)
-  featureAutoSync         Boolean @default(true)
-  featureOfflinePlayback  Boolean @default(true)
-  featureProofOfPlay      Boolean @default(true)
-  featureTicker           Boolean @default(true)
-  featureWatchdog         Boolean @default(true)
-  featureCrashRecovery    Boolean @default(true)
-  featureBackgroundSync   Boolean @default(true)
-  featureAutoDownload     Boolean @default(true)
-  featureRemoteLogs       Boolean @default(true)
-  configVersion           Int     @default(1)
+  featureAutoSync        Boolean @default(true)
+  featureOfflinePlayback Boolean @default(true)
+  featureProofOfPlay     Boolean @default(true)
+  featureTicker          Boolean @default(true)
+  featureWatchdog        Boolean @default(true)
+  featureCrashRecovery   Boolean @default(true)
+  featureBackgroundSync  Boolean @default(true)
+  featureAutoDownload    Boolean @default(true)
+  featureRemoteLogs      Boolean @default(true)
+  configVersion          Int     @default(1)
 
   // Screenshot
   lastScreenshotUrl String?
   lastScreenshotAt  DateTime?
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  organization    Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  currentPlaylist Playlist?        @relation(fields: [currentPlaylistId], references: [id], onDelete: SetNull)
-  currentLayout   Layout?          @relation(fields: [currentLayoutId], references: [id], onDelete: SetNull)
+  organization    Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  currentPlaylist Playlist?            @relation(fields: [currentPlaylistId], references: [id], onDelete: SetNull)
+  currentLayout   Layout?              @relation(fields: [currentLayoutId], references: [id], onDelete: SetNull)
   proofOfPlayLogs ProofOfPlayLog[]
   tickerTargets   TickerDevice[]
   cachedAssets    DeviceCachedAsset[]
@@ -504,8 +503,8 @@ model Ticker {
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
-  organization    Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  deviceTargets   TickerDevice[]
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceTargets TickerDevice[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, status])
@@ -516,8 +515,8 @@ model TickerDevice {
   deviceId  String
   createdAt DateTime @default(now())
 
-  ticker    Ticker   @relation(fields: [tickerId], references: [id], onDelete: Cascade)
-  device    Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  ticker Ticker @relation(fields: [tickerId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
   @@id([tickerId, deviceId])
   @@index([deviceId])
@@ -539,27 +538,32 @@ model ProofOfPlayLog {
   durationSeconds Int?
   createdAt       DateTime          @default(now())
 
-  organization    Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  deviceRef       Device?           @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  deviceRef    Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
 
+  // A device plays one asset at a time, so (device, asset, playback start) is the
+  // natural key of a playback event. Enforcing it in the database makes ingest
+  // idempotent: a device retrying a flush can never store the same play twice.
+  @@unique([organizationId, deviceId, assetName, startTime], map: "ProofOfPlayLog_natural_key")
   @@index([organizationId, timestamp])
   @@index([organizationId, startTime])
   @@index([organizationId, deviceId, startTime])
+  @@index([organizationId, startTime(sort: Desc), id(sort: Desc)], map: "ProofOfPlayLog_org_startTime_id_idx")
 }
 
 model OrganizationMembership {
-  id             String             @id @default(cuid())
+  id             String           @id @default(cuid())
   userId         String
   organizationId String
   role           OrganizationRole
-  status         MembershipStatus   @default(ACTIVE)
+  status         MembershipStatus @default(ACTIVE)
   invitedById    String?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 
-  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  permissions    MembershipFeaturePermission[]
+  user         User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions  MembershipFeaturePermission[]
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -567,43 +571,43 @@ model OrganizationMembership {
 }
 
 model MembershipFeaturePermission {
-  id            String             @id @default(cuid())
-  membershipId  String
-  featureKey    FeatureKey
-  accessLevel   FeatureAccessLevel
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id           String             @id @default(cuid())
+  membershipId String
+  featureKey   FeatureKey
+  accessLevel  FeatureAccessLevel
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 
-  membership    OrganizationMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  membership OrganizationMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
 
   @@unique([membershipId, featureKey])
   @@index([featureKey])
 }
 
 model Invitation {
-  id              String             @id @default(cuid())
-  email           String
-  token           String             @unique
-  scope           InvitationScope
-  status          InvitationStatus   @default(PENDING)
-  organizationId  String
-  role            OrganizationRole
-  permissions     Json?
-  invitedById     String
+  id               String           @id @default(cuid())
+  email            String
+  token            String           @unique
+  scope            InvitationScope
+  status           InvitationStatus @default(PENDING)
+  organizationId   String
+  role             OrganizationRole
+  permissions      Json?
+  invitedById      String
   acceptedByUserId String?
-  expiresAt       DateTime
-  acceptedAt      DateTime?
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  expiresAt        DateTime
+  acceptedAt       DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  invitedBy       User               @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationSender", fields: [invitedById], references: [id], onDelete: Cascade)
 
   @@index([organizationId, email])
 }
 
 model AuditLog {
-  id             String        @id @default(cuid())
+  id             String   @id @default(cuid())
   actorUserId    String?
   organizationId String?
   action         String
@@ -611,42 +615,42 @@ model AuditLog {
   targetId       String?
   summary        String
   metadata       Json?
-  createdAt      DateTime      @default(now())
+  createdAt      DateTime @default(now())
 
-  actor          User?         @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
-  organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor        User?         @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@index([organizationId, createdAt])
   @@index([actorUserId, createdAt])
 }
 
 model AssetFolder {
-  id             String        @id @default(cuid())
+  id             String   @id @default(cuid())
   organizationId String
   name           String
   parentId       String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  parent         AssetFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
-  children       AssetFolder[] @relation("FolderHierarchy")
-  assets         Asset[]
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       AssetFolder?  @relation("FolderHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children     AssetFolder[] @relation("FolderHierarchy")
+  assets       Asset[]
 
   @@unique([organizationId, parentId, name])
   @@index([organizationId])
 }
 
 model Asset {
-  id                     String        @id @default(cuid())
+  id                     String      @id @default(cuid())
   organizationId         String
   folderId               String?
   name                   String
   type                   AssetType
-  status                 AssetStatus   @default(UPLOADING)
+  status                 AssetStatus @default(UPLOADING)
   mimeType               String
-  fileSize               Int           @default(0)
-  s3Key                  String?       @unique
+  fileSize               Int         @default(0)
+  s3Key                  String?     @unique
   url                    String?
   defaultDurationSeconds Int?
   width                  Int?
@@ -655,17 +659,17 @@ model Asset {
   thumbnailS3Key         String?
   documentFormat         String?
   uploadedById           String
-  tags                   String[]      @default([])
-  contentVersion         Int           @default(1)
+  tags                   String[]    @default([])
+  contentVersion         Int         @default(1)
   contentHash            String?
-  createdAt              DateTime      @default(now())
-  updatedAt              DateTime      @updatedAt
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
 
-  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  folder           AssetFolder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
-  uploadedBy       User          @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-  playlistAssets   PlaylistAsset[]
-  layoutZones      LayoutZone[]
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  folder             AssetFolder?        @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  uploadedBy         User                @relation("AssetUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  playlistAssets     PlaylistAsset[]
+  layoutZones        LayoutZone[]
   deviceCacheEntries DeviceCachedAsset[]
 
   @@index([organizationId, createdAt])

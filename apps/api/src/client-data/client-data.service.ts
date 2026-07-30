@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -29,7 +30,7 @@ import {
   ZoneType,
 } from '@prisma/client';
 import type { RequestActor } from '../common/interfaces/request-with-actor.interface';
-import { dedupeIdenticalPopLogs, enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
+import { enrichPopLogFields, PopLogContextIndex } from '../common/pop-log-enrichment';
 import { sortPlaylistAssetsBySequence } from '../common/playlist-order';
 import {
   EXCEL_REPORT_DATETIME_NUM_FMT,
@@ -50,6 +51,42 @@ import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
 
 const colorPalette = ['#4ade80', '#00e5ff', '#a78bfa', '#f472b6', '#fb923c', '#60a5fa'];
+
+/** Columns every proof-of-play surface reads. */
+const POP_LOG_SCAN_SELECT = {
+  id: true,
+  device: true,
+  deviceId: true,
+  assetName: true,
+  content: true,
+  playlistName: true,
+  campaignName: true,
+  status: true,
+  startTime: true,
+  endTime: true,
+  durationSeconds: true,
+} satisfies Prisma.ProofOfPlayLogSelect;
+
+/**
+ * Total order. `startTime` alone leaves rows flushed in the same second in an
+ * arbitrary order, which silently dropped and repeated rows across pages.
+ */
+const POP_LOG_SCAN_ORDER: Prisma.ProofOfPlayLogOrderByWithRelationInput[] = [
+  { startTime: 'desc' },
+  { id: 'desc' },
+];
+
+const POP_LOG_SCAN_BATCH = 5_000;
+
+type PopLogScanRow = Prisma.ProofOfPlayLogGetPayload<{ select: typeof POP_LOG_SCAN_SELECT }>;
+
+type ReportChartBucket = {
+  startMs: number;
+  endMs: number;
+  label: string;
+  impressions: number;
+  verified: number;
+};
 
 type PlaylistDto = {
   id: string;
@@ -815,15 +852,125 @@ export class ClientDataService {
     return this.serializeDevice(updated);
   }
 
+  /**
+   * Soft-remove a paired device from the CMS without destroying history.
+   *
+   * Revokes the device token (player returns to pairing on next API call),
+   * clears playlist/layout assignment and local cache metadata, and detaches
+   * the device from the organization. Proof-of-play rows keep their `deviceId`
+   * so reports remain auditable. The Android player regenerates a pairing code
+   * on its next `init-pairing` call.
+   */
+  async unregisterDevice(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+
+    const device = await this.prisma.device.findFirst({
+      where: { id: deviceId, organizationId, isPaired: true },
+    });
+    if (!device) throw new NotFoundException('Device not found');
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.deviceCacheCommand.deleteMany({ where: { deviceId } });
+      await tx.deviceCachedAsset.deleteMany({ where: { deviceId } });
+      await tx.tickerDevice.deleteMany({ where: { deviceId } });
+
+      await tx.device.update({
+        where: { id: deviceId },
+        data: {
+          isPaired: false,
+          organizationId: null,
+          // Keep deviceToken so the next heartbeat/sync returns deviceStatus=UNREGISTERED.
+          // init-pairing regenerates a pairing code and clears the token.
+          pairingCode: null,
+          pairingSecret: null,
+          currentPlaylistId: null,
+          currentLayoutId: null,
+          lastAckedPlaylistVersion: null,
+          lastAckedLayoutVersion: null,
+          pendingInitialSync: false,
+          initialSyncRequestedAt: null,
+          status: DeviceStatus.OFFLINE,
+          currentContent: null,
+          currentAsset: null,
+          currentPlaylistName: null,
+          playbackStatus: 'STOPPED',
+          cachePlaylistName: null,
+          cachePlaylistVersion: null,
+          cacheLayoutName: null,
+          cacheLayoutVersion: null,
+          cacheTotalBytes: 0,
+          cacheUsedBytes: 0,
+          cachedAssetCount: 0,
+          expectedAssetCount: 0,
+          pendingDownloadCount: 0,
+          cacheLastReportedAt: null,
+          lastSuccessfulSyncAt: null,
+          lastFailedSyncAt: null,
+          lastSyncError: null,
+          syncReportStatus: null,
+          lastSync: 'Unregistered',
+          uptime: '0s',
+          configVersion: { increment: 1 },
+        },
+      });
+    });
+
+    this.logger.log(
+      `Device unregistered id=${deviceId} name=${device.name} org=${organizationId} by=${actor.userId}`,
+    );
+
+    return {
+      success: true,
+      unregistered: true,
+      deviceStatus: 'UNREGISTERED' as const,
+      deviceId: device.id,
+      deviceName: device.name,
+      // PoP history is intentionally retained (deviceId still points at this row).
+      proofOfPlayPreserved: true,
+    };
+  }
+
+  /**
+   * Permanently remove a device from the CMS.
+   *
+   * Cascades remove ticker targets, cache rows, cache commands and system logs.
+   * Proof-of-play history is preserved: `ProofOfPlayLog.deviceId` is set to NULL
+   * (`onDelete: SetNull`) while the denormalized device name remains for reports.
+   * A deleted player that reconnects must call `init-pairing` again (new draft).
+   */
   async deleteDevice(actor: RequestActor, deviceId: string) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
 
-    const device = await this.prisma.device.findFirst({ where: { id: deviceId, organizationId } });
+    const device = await this.prisma.device.findFirst({
+      where: { id: deviceId, organizationId },
+    });
     if (!device) throw new NotFoundException('Device not found');
 
-    await this.prisma.device.delete({ where: { id: deviceId } });
-    return { success: true };
+    await this.prisma.$transaction(async (tx) => {
+      // Explicit cleanup so no orphan mappings remain even if a relation's
+      // onDelete policy changes later. PoP logs are left alone (SetNull).
+      await tx.deviceCacheCommand.deleteMany({ where: { deviceId } });
+      await tx.deviceCachedAsset.deleteMany({ where: { deviceId } });
+      await tx.tickerDevice.deleteMany({ where: { deviceId } });
+      await tx.deviceSystemLog.deleteMany({ where: { deviceId } });
+
+      await tx.device.delete({ where: { id: deviceId } });
+    });
+
+    this.logger.log(
+      `Device deleted id=${deviceId} name=${device.name} org=${organizationId} by=${actor.userId}`,
+    );
+
+    return {
+      success: true,
+      deleted: true,
+      deviceStatus: 'DELETED' as const,
+      deviceId: device.id,
+      deviceName: device.name,
+      proofOfPlayPreserved: true,
+    };
   }
 
   async rebootDevice(actor: RequestActor, deviceId: string) {
@@ -1563,8 +1710,6 @@ export class ClientDataService {
       status: ProofOfPlayStatus.FAILED,
     };
 
-    const AGGREGATE_CAP = 20_000;
-
     const [
       devices,
       campaigns,
@@ -1572,7 +1717,6 @@ export class ClientDataService {
       totalLogs,
       verifiedCount,
       failedCount,
-      durationAgg,
       logs,
       latestLog,
     ] = await Promise.all([
@@ -1586,104 +1730,50 @@ export class ClientDataService {
       this.prisma.proofOfPlayLog.count({ where }),
       this.prisma.proofOfPlayLog.count({ where: verifiedWhere }),
       this.prisma.proofOfPlayLog.count({ where: failedWhere }),
-      this.prisma.proofOfPlayLog.aggregate({
-        where: { ...where, durationSeconds: { not: null, gt: 0 } },
-        _avg: { durationSeconds: true },
-      }),
       this.prisma.proofOfPlayLog.findMany({
         where,
-        orderBy: { startTime: 'desc' },
+        select: POP_LOG_SCAN_SELECT,
+        // (startTime, id) is a total order, so page N never overlaps or skips
+        // page N+1 even when a whole batch shares the same startTime.
+        orderBy: POP_LOG_SCAN_ORDER,
         skip: (page - 1) * limit,
         take: limit,
       }),
       this.prisma.proofOfPlayLog.findFirst({
         where: { organizationId },
-        orderBy: { startTime: 'desc' },
+        orderBy: POP_LOG_SCAN_ORDER,
         select: { startTime: true, device: true },
       }),
     ]);
 
-    const aggregateLogs =
-      totalLogs > 0 && totalLogs <= AGGREGATE_CAP
-        ? await this.prisma.proofOfPlayLog.findMany({
-            where,
-            orderBy: { startTime: 'desc' },
-            select: {
-              id: true,
-              device: true,
-              deviceId: true,
-              assetName: true,
-              content: true,
-              playlistName: true,
-              campaignName: true,
-              status: true,
-              startTime: true,
-              endTime: true,
-              durationSeconds: true,
-            },
-          })
-        : [];
-
     const contextIndex = await new PopLogContextIndex(this.prisma).load(organizationId);
     const devicePlaylistById = new Map(devices.map((device) => [device.id, device.currentPlaylistId]));
-    const expandPopLogs = <
-      T extends {
-        id: string;
-        assetName: string;
-        content: string;
-        deviceId?: string | null;
-        playlistName?: string | null;
-        campaignName?: string | null;
-        startTime: Date;
-        endTime?: Date | null;
-        durationSeconds?: number | null;
-        status: ProofOfPlayStatus;
-      },
-    >(
-      sourceLogs: T[],
-    ) =>
-      sourceLogs.map((log) => {
-        const assetName = log.assetName || log.content;
-        const playbackContext = contextIndex.resolve(
+    const enrich = (log: PopLogScanRow) => {
+      const assetName = log.assetName || log.content;
+      const playbackContext = contextIndex.resolve(
+        assetName,
+        log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
+      );
+      // Enrichment only fills in display fields (playlist, campaign, derived
+      // duration). It never adds, removes or merges rows: one stored playback
+      // event is always exactly one report row and one Excel row.
+      const enriched = enrichPopLogFields(
+        {
           assetName,
-          log.deviceId ? devicePlaylistById.get(log.deviceId) : null,
-        );
-        const enriched = enrichPopLogFields(
-          {
-            assetName,
-            playlistName: log.playlistName,
-            campaignName: log.campaignName,
-            startTime: log.startTime,
-            endTime: log.endTime,
-            durationSeconds: log.durationSeconds,
-          },
-          playbackContext,
-        );
-        // One DB row = one report row. Slot expansion already happens at ingest
-        // (player submit). Re-expanding here duplicated events in the UI/export.
-        return {
-          ...log,
-          ...enriched,
-          id: log.id,
-        };
-      });
+          playlistName: log.playlistName,
+          campaignName: log.campaignName,
+          startTime: log.startTime,
+          endTime: log.endTime,
+          durationSeconds: log.durationSeconds,
+        },
+        playbackContext,
+      );
+      return { ...log, ...enriched, assetName };
+    };
 
-    const enrichedAggregateLogs = dedupeIdenticalPopLogs(expandPopLogs(aggregateLogs));
-    const enrichedLogs = dedupeIdenticalPopLogs(expandPopLogs(logs));
-    const playbackEventCount =
-      totalLogs > 0 && totalLogs <= AGGREGATE_CAP
-        ? enrichedAggregateLogs.length
-        : totalLogs;
-    const chartData =
-      totalLogs <= AGGREGATE_CAP
-        ? this.buildReportChartData(
-            enrichedAggregateLogs,
-            range,
-            rangeStart,
-            rangeEnd,
-            query.timezone,
-          )
-        : [];
+    const enrichedLogs = logs.map(enrich);
+    const buckets = this.buildReportChartBuckets(range, rangeStart, rangeEnd, query.timezone);
+    const deviceById = new Map(devices.map((device) => [device.id, device]));
     const deviceByName = new Map(devices.map((device) => [device.name, device]));
     const deviceAgg = new Map<string, {
       id: string | null;
@@ -1694,24 +1784,88 @@ export class ClientDataService {
       verified: number;
       lastPlay: Date | null;
     }>();
+    const campaignAgg = new Map<string, {
+      id: string | null;
+      name: string;
+      impressions: number;
+      verified: number;
+    }>();
+    const contentAgg = new Map<string, { content: string; impressions: number; verified: number }>();
+    let durationTotal = 0;
+    let durationSamples = 0;
+    let scannedLogs = 0;
 
-    for (const log of enrichedAggregateLogs) {
-      const matched = log.deviceId ? devices.find((device) => device.id === log.deviceId) : deviceByName.get(log.device);
-      const key = matched?.id ?? log.device;
-      const current = deviceAgg.get(key) ?? {
-        id: matched?.id ?? null,
-        name: log.device,
-        location: matched?.location ?? 'Unknown',
-        status: matched?.status ?? null,
-        impressions: 0,
-        verified: 0,
-        lastPlay: null,
-      };
-      current.impressions += 1;
-      if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
-      if (!current.lastPlay || log.startTime > current.lastPlay) current.lastPlay = log.startTime;
-      deviceAgg.set(key, current);
+    // Single full pass over every row matching the filter — same `where` as the
+    // count above and as the export, so all three can never disagree.
+    for await (const batch of this.scanPopLogs(where)) {
+      for (const raw of batch) {
+        const log = enrich(raw);
+        scannedLogs += 1;
+        const isVerified = log.status === ProofOfPlayStatus.VERIFIED;
+
+        const bucket = this.findChartBucket(buckets, log.startTime);
+        if (bucket) {
+          bucket.impressions += 1;
+          if (isVerified) bucket.verified += 1;
+        }
+
+        if (log.durationSeconds && log.durationSeconds > 0) {
+          durationTotal += log.durationSeconds;
+          durationSamples += 1;
+        }
+
+        const matched = log.deviceId ? deviceById.get(log.deviceId) : deviceByName.get(log.device);
+        const deviceKey = matched?.id ?? log.device;
+        const deviceEntry = deviceAgg.get(deviceKey) ?? {
+          id: matched?.id ?? null,
+          name: log.device,
+          location: matched?.location ?? 'Unknown',
+          status: matched?.status ?? null,
+          impressions: 0,
+          verified: 0,
+          lastPlay: null as Date | null,
+        };
+        deviceEntry.impressions += 1;
+        if (isVerified) deviceEntry.verified += 1;
+        if (!deviceEntry.lastPlay || log.startTime > deviceEntry.lastPlay) {
+          deviceEntry.lastPlay = log.startTime;
+        }
+        deviceAgg.set(deviceKey, deviceEntry);
+
+        const campaignKey = log.campaignId ?? `name:${log.campaignName ?? '__uncategorized__'}`;
+        const campaignEntry = campaignAgg.get(campaignKey) ?? {
+          id: log.campaignId ?? null,
+          name: log.campaignName ?? 'Uncategorized',
+          impressions: 0,
+          verified: 0,
+        };
+        campaignEntry.impressions += 1;
+        if (isVerified) campaignEntry.verified += 1;
+        campaignAgg.set(campaignKey, campaignEntry);
+
+        const contentEntry = contentAgg.get(log.assetName) ?? {
+          content: log.assetName,
+          impressions: 0,
+          verified: 0,
+        };
+        contentEntry.impressions += 1;
+        if (isVerified) contentEntry.verified += 1;
+        contentAgg.set(log.assetName, contentEntry);
+      }
     }
+
+    if (scannedLogs !== totalLogs) {
+      this.logger.warn(
+        `PoP report scan mismatch org=${organizationId} range=${range} counted=${totalLogs} scanned=${scannedLogs}`,
+      );
+    }
+
+    const chartData = buckets.map((bucket) => ({
+      day: bucket.label,
+      impressions: bucket.impressions,
+      engagement:
+        bucket.impressions > 0 ? Math.round((bucket.verified / bucket.impressions) * 100) : 0,
+    }));
 
     const deviceBreakdown = Array.from(deviceAgg.values())
       .sort((a, b) => b.impressions - a.impressions)
@@ -1729,28 +1883,6 @@ export class ClientDataService {
         lastPlay: entry.lastPlay,
       }));
 
-    const campaignAgg = new Map<string, {
-      id: string | null;
-      name: string;
-      impressions: number;
-      verified: number;
-    }>();
-
-    for (const log of enrichedAggregateLogs) {
-      const campaignId = log.campaignId ?? null;
-      const campaignName = log.campaignName ?? null;
-      const key = campaignId ?? `name:${campaignName ?? '__uncategorized__'}`;
-      const current = campaignAgg.get(key) ?? {
-        id: campaignId,
-        name: campaignName ?? 'Uncategorized',
-        impressions: 0,
-        verified: 0,
-      };
-      current.impressions += 1;
-      if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
-      campaignAgg.set(key, current);
-    }
-
     const campaignBreakdown = Array.from(campaignAgg.values())
       .sort((a, b) => b.impressions - a.impressions)
       .slice(0, 12)
@@ -1764,19 +1896,6 @@ export class ClientDataService {
             : 0,
       }));
 
-    const contentAgg = new Map<string, { content: string; impressions: number; verified: number }>();
-    for (const log of enrichedAggregateLogs) {
-      const label = log.assetName || log.content;
-      const current = contentAgg.get(label) ?? {
-        content: label,
-        impressions: 0,
-        verified: 0,
-      };
-      current.impressions += 1;
-      if (log.status === ProofOfPlayStatus.VERIFIED) current.verified += 1;
-      contentAgg.set(label, current);
-    }
-
     const topContent = Array.from(contentAgg.values())
       .sort((a, b) => b.impressions - a.impressions)
       .slice(0, 10)
@@ -1789,16 +1908,23 @@ export class ClientDataService {
             : 0,
       }));
 
-    const avgEngagement =
-      durationAgg._avg.durationSeconds != null
-        ? Math.round(durationAgg._avg.durationSeconds)
-        : 0;
+    // Averaged over the same durations that are shown in the table and written
+    // to Excel, including the ones derived from the playlist slot.
+    const avgEngagement = durationSamples > 0 ? Math.round(durationTotal / durationSamples) : 0;
 
     const deviceNameSet = new Set(devices.map((device) => device.name));
     const deviceIdSet = new Set(devices.map((device) => device.id));
+    // Device options come from the date range alone: picking a device must not
+    // remove the other devices from the picker.
+    const { where: rangeOnlyWhere } = await this.buildPopLogWhere(organizationId, {
+      range: query.range,
+      startDate: query.startDate,
+      endDate: query.endDate,
+      timezone: query.timezone,
+    });
     const reportingDevices = await this.prisma.proofOfPlayLog.groupBy({
       by: ['device', 'deviceId'],
-      where,
+      where: rangeOnlyWhere,
     });
     const historicalLogDevices = reportingDevices
       .filter((entry) => !entry.deviceId || !deviceIdSet.has(entry.deviceId))
@@ -1828,7 +1954,7 @@ export class ClientDataService {
       devices: reportDeviceOptions,
       campaigns,
       kpis: {
-        billedImpressions: playbackEventCount,
+        billedImpressions: totalLogs,
         avgEngagement,
         playbackFidelity:
           Math.round((verifiedCount / Math.max(totalLogs, 1)) * 10000) / 100,
@@ -1843,12 +1969,12 @@ export class ClientDataService {
       topContent,
       proofOfPlay: enrichedLogs.map((log) => this.serializePopLog(log, deviceNameSet, deviceIdSet)),
       proofOfPlayMeta: {
-        total: playbackEventCount,
+        // Straight COUNT(*) over the same predicate the table and the export use.
+        total: totalLogs,
         page,
         limit,
-        totalPages: Math.max(1, Math.ceil(playbackEventCount / limit)),
-        aggregatesTruncated: totalLogs > AGGREGATE_CAP,
-        distinctDevicesInRange: reportingDevices.length,
+        totalPages: Math.max(1, Math.ceil(totalLogs / limit)),
+        distinctDevicesInRange: deviceAgg.size,
       },
       lastLogAt: latestLog?.startTime ?? null,
       lastLogDevice: latestLog?.device ?? null,
@@ -1870,31 +1996,24 @@ export class ClientDataService {
   ) {
     const organizationId = this.getOrgId(actor);
     const exportTimeZone = query.timezone?.trim() || 'UTC';
+    // Exactly the predicate the dashboard uses — the export never re-filters,
+    // re-sorts or de-duplicates on top of it, so CMS count === Excel row count.
     const { where } = await this.buildPopLogWhere(organizationId, query);
+
+    const [expectedRows, devices] = await Promise.all([
+      this.prisma.proofOfPlayLog.count({ where }),
+      this.prisma.device.findMany({
+        where: { organizationId },
+        select: { id: true, name: true, currentPlaylistId: true },
+      }),
+    ]);
 
     this.logger.log(
       `PoP export org=${organizationId} range=${query.range ?? 'today'} ` +
         `deviceId=${query.deviceId ?? 'all'} folderId=${query.folderId ?? 'all'} ` +
         `status=${query.status ?? 'all'} search=${query.search?.trim() ? 'yes' : 'no'} ` +
-        `timezone=${exportTimeZone}`,
+        `timezone=${exportTimeZone} expectedRows=${expectedRows}`,
     );
-
-    const [logs, devices, filterDevice] = await Promise.all([
-      this.prisma.proofOfPlayLog.findMany({
-        where,
-        orderBy: { startTime: 'desc' },
-      }),
-      this.prisma.device.findMany({
-        where: { organizationId },
-        select: { id: true, name: true, currentPlaylistId: true },
-      }),
-      query.deviceId && !query.deviceId.startsWith('historical:')
-        ? this.prisma.device.findFirst({
-            where: { id: query.deviceId, organizationId },
-            select: { id: true, name: true },
-          })
-        : Promise.resolve(null),
-    ]);
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(organizationId);
     const devicePlaylistById = new Map(devices.map((device) => [device.id, device.currentPlaylistId]));
@@ -1911,32 +2030,11 @@ export class ClientDataService {
     ];
     sheet.getRow(1).font = { bold: true };
 
-    const historicalName = query.deviceId?.startsWith('historical:')
-      ? query.deviceId.slice('historical:'.length)
-      : null;
-
-    const matchesDeviceFilter = (log: {
-      deviceId?: string | null;
-      device: string;
-    }) => {
-      if (!query.deviceId) return true;
-      if (filterDevice) {
-        return (
-          log.deviceId === filterDevice.id ||
-          ((!log.deviceId || log.deviceId === '') &&
-            log.device.localeCompare(filterDevice.name, undefined, { sensitivity: 'accent' }) === 0)
-        );
-      }
-      if (historicalName) {
-        return log.device === historicalName;
-      }
-      return false;
-    };
-
-    // One DB row → one Excel row. Do not re-run slot expansion here (ingest already expands).
-    const exportRows = logs
-      .filter((log) => matchesDeviceFilter(log))
-      .map((log) => {
+    let writtenRows = 0;
+    // Keyset paging, not LIMIT/OFFSET: every matching row is written, however
+    // many there are, and rows cannot be skipped by inserts arriving mid-export.
+    for await (const batch of this.scanPopLogs(where)) {
+      for (const log of batch) {
         const assetName = log.assetName || log.content;
         const playbackContext = contextIndex.resolve(
           assetName,
@@ -1953,31 +2051,31 @@ export class ClientDataService {
           },
           playbackContext,
         );
-        return { ...log, ...enriched, assetName };
-      });
-
-    // Same exact-field dedupe as the dashboard API so both surfaces match.
-    const uniqueRows = dedupeIdenticalPopLogs(exportRows);
-
-    this.logger.log(
-      `PoP export rows db=${logs.length} afterFilter=${exportRows.length} ` +
-        `deduped=${uniqueRows.length} deviceFilter=${query.deviceId ?? 'none'}`,
-    );
-
-    for (const log of uniqueRows) {
-      const assetName = log.assetName || log.content;
-      const row = sheet.addRow({
-        device: log.device,
-        playlistName: log.playlistName ?? '',
-        assetName,
-        startTime: toExcelWallClockDate(log.startTime, exportTimeZone),
-        endTime: toExcelWallClockDate(log.endTime, exportTimeZone),
-        duration: log.durationSeconds != null ? `${log.durationSeconds}s` : '',
-      });
-      // Real Date cells + 24h format so Excel sorts chronologically, not as text.
-      row.getCell('startTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
-      row.getCell('endTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
+        const row = sheet.addRow({
+          device: log.device,
+          playlistName: enriched.playlistName ?? '',
+          assetName,
+          startTime: toExcelWallClockDate(log.startTime, exportTimeZone),
+          endTime: toExcelWallClockDate(enriched.endTime, exportTimeZone),
+          duration: enriched.durationSeconds != null ? `${enriched.durationSeconds}s` : '',
+        });
+        // Real Date cells + 24h format so Excel sorts chronologically, not as text.
+        row.getCell('startTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
+        row.getCell('endTime').numFmt = EXCEL_REPORT_DATETIME_NUM_FMT;
+        writtenRows += 1;
+      }
     }
+
+    if (writtenRows < expectedRows) {
+      this.logger.error(
+        `PoP export incomplete org=${organizationId} expected=${expectedRows} written=${writtenRows}`,
+      );
+      throw new InternalServerErrorException(
+        'Export aborted: fewer rows were read than the report contains. Please retry.',
+      );
+    }
+
+    this.logger.log(`PoP export finished org=${organizationId} rows=${writtenRows}`);
 
     return Buffer.from(await workbook.xlsx.writeBuffer());
   }
@@ -2192,83 +2290,102 @@ export class ClientDataService {
     };
   }
 
-  private buildReportChartData(
-    logs: { status: ProofOfPlayStatus; startTime: Date }[],
+  /**
+   * Read every log matching `where` in stable order, in bounded batches.
+   *
+   * Keyset (cursor) paging rather than LIMIT/OFFSET: the window never shifts
+   * when rows are inserted while the scan is running, so no row is skipped or
+   * read twice, and there is no upper bound on how many rows can be read.
+   */
+  private async *scanPopLogs(
+    where: Prisma.ProofOfPlayLogWhereInput,
+  ): AsyncGenerator<PopLogScanRow[]> {
+    let cursor: { id: string } | undefined;
+
+    for (;;) {
+      const batch = await this.prisma.proofOfPlayLog.findMany({
+        where,
+        select: POP_LOG_SCAN_SELECT,
+        orderBy: POP_LOG_SCAN_ORDER,
+        take: POP_LOG_SCAN_BATCH,
+        ...(cursor ? { cursor, skip: 1 } : {}),
+      });
+
+      if (!batch.length) return;
+      yield batch;
+      if (batch.length < POP_LOG_SCAN_BATCH) return;
+      cursor = { id: batch[batch.length - 1].id };
+    }
+  }
+
+  /**
+   * Chart buckets covering exactly the filtered window, aligned to calendar
+   * hours/days in the viewer's timezone so a bar never straddles two local days
+   * (including across daylight-saving changes).
+   */
+  private buildReportChartBuckets(
     range: string,
     rangeStart: Date | null,
     rangeEnd: Date | null,
     timezone?: string,
-  ) {
+  ): ReportChartBucket[] {
     const timeZone = timezone?.trim() || 'UTC';
     const normalized = (range ?? 'today').toLowerCase();
     const end = rangeEnd ?? new Date();
-    const start =
-      rangeStart ??
-      new Date(
-        end.getTime() -
-          (normalized === '15d' ? 15 : normalized === 'yesterday' || normalized === 'today' ? 1 : 7) *
-            24 *
-            60 *
-            60 *
-            1000,
+    const start = rangeStart ?? new Date(end.getTime() - 24 * 60 * 60 * 1000);
+    if (end.getTime() <= start.getTime()) return [];
+
+    const hourly = normalized === 'today' || normalized === 'yesterday';
+    const boundaries: number[] = [];
+
+    if (hourly) {
+      for (let ms = start.getTime(); ms < end.getTime(); ms += 60 * 60 * 1000) {
+        boundaries.push(ms);
+      }
+    } else {
+      const firstDay = getZonedCalendarDate(start, timeZone);
+      const dayCount = Math.max(
+        1,
+        Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)),
       );
+      // Long custom ranges are grouped into equal multi-day bars so the chart
+      // stays readable; the bars still tile the window exactly.
+      const step = Math.max(1, Math.ceil(dayCount / 31));
+      for (let day = 0; day < dayCount; day += step) {
+        boundaries.push(startOfZonedDay(addCalendarDays(firstDay, day), timeZone).getTime());
+      }
+    }
 
-    const useHourlyBuckets = normalized === 'today' || normalized === 'yesterday';
-    const bucketMs = useHourlyBuckets ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-    const defaultBucketCount =
-      normalized === 'today' || normalized === 'yesterday'
-        ? 24
-        : normalized === '15d'
-          ? 15
-          : normalized === 'custom'
-            ? Math.max(1, Math.ceil((end.getTime() - start.getTime()) / bucketMs))
-            : 7;
-    const bucketCount = Math.max(
-      1,
-      Math.min(
-        Math.max(defaultBucketCount, 1),
-        Math.ceil((end.getTime() - start.getTime()) / bucketMs) || defaultBucketCount,
-      ),
-    );
+    if (!boundaries.length) boundaries.push(start.getTime());
 
-    const buckets = Array.from({ length: bucketCount }, (_, index) => {
-      const bucketStart = new Date(start.getTime() + index * bucketMs);
+    return boundaries.map((startMs, index) => {
+      const endMs = index + 1 < boundaries.length ? boundaries[index + 1] : end.getTime() + 1;
+      const bucketStart = new Date(startMs);
       return {
-        label: useHourlyBuckets
-          ? bucketStart.toLocaleTimeString('en-US', {
-              hour: '2-digit',
-              hour12: false,
-              timeZone,
-            })
-          : bucketCount <= 7
+        startMs,
+        endMs,
+        label: hourly
+          ? bucketStart.toLocaleTimeString('en-US', { hour: '2-digit', hour12: false, timeZone })
+          : boundaries.length <= 7
             ? bucketStart.toLocaleDateString('en-US', { weekday: 'short', timeZone })
-            : bucketStart.toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                timeZone,
-              }),
+            : bucketStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone }),
         impressions: 0,
         verified: 0,
       };
     });
+  }
 
-    for (const log of logs) {
-      const offset = log.startTime.getTime() - start.getTime();
-      const bucketIndex = Math.min(Math.max(Math.floor(offset / bucketMs), 0), bucketCount - 1);
-      buckets[bucketIndex].impressions += 1;
-      if (log.status === ProofOfPlayStatus.VERIFIED) {
-        buckets[bucketIndex].verified += 1;
-      }
+  private findChartBucket(buckets: ReportChartBucket[], at: Date): ReportChartBucket | null {
+    const ms = at.getTime();
+    let low = 0;
+    let high = buckets.length - 1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (ms < buckets[mid].startMs) high = mid - 1;
+      else if (ms >= buckets[mid].endMs) low = mid + 1;
+      else return buckets[mid];
     }
-
-    return buckets.map((bucket) => ({
-      day: bucket.label,
-      impressions: bucket.impressions,
-      engagement:
-        bucket.impressions > 0
-          ? Math.round((bucket.verified / bucket.impressions) * 100)
-          : 0,
-    }));
+    return null;
   }
 
   private serializePopLog(

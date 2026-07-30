@@ -240,6 +240,11 @@ export class ClientDataController {
     return this.clientDataService.updateDevice(actor, deviceId, body);
   }
 
+  @Post('devices/:deviceId/unregister')
+  unregisterDevice(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.unregisterDevice(actor, deviceId);
+  }
+
   @Delete('devices/:deviceId')
   deleteDevice(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
     return this.clientDataService.deleteDevice(actor, deviceId);
@@ -381,7 +386,11 @@ export class ClientDataController {
     return this.clientDataService.deleteTicker(actor, tickerId);
   }
 
+  // Proof of play is an audit surface: every request must hit the database, so
+  // no browser, proxy or CDN is allowed to serve a previously rendered report.
   @Get('reports')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Header('Pragma', 'no-cache')
   reports(@CurrentActor() actor: RequestActor, @Query() query: ReportsQueryDto) {
     return this.clientDataService.reports(actor, query);
   }
@@ -391,6 +400,8 @@ export class ClientDataController {
     'Content-Type',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   )
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  @Header('Pragma', 'no-cache')
   async exportReport(
     @CurrentActor() actor: RequestActor,
     @Query() query: ReportsQueryDto,

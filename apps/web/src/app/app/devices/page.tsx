@@ -4,10 +4,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
     Wifi, WifiOff, MapPin, Plus,
-    RefreshCw, HardDrive, Thermometer,
-    Search, X, Eye, Cpu, AlertTriangle,
+    RefreshCw,
+    Search, X, Eye, AlertTriangle,
     Trash2, Pencil, Monitor, Save, Link2,
-    Database, Download, CloudOff,
+    Unplug,
 } from "lucide-react";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
@@ -151,6 +151,10 @@ export default function DevicesPage() {
 
     const [pendingAction, setPendingAction] = useState<string | null>(null);
     const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null);
+    const [confirmDialog, setConfirmDialog] = useState<null | {
+        type: "unregister" | "delete";
+        device: Device;
+    }>(null);
     const [deviceCache, setDeviceCache] = useState<DeviceCacheStatus | null>(null);
     const [isCacheLoading, setIsCacheLoading] = useState(false);
 
@@ -274,21 +278,6 @@ export default function DevicesPage() {
             flexShrink: 0,
         };
     };
-
-    const metricBar = (value: number, color: string) => (
-        <div style={{ height: 4, borderRadius: 2, background: "hsla(var(--border-subtle), 0.2)", overflow: "hidden", flex: 1 }}>
-            <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${value}%` }}
-                transition={{ duration: 1 }}
-                style={{
-                    height: "100%",
-                    background: value > 80 ? "hsl(var(--status-danger))" : color,
-                    borderRadius: 2,
-                }}
-            />
-        </div>
-    );
 
     const openRegister = () => {
         if (!canControl) return;
@@ -417,10 +406,43 @@ export default function DevicesPage() {
         }
     };
 
+    const openUnregisterConfirm = (device: Device) => {
+        if (!canControl) return;
+        setConfirmDialog({ type: "unregister", device });
+    };
+
+    const openDeleteConfirm = (device: Device) => {
+        if (!canControl) return;
+        setConfirmDialog({ type: "delete", device });
+    };
+
+    const unregisterDevice = async (device: Device) => {
+        if (!canControl || !activeOrganizationId) return;
+
+        setPendingAction("unregister");
+        setPendingDeviceId(device.id);
+        try {
+            await apiRequest<{ success: boolean }>(`/api/client-data/devices/${device.id}/unregister`, {
+                method: "POST",
+                headers: orgHeaders,
+            });
+            setDevices((prev) => prev.filter((d) => d.id !== device.id));
+            if (selectedDevice?.id === device.id) {
+                setSelectedDevice(null);
+                setIsEditing(false);
+            }
+            setConfirmDialog(null);
+            toast.success(`${device.name} unregistered. The player will return to pairing shortly.`);
+        } catch (error) {
+            toast.error(describeError(error, "Failed to unregister device"));
+        } finally {
+            setPendingAction(null);
+            setPendingDeviceId(null);
+        }
+    };
+
     const deleteDevice = async (device: Device) => {
         if (!canControl || !activeOrganizationId) return;
-        const confirmed = window.confirm(`Unregister "${device.name}"? This cannot be undone.`);
-        if (!confirmed) return;
 
         setPendingAction("delete");
         setPendingDeviceId(device.id);
@@ -434,7 +456,8 @@ export default function DevicesPage() {
                 setSelectedDevice(null);
                 setIsEditing(false);
             }
-            toast.success(`${device.name} unregistered`);
+            setConfirmDialog(null);
+            toast.success(`${device.name} permanently deleted`);
         } catch (error) {
             toast.error(describeError(error, "Failed to delete device"));
         } finally {
@@ -548,7 +571,7 @@ export default function DevicesPage() {
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             {!canControl && (
-                <ReadOnlyNotice message="Devices are visible in monitoring mode. Registering, rebooting, and unregistering are disabled for this account." />
+                <ReadOnlyNotice message="Devices are visible in monitoring mode. Registering, unregistering, and deleting are disabled for this account." />
             )}
 
             <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
@@ -749,160 +772,344 @@ export default function DevicesPage() {
                     )}
                 </div>
             ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 20 }}>
-                    <AnimatePresence mode="popLayout">
-                        {filtered.map((d, idx) => (
-                            <motion.div
-                                key={d.id}
-                                layout
-                                initial={{ opacity: 0, scale: 0.95 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.9 }}
-                                transition={{ delay: idx * 0.04 }}
-                                className="glass-card"
-                                style={{ padding: 0, overflow: "hidden", cursor: "pointer" }}
-                                onClick={() => {
-                                    setSelectedDevice(d);
-                                    setIsEditing(false);
-                                }}
-                            >
-                                <div style={{ padding: "20px 24px" }}>
-                                    <div className="flex-between" style={{ marginBottom: 16 }}>
-                                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                            <div style={statusDot(d.status)} />
-                                            <div>
-                                                <h3 style={{ fontWeight: 700, fontSize: "1rem" }}>{d.name}</h3>
-                                                <p
-                                                    style={{
-                                                        fontSize: "0.75rem",
-                                                        color: "hsl(var(--text-muted))",
-                                                        display: "flex",
-                                                        alignItems: "center",
-                                                        gap: 4,
-                                                    }}
-                                                >
-                                                    <MapPin size={10} /> {d.location}
-                                                </p>
-                                                {(d.initialSyncState === "pending" || d.initialSyncState === "timed_out") && (
-                                                    <span
-                                                        style={{
-                                                            marginTop: 6,
-                                                            display: "inline-flex",
-                                                            alignItems: "center",
-                                                            gap: 4,
-                                                            fontSize: "0.62rem",
-                                                            fontWeight: 700,
-                                                            textTransform: "uppercase",
-                                                            letterSpacing: "0.05em",
-                                                            padding: "3px 8px",
-                                                            borderRadius: 999,
-                                                            color: d.initialSyncState === "timed_out"
-                                                                ? "hsl(var(--status-danger))"
-                                                                : "hsl(var(--status-warning))",
-                                                            background: d.initialSyncState === "timed_out"
-                                                                ? "hsla(var(--status-danger), 0.12)"
-                                                                : "hsla(var(--status-warning), 0.12)",
-                                                            border: `1px solid ${d.initialSyncState === "timed_out" ? "hsla(var(--status-danger), 0.3)" : "hsla(var(--status-warning), 0.3)"}`,
-                                                        }}
-                                                    >
-                                                        <RefreshCw size={9} className={d.initialSyncState === "pending" ? "spin" : ""} />
-                                                        {d.initialSyncState === "timed_out" ? "Initial Sync Delayed" : "Pending Initial Sync"}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div style={{ display: "flex", gap: 4 }}>
-                                            <button
-                                                className="btn-icon-soft"
-                                                disabled={!canEdit || isBusy(d.id)}
-                                                title="Refresh telemetry"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    void refreshDevice(d);
-                                                }}
-                                                style={{
-                                                    opacity: canEdit ? 1 : 0.45,
-                                                    cursor: canEdit ? "pointer" : "not-allowed",
-                                                }}
-                                            >
-                                                <RefreshCw
-                                                    size={14}
-                                                    className={isBusy(d.id) && pendingAction === "refresh" ? "spin" : ""}
-                                                />
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    {d.status !== "offline" ? (
-                                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <Cpu size={12} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
-                                                <span style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", width: 30 }}>
-                                                    CPU
-                                                </span>
-                                                {metricBar(d.cpu, "hsl(var(--accent-primary))")}
-                                                <span style={{ fontSize: "0.7rem", fontWeight: 600, width: 32, textAlign: "right" }}>
-                                                    {d.cpu}%
-                                                </span>
-                                            </div>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <HardDrive size={12} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
-                                                <span style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", width: 30 }}>
-                                                    RAM
-                                                </span>
-                                                {metricBar(d.ram, "hsl(var(--accent-secondary))")}
-                                                <span style={{ fontSize: "0.7rem", fontWeight: 600, width: 32, textAlign: "right" }}>
-                                                    {d.ram}%
-                                                </span>
-                                            </div>
-                                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <Thermometer size={12} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
-                                                <span style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))", width: 30 }}>
-                                                    TMP
-                                                </span>
-                                                {metricBar(d.temp, "hsl(var(--status-warning))")}
-                                                <span style={{ fontSize: "0.7rem", fontWeight: 600, width: 32, textAlign: "right" }}>
-                                                    {d.temp}°C
-                                                </span>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div
+                <div className="glass-panel" style={{ overflow: "hidden" }}>
+                    <div
+                        style={{
+                            padding: "14px 20px",
+                            borderBottom: "1px solid hsla(var(--border-subtle), 0.25)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 12,
+                        }}
+                    >
+                        <div>
+                            <h2 style={{ fontSize: "0.95rem", fontWeight: 700 }}>Registered Devices</h2>
+                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 2 }}>
+                                {filtered.length} device{filtered.length === 1 ? "" : "s"}
+                            </p>
+                        </div>
+                    </div>
+                    <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+                            <thead>
+                                <tr style={{ background: "hsla(var(--bg-base), 0.45)" }}>
+                                    {[
+                                        "Device",
+                                        "Status",
+                                        "Location",
+                                        "Content",
+                                        "Last Sync",
+                                        "Actions",
+                                    ].map((heading) => (
+                                        <th
+                                            key={heading}
                                             style={{
-                                                padding: "16px 0",
-                                                textAlign: "center",
+                                                textAlign: heading === "Actions" ? "right" : "left",
+                                                padding: "12px 16px",
+                                                fontSize: "0.68rem",
+                                                fontWeight: 700,
+                                                letterSpacing: "0.04em",
+                                                textTransform: "uppercase",
                                                 color: "hsl(var(--text-muted))",
-                                                fontSize: "0.85rem",
+                                                borderBottom: "1px solid hsla(var(--border-subtle), 0.25)",
+                                                whiteSpace: "nowrap",
                                             }}
                                         >
-                                            <WifiOff size={24} style={{ margin: "0 auto 8px", opacity: 0.3 }} />
-                                            <p>Device Unreachable</p>
-                                        </div>
-                                    )}
-                                </div>
-                                <div
-                                    style={{
-                                        padding: "12px 24px",
-                                        borderTop: "1px solid hsla(var(--border-subtle), 0.2)",
-                                        display: "flex",
-                                        justifyContent: "space-between",
-                                        fontSize: "0.7rem",
-                                        color: "hsl(var(--text-muted))",
-                                    }}
-                                >
-                                    <span>
-                                        Synced: {d.lastSync}
-                                        {d.cache && d.cache.cachedAssetCount > 0
-                                            ? ` · Cache: ${d.cache.cachedAssetCount} assets (${d.cache.storageUsedLabel})`
-                                            : ""}
-                                    </span>
-                                    <span>{d.resolution}</span>
-                                </div>
-                            </motion.div>
-                        ))}
-                    </AnimatePresence>
+                                            {heading}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filtered.map((d) => (
+                                    <tr
+                                        key={d.id}
+                                        style={{
+                                            borderBottom: "1px solid hsla(var(--border-subtle), 0.18)",
+                                            background:
+                                                selectedDevice?.id === d.id
+                                                    ? "hsla(var(--accent-primary), 0.06)"
+                                                    : "transparent",
+                                        }}
+                                    >
+                                        <td style={{ padding: "14px 16px" }}>
+                                            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                                <div style={statusDot(d.status)} />
+                                                <div>
+                                                    <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{d.name}</div>
+                                                    <div style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))" }}>
+                                                        {d.ip !== "Pending" ? d.ip : d.hardwareId?.slice(0, 12) || "—"}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: "14px 16px" }}>
+                                            <span
+                                                style={{
+                                                    display: "inline-flex",
+                                                    alignItems: "center",
+                                                    gap: 6,
+                                                    fontSize: "0.72rem",
+                                                    fontWeight: 700,
+                                                    textTransform: "capitalize",
+                                                    padding: "4px 10px",
+                                                    borderRadius: 999,
+                                                    color:
+                                                        d.status === "online"
+                                                            ? "hsl(var(--status-success))"
+                                                            : d.status === "warning"
+                                                                ? "hsl(var(--status-warning))"
+                                                                : "hsl(var(--text-muted))",
+                                                    background:
+                                                        d.status === "online"
+                                                            ? "hsla(var(--status-success), 0.12)"
+                                                            : d.status === "warning"
+                                                                ? "hsla(var(--status-warning), 0.12)"
+                                                                : "hsla(var(--bg-base), 0.6)",
+                                                }}
+                                            >
+                                                {d.status === "online" ? <Wifi size={12} /> : <WifiOff size={12} />}
+                                                {d.status}
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: "14px 16px", fontSize: "0.85rem" }}>
+                                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                                <MapPin size={12} style={{ color: "hsl(var(--text-muted))" }} />
+                                                {d.location}
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: "14px 16px", fontSize: "0.85rem", maxWidth: 220 }}>
+                                            <span
+                                                style={{
+                                                    display: "block",
+                                                    overflow: "hidden",
+                                                    textOverflow: "ellipsis",
+                                                    whiteSpace: "nowrap",
+                                                    color: d.currentContent ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))",
+                                                }}
+                                                title={d.currentContent || undefined}
+                                            >
+                                                {d.currentContent || "No content assigned"}
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: "14px 16px", fontSize: "0.8rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>
+                                            {d.lastSync}
+                                        </td>
+                                        <td style={{ padding: "10px 16px" }}>
+                                            <div
+                                                style={{
+                                                    display: "flex",
+                                                    justifyContent: "flex-end",
+                                                    gap: 6,
+                                                    flexWrap: "wrap",
+                                                }}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <button
+                                                    className="btn-outline"
+                                                    title="View Details"
+                                                    onClick={() => {
+                                                        setSelectedDevice(d);
+                                                        setIsEditing(false);
+                                                    }}
+                                                    style={{
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        gap: 6,
+                                                        padding: "6px 10px",
+                                                        fontSize: "0.72rem",
+                                                    }}
+                                                >
+                                                    <Eye size={13} /> Details
+                                                </button>
+                                                <button
+                                                    className="btn-outline"
+                                                    title="Edit"
+                                                    disabled={!canEdit || isBusy(d.id)}
+                                                    onClick={() => {
+                                                        setSelectedDevice(d);
+                                                        startEdit(d);
+                                                    }}
+                                                    style={{
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        gap: 6,
+                                                        padding: "6px 10px",
+                                                        fontSize: "0.72rem",
+                                                        opacity: canEdit ? 1 : 0.45,
+                                                        cursor: canEdit ? "pointer" : "not-allowed",
+                                                    }}
+                                                >
+                                                    <Pencil size={13} /> Edit
+                                                </button>
+                                                <button
+                                                    className="btn-outline"
+                                                    title="Unregister Device"
+                                                    disabled={!canControl || isBusy(d.id)}
+                                                    onClick={() => openUnregisterConfirm(d)}
+                                                    style={{
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        gap: 6,
+                                                        padding: "6px 10px",
+                                                        fontSize: "0.72rem",
+                                                        color: "hsl(var(--status-warning))",
+                                                        borderColor: "hsla(var(--status-warning), 0.45)",
+                                                        opacity: canControl ? 1 : 0.45,
+                                                        cursor: canControl ? "pointer" : "not-allowed",
+                                                    }}
+                                                >
+                                                    <Unplug size={13} /> Unregister
+                                                </button>
+                                                <button
+                                                    className="btn-outline"
+                                                    title="Delete Device"
+                                                    disabled={!canControl || isBusy(d.id)}
+                                                    onClick={() => openDeleteConfirm(d)}
+                                                    style={{
+                                                        display: "inline-flex",
+                                                        alignItems: "center",
+                                                        gap: 6,
+                                                        padding: "6px 10px",
+                                                        fontSize: "0.72rem",
+                                                        color: "hsl(var(--status-danger))",
+                                                        borderColor: "hsla(var(--status-danger), 0.45)",
+                                                        opacity: canControl ? 1 : 0.45,
+                                                        cursor: canControl ? "pointer" : "not-allowed",
+                                                    }}
+                                                >
+                                                    <Trash2 size={13} /> Delete
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             )}
+
+            {/* Confirm Unregister / Delete */}
+            <AnimatePresence>
+                {confirmDialog && (
+                    <motion.div
+                        key="device-confirm"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        style={{
+                            position: "fixed",
+                            inset: 0,
+                            background: "hsla(var(--overlay-base), 0.78)",
+                            backdropFilter: "blur(16px)",
+                            zIndex: 120,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: 20,
+                        }}
+                        onClick={() => {
+                            if (!pendingAction) setConfirmDialog(null);
+                        }}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.94, y: 12 }}
+                            animate={{ scale: 1, y: 0 }}
+                            className="glass-panel"
+                            style={{ width: "100%", maxWidth: 440, padding: 28 }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+                                <div
+                                    style={{
+                                        width: 40,
+                                        height: 40,
+                                        borderRadius: 12,
+                                        display: "grid",
+                                        placeItems: "center",
+                                        background:
+                                            confirmDialog.type === "delete"
+                                                ? "hsla(var(--status-danger), 0.12)"
+                                                : "hsla(var(--status-warning), 0.12)",
+                                        color:
+                                            confirmDialog.type === "delete"
+                                                ? "hsl(var(--status-danger))"
+                                                : "hsl(var(--status-warning))",
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    {confirmDialog.type === "delete" ? <Trash2 size={18} /> : <Unplug size={18} />}
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: "1.05rem", fontWeight: 700, marginBottom: 6 }}>
+                                        {confirmDialog.type === "delete" ? "Delete Device?" : "Unregister Device?"}
+                                    </h3>
+                                    {confirmDialog.type === "delete" ? (
+                                        <>
+                                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", lineHeight: 1.5 }}>
+                                                This action will permanently remove <strong>{confirmDialog.device.name}</strong> from the CMS.
+                                            </p>
+                                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginTop: 8, lineHeight: 1.5 }}>
+                                                This action cannot be undone.
+                                            </p>
+                                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 10, lineHeight: 1.45 }}>
+                                                Proof of Play history is preserved. The player must pair again as a new device.
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", lineHeight: 1.5 }}>
+                                                Unregister <strong>{confirmDialog.device.name}</strong>? Pairing and playlist assignment will be removed. The player will return to the Pair Device screen.
+                                            </p>
+                                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginTop: 10, lineHeight: 1.45 }}>
+                                                Proof of Play history is kept. The device can be paired again with a new code.
+                                            </p>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
+                                <button
+                                    className="btn-outline"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => setConfirmDialog(null)}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    className="btn-primary"
+                                    disabled={Boolean(pendingAction)}
+                                    onClick={() => {
+                                        if (confirmDialog.type === "delete") void deleteDevice(confirmDialog.device);
+                                        else void unregisterDevice(confirmDialog.device);
+                                    }}
+                                    style={{
+                                        background:
+                                            confirmDialog.type === "delete"
+                                                ? "hsl(var(--status-danger))"
+                                                : "hsl(var(--status-warning))",
+                                        borderColor: "transparent",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                    }}
+                                >
+                                    {pendingAction === confirmDialog.type ? (
+                                        <RefreshCw size={14} className="spin" />
+                                    ) : confirmDialog.type === "delete" ? (
+                                        <Trash2 size={14} />
+                                    ) : (
+                                        <Unplug size={14} />
+                                    )}
+                                    {confirmDialog.type === "delete" ? "Delete" : "Unregister"}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             {/* Device Detail Panel */}
             <AnimatePresence>
@@ -920,6 +1127,9 @@ export default function DevicesPage() {
                             setDevices((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
                             setSelectedDevice(updated);
                         }}
+                        onEdit={() => startEdit(selectedDevice)}
+                        onUnregister={() => openUnregisterConfirm(selectedDevice)}
+                        onDelete={() => openDeleteConfirm(selectedDevice)}
                         isBusy={isBusy(selectedDevice.id)}
                         pendingAction={pendingAction}
                         onRunAction={runRemoteAction}

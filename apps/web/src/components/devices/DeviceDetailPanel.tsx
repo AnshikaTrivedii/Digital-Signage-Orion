@@ -6,7 +6,7 @@ import { toast } from "react-hot-toast";
 import {
     X, RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Shield,
     Settings, Sliders, Database, ScrollText, Zap, Camera, RotateCcw,
-    Power, Download, Trash2, Upload, Check, XCircle,
+    Power, Download, Trash2, Upload, Check, XCircle, Pencil, Unplug,
 } from "lucide-react";
 import { apiRequest, ApiError } from "@/lib/api";
 import { formatReportDateTime } from "@/lib/format-datetime";
@@ -136,6 +136,9 @@ interface Props {
     orgHeaders?: Record<string, string>;
     onClose: () => void;
     onDeviceUpdated: (device: Device) => void;
+    onEdit?: () => void;
+    onUnregister?: () => void;
+    onDelete?: () => void;
     isBusy: boolean;
     pendingAction: string | null;
     onRunAction: (action: string) => Promise<void>;
@@ -217,6 +220,9 @@ export function DeviceDetailPanel({
     orgHeaders,
     onClose,
     onDeviceUpdated,
+    onEdit,
+    onUnregister,
+    onDelete,
     isBusy,
     pendingAction,
     onRunAction,
@@ -586,39 +592,102 @@ export function DeviceDetailPanel({
                     )}
 
                     {tab === "actions" && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                            {[
-                                { action: "restart-player", label: "Restart Player", icon: RotateCcw, color: undefined },
-                                { action: "restart-device", label: "Restart Device", icon: Power, color: "#f87171" },
-                                { action: "force-sync", label: "Force Sync", icon: RefreshCw, color: undefined },
-                                { action: "clear-cache", label: "Clear Cache", icon: Trash2, color: "#f87171" },
-                                { action: "redownload-playlist", label: "Redownload Playlist", icon: Download, color: undefined },
-                                { action: "upload-logs", label: "Upload Logs", icon: Upload, color: undefined },
-                                { action: "screenshot", label: "Take Screenshot", icon: Camera, color: undefined },
-                                { action: "refresh-status", label: "Refresh Status", icon: RefreshCw, color: undefined },
-                            ].map((item) => (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+                                {[
+                                    { action: "restart-player", label: "Restart Player", icon: RotateCcw, color: undefined },
+                                    { action: "restart-device", label: "Restart Device", icon: Power, color: "#f87171" },
+                                    { action: "force-sync", label: "Force Sync", icon: RefreshCw, color: undefined },
+                                    { action: "clear-cache", label: "Clear Cache", icon: Trash2, color: "#f87171" },
+                                    { action: "redownload-playlist", label: "Redownload Playlist", icon: Download, color: undefined },
+                                    { action: "upload-logs", label: "Upload Logs", icon: Upload, color: undefined },
+                                    { action: "screenshot", label: "Take Screenshot", icon: Camera, color: undefined },
+                                    { action: "refresh-status", label: "Refresh Status", icon: RefreshCw, color: undefined },
+                                ].map((item) => (
+                                    <button
+                                        key={item.action}
+                                        className="btn-outline"
+                                        disabled={!canControl || isBusy}
+                                        onClick={() => void onRunAction(item.action)}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            gap: 8,
+                                            justifyContent: "center",
+                                            padding: 16,
+                                            color: item.color,
+                                            borderColor: item.color,
+                                            opacity: canControl ? 1 : 0.5,
+                                        }}
+                                    >
+                                        <item.icon size={16} className={pendingAction === item.action ? "spin" : ""} />
+                                        {item.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <div
+                                style={{
+                                    borderTop: "1px solid hsla(var(--border-subtle), 0.3)",
+                                    paddingTop: 16,
+                                    display: "grid",
+                                    gridTemplateColumns: "repeat(3, 1fr)",
+                                    gap: 12,
+                                }}
+                            >
                                 <button
-                                    key={item.action}
                                     className="btn-outline"
-                                    disabled={!canControl || isBusy}
-                                    onClick={() => void onRunAction(item.action)}
+                                    disabled={!canEdit || isBusy}
+                                    onClick={() => onEdit?.()}
                                     style={{
                                         display: "flex",
                                         alignItems: "center",
                                         gap: 8,
                                         justifyContent: "center",
                                         padding: 16,
-                                        color: item.color,
-                                        borderColor: item.color,
+                                        opacity: canEdit ? 1 : 0.5,
+                                    }}
+                                >
+                                    <Pencil size={16} /> Edit Device
+                                </button>
+                                <button
+                                    className="btn-outline"
+                                    disabled={!canControl || isBusy}
+                                    onClick={() => onUnregister?.()}
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        justifyContent: "center",
+                                        padding: 16,
+                                        color: "hsl(var(--status-warning))",
+                                        borderColor: "hsla(var(--status-warning), 0.45)",
                                         opacity: canControl ? 1 : 0.5,
                                     }}
                                 >
-                                    <item.icon size={16} className={pendingAction === item.action ? "spin" : ""} />
-                                    {item.label}
+                                    <Unplug size={16} /> Unregister
                                 </button>
-                            ))}
+                                <button
+                                    className="btn-outline"
+                                    disabled={!canControl || isBusy}
+                                    onClick={() => onDelete?.()}
+                                    style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 8,
+                                        justifyContent: "center",
+                                        padding: 16,
+                                        color: "hsl(var(--status-danger))",
+                                        borderColor: "hsla(var(--status-danger), 0.45)",
+                                        opacity: canControl ? 1 : 0.5,
+                                    }}
+                                >
+                                    <Trash2 size={16} /> Delete Device
+                                </button>
+                            </div>
+
                             {device.lastScreenshotUrl && (
-                                <div style={{ gridColumn: "1 / -1", marginTop: 12 }}>
+                                <div style={{ marginTop: 4 }}>
                                     <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
                                         Last Screenshot · {formatReportDateTime(device.lastScreenshotAt ?? null)}
                                     </p>

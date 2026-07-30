@@ -621,14 +621,27 @@ Submit queued proof-of-play analytics. Call every ~5 minutes, or when the offlin
 - `endTime`, `durationSeconds`: optional; server derives missing values when possible
 - `status`: `"VERIFIED"` (played successfully) or `"FAILED"` (playback error)
 
+**One entry per playback.** Send exactly one log for each time an asset finishes playing, with that play's own `startTime`. Never merge a loop into a single entry with a multiplied `durationSeconds` — the server stores what it receives and no longer splits merged entries, so merging under-reports the play count.
+
+**Retries are safe.** `(device, assetName, startTime)` is the unique key of a playback event. If a flush times out and you resend the same queue entries, the server keeps the original rows and reports the resent ones as `duplicates`. Only delete entries from the Room queue after a 2xx response; resending is always preferable to dropping.
+
 **Delayed / offline logs:** The server accepts logs with historical `startTime` values (e.g. generated days ago while offline). There is no maximum age — only timestamps more than 24 hours in the future are rejected. Reports include offline-generated and re-synced PoP logs using the original playback timestamps.
 
 **Response (200):**
 ```json
 {
-  "received": 3
+  "received": 3,
+  "skipped": 0,
+  "duplicates": 0,
+  "accepted": true,
+  "deviceId": "clx...",
+  "deviceName": "Lobby Screen",
+  "popLogsExpected": true
 }
 ```
+- `received`: rows newly stored
+- `duplicates`: entries the server already had (safe to drop from the queue)
+- `skipped`: entries not stored (`duplicates` + malformed entries)
 
 ---
 
@@ -968,6 +981,15 @@ All endpoints return standard HTTP error responses:
 | `404` | Device not found | `{ "message": "Unknown device. Call init-pairing first." }` |
 
 The Android app should handle:
-- **401 errors** on authenticated endpoints → return to the Pairing screen (token may have been revoked)
+- **401 errors** on any authenticated endpoint (`heartbeat`, `sync`, `sync-revision`, `pop-logs`, `cache-report`, `device-report`, `system-logs`) → **immediately**:
+  1. Stop current playback
+  2. Clear stored `deviceToken` / pairing session from EncryptedSharedPreferences
+  3. Navigate to the **Pair Device** screen
+  4. Call `POST /api/player/init-pairing` to obtain a **new** pairing code
+- Detection SLA: with the existing `revisionPollIntervalSeconds` (5s) poll of `GET /api/player/sync-revision`, an unregistered or deleted device must return to pairing **within 30 seconds** (typically within one poll cycle). Do not wait for the longer heartbeat interval alone.
+- **CMS Unregister:** the server clears `deviceToken`, `isPaired`, playlist/layout assignment and org membership. The next authenticated call returns **401**. Re-pair with the new code via CMS "Add Device".
+- **CMS Delete:** the device row is removed. Authenticated calls return **401**. `init-pairing` creates a **brand-new** draft device for the same `hardwareId`. Treat it as a first-time pair.
 - **Network errors** → switch to offline mode, queue logs, retry with exponential backoff
 - **404 on pairing-status** → re-call `init-pairing` to register the device again
+
+> Do **not** continue playback after a 401. The CMS has revoked this player's session.
