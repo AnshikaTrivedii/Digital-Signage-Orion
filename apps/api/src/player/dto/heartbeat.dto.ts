@@ -151,6 +151,11 @@ export class HeartbeatDto {
   @IsString()
   networkStatus?: string;
 
+  /** Echo of the stretch setting currently applied on the player. */
+  @IsOptional()
+  @IsBoolean()
+  stretchToFit?: boolean;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -440,6 +440,7 @@ export class PlayerService {
       initialSyncPending: playerConfig.initialSyncPending,
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
+      display: playerConfig.display,
       ...commandPayload,
     };
   }
@@ -526,6 +527,7 @@ export class PlayerService {
       initialSyncPending: playerConfig.initialSyncPending,
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
+      display: playerConfig.display,
       ...commandPayload,
     };
   }

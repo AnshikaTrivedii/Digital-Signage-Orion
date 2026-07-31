@@ -1071,6 +1071,21 @@ export class ClientDataService {
     return this.deviceManagement.getDeviceSettings(device);
   }
 
+  async updateDeviceDisplaySettings(
+    actor: RequestActor,
+    deviceId: string,
+    body: { orientation?: string; stretchToFit?: boolean },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const updated = await this.deviceManagement.updateDeviceDisplaySettings(
+      deviceId,
+      organizationId,
+      body,
+    );
+    return this.serializeDevice(updated);
+  }
+
   async getDeviceFeatures(actor: RequestActor, deviceId: string) {
     const organizationId = this.getOrgId(actor);
     const device = await this.deviceManagement.findDevice(deviceId, organizationId);
@@ -1336,6 +1351,7 @@ export class ClientDataService {
     deviceModel?: string;
     manufacturer?: string;
     orientation?: string;
+    stretchToFit?: boolean;
     timezone?: string;
     networkStatus?: string;
     wifiSignalStrength?: number;
@@ -1392,12 +1408,14 @@ export class ClientDataService {
       macAddress: device.macAddress ?? '',
       deviceModel: device.deviceModel ?? '',
       manufacturer: device.manufacturer ?? '',
-      orientation: device.orientation ?? 'LANDSCAPE',
+      orientation: this.deviceManagement.normalizeOrientation(device.orientation),
+      stretchToFit: Boolean(device.stretchToFit),
       timezone: device.timezone ?? 'UTC',
       networkStatus: device.networkStatus ?? 'UNKNOWN',
       wifiSignalStrength: device.wifiSignalStrength ?? 0,
       currentAsset: device.currentAsset ?? device.currentContent ?? '—',
       currentPlaylist: device.currentPlaylistName ?? device.currentPlaylist?.name ?? device.currentLayout?.name ?? '—',
+      assignedPlaylist: device.currentPlaylist?.name ?? device.currentLayout?.name ?? null,
       playbackStatus: device.playbackStatus ?? 'UNKNOWN',
       playbackUptimeSeconds: device.playbackUptimeSeconds ?? 0,
       initialSyncState,

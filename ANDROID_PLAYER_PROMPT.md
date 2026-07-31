@@ -78,6 +78,16 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 
 **1. Campaigns are gone (low effort):**
 - The backend no longer has any "Campaign" concept. Playlists now link directly to assets.
+
+**1C. CMS display settings (Stretch to Fit + Orientation) — July 2026:**
+- Heartbeat, device-report, and `/sync` responses now include a `display` object:
+  ```json
+  "display": { "orientation": "LANDSCAPE", "stretchToFit": false }
+  ```
+- `orientation` is `LANDSCAPE` or `PORTRAIT`. Apply it to the playback surface immediately (no app restart).
+- `stretchToFit: true` means every playlist asset must scale to fill the entire display (may crop / ignore aspect ratio). `false` means preserve aspect ratio (letterbox/pillarbox).
+- Track `configVersion`. When it increases, re-apply `display` (and `features`) even if the playlist content is unchanged.
+- Do **not** wait for a full content re-download to apply orientation or stretch changes.
 - The `GET /api/player/sync` manifest is structurally **unchanged** (still a flat, ordered list of assets with `position` + `durationSeconds`). No change needed to playback.
 - In `POST /api/player/pop-logs`, the `campaignName` field is now **deprecated/optional**. Stop sending it (or send `null`). `assetName` + `playlistName` are all that's needed. Do **not** remove it from your data class if that breaks serialization — just leave it null.
 
@@ -822,8 +832,23 @@ data class HeartbeatResponse(
     val revisionPollIntervalSeconds: Int = 5,
     val initialSyncPending: Boolean = false,
     val initialSyncTimeoutSeconds: Int = 120,
+    val configVersion: Int? = null,
+    val features: Map<String, Boolean>? = null,
+    /** CMS-managed display settings. Apply immediately without restarting playback. */
+    val display: PlayerDisplaySettings? = null,
     val command: String? = null,
     val commandId: String? = null,
+)
+
+data class PlayerDisplaySettings(
+    /** LANDSCAPE | PORTRAIT — rotate the playback surface to match. */
+    val orientation: String = "LANDSCAPE",
+    /**
+     * When true, scale every playlist asset (image/video/document/url) to fill
+     * the entire display (may crop / ignore aspect ratio). When false, preserve
+     * aspect ratio (letterbox / pillarbox as needed).
+     */
+    val stretchToFit: Boolean = false,
 )
 
 data class SyncRevisionResponse(
@@ -857,6 +882,9 @@ data class SyncResponse(
     val revisionPollIntervalSeconds: Int = 5,
     val syncIntervalSeconds: Int = 120,
     val initialSyncPending: Boolean = false,
+    val configVersion: Int? = null,
+    val features: Map<String, Boolean>? = null,
+    val display: PlayerDisplaySettings? = null,
 )
 
 data class CacheCommandInfo(

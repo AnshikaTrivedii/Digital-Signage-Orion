@@ -145,8 +145,13 @@ export function hasClientFeatureAccess(
     if (requiredAccess === "NONE") return true;
     if (currentAccess === "NONE") return false;
     if (requiredAccess === "VIEW") return true;
-    if (requiredAccess === "EDIT") return currentAccess === "EDIT" || currentAccess === "MANAGE";
-    if (requiredAccess === "MANAGE") return currentAccess === "MANAGE";
+    // CONTROL is the highest Devices privilege and must include edit/manage capabilities.
+    if (requiredAccess === "EDIT") {
+        return currentAccess === "EDIT" || currentAccess === "MANAGE" || currentAccess === "CONTROL";
+    }
+    if (requiredAccess === "MANAGE") {
+        return currentAccess === "MANAGE" || currentAccess === "CONTROL";
+    }
     if (requiredAccess === "CONTROL") return currentAccess === "CONTROL" || currentAccess === "MANAGE";
     return false;
 }

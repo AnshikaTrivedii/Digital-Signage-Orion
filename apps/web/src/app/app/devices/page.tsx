@@ -39,9 +39,11 @@ interface Device {
     deviceModel?: string;
     manufacturer?: string;
     orientation?: string;
+    stretchToFit?: boolean;
     timezone?: string;
     lastScreenshotUrl?: string | null;
     lastScreenshotAt?: string | null;
+    assignedPlaylist?: string | null;
     initialSyncState?: "none" | "pending" | "timed_out";
     pendingInitialSync?: boolean;
     initialSyncRequestedAt?: string | null;
@@ -172,6 +174,10 @@ export default function DevicesPage() {
                 headers: { "x-organization-id": activeOrganizationId },
             });
             setDevices(response);
+            setSelectedDevice((current) => {
+                if (!current) return current;
+                return response.find((d) => d.id === current.id) ?? current;
+            });
         } catch (error) {
             setLoadError(describeError(error, "Failed to load devices"));
         } finally {
@@ -184,11 +190,12 @@ export default function DevicesPage() {
     }, [loadDevices]);
 
     useEffect(() => {
+        const intervalMs = selectedDevice ? 5000 : 30000;
         const interval = setInterval(() => {
             if (activeOrganizationId) void loadDevices();
-        }, 30000);
+        }, intervalMs);
         return () => clearInterval(interval);
-    }, [activeOrganizationId, loadDevices]);
+    }, [activeOrganizationId, loadDevices, selectedDevice]);
 
     const loadDeviceCache = useCallback(async (deviceId: string) => {
         if (!activeOrganizationId) return;
@@ -886,11 +893,15 @@ export default function DevicesPage() {
                                                     overflow: "hidden",
                                                     textOverflow: "ellipsis",
                                                     whiteSpace: "nowrap",
-                                                    color: d.currentContent ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))",
+                                                    color: d.assignedPlaylist || (d.currentContent && d.currentContent !== "N/A")
+                                                        ? "hsl(var(--text-primary))"
+                                                        : "hsl(var(--text-muted))",
                                                 }}
-                                                title={d.currentContent || undefined}
+                                                title={d.assignedPlaylist || d.currentContent || undefined}
                                             >
-                                                {d.currentContent || "No content assigned"}
+                                                {d.assignedPlaylist
+                                                    || (d.currentContent && d.currentContent !== "N/A" ? d.currentContent : null)
+                                                    || "No Playlist Assigned"}
                                             </span>
                                         </td>
                                         <td style={{ padding: "14px 16px", fontSize: "0.8rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>

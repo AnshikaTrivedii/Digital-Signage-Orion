@@ -424,6 +424,8 @@ model Device {
   deviceModel    String    @default("")
   manufacturer   String    @default("")
   orientation    String    @default("LANDSCAPE")
+  /// When true, the player stretches playlist assets to fill the full display.
+  stretchToFit   Boolean   @default(false)
   timezone       String    @default("UTC")
 
   // Health telemetry

@@ -1,18 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    X, RefreshCw, Cpu, HardDrive, Thermometer, Wifi, Shield,
-    Settings, Sliders, Database, ScrollText, Zap, Camera, RotateCcw,
-    Power, Download, Trash2, Upload, Check, XCircle, Pencil, Unplug,
+    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2,
 } from "lucide-react";
 import { apiRequest, ApiError } from "@/lib/api";
-import { formatReportDateTime } from "@/lib/format-datetime";
-import { buildDeviceLogsQuery } from "@/lib/pagination";
-
-type Tab = "overview" | "health" | "permissions" | "settings" | "features" | "cache" | "logs" | "actions";
 
 interface Device {
     id: string;
@@ -37,8 +31,11 @@ interface Device {
     deviceModel?: string;
     manufacturer?: string;
     orientation?: string;
+    stretchToFit?: boolean;
     timezone?: string;
     currentContent: string;
+    assignedPlaylist?: string | null;
+    currentPlaylist?: string;
     lastScreenshotUrl?: string | null;
     lastScreenshotAt?: string | null;
     cache?: {
@@ -54,79 +51,17 @@ interface Device {
     };
 }
 
-interface DeviceHealth {
-    cpu: number;
-    ram: number;
-    temp: number;
-    storage: { totalBytes: number; freeBytes: number; usedBytes: number; totalLabel: string; freeLabel: string; usedLabel: string };
-    cacheSizeBytes: number;
-    cacheSizeLabel: string;
-    networkStatus: string;
-    wifiSignalStrength: number;
-    currentPlaylist: string;
-    currentAsset: string;
-    playbackStatus: string;
-    playbackUptime: string;
-    lastUpdated: string | null;
-}
-
-interface DevicePermissions {
-    permissions: Record<string, boolean>;
-    allGranted: boolean;
-    lastReportedAt: string | null;
-}
-
-interface DeviceSettings {
-    brightness: number;
-    volume: number;
-    screenTimeoutSeconds: number;
+interface DeviceLiveStatus {
+    deviceId: string;
+    deviceName: string;
+    status: string;
+    online: boolean;
     orientation: string;
-    resolution: string;
-    timezone: string;
-    lastReportedAt: string | null;
-}
-
-interface DeviceFeatures {
-    configVersion: number;
-    features: Record<string, boolean>;
-}
-
-interface DeviceLog {
-    id: string;
-    category: string;
-    message: string;
-    createdAt: string;
-}
-
-interface DeviceCacheStatus {
-    offlineCache: {
-        currentPlaylist: string;
-        playlistVersion: number | null;
-        lastSyncTime: string;
-        totalCacheBytes: number;
-        cachedAssetCount: number;
-        expectedAssetCount: number;
-        storageUsedBytes: number;
-        storageTotalBytes: number;
-        pendingDownloads: number;
-    };
-    syncStatus: {
-        online: boolean;
-        lastSuccessfulSync: string | null;
-        lastFailedSync: string | null;
-        lastSyncError: string | null;
-        pendingDownloads: number;
-    };
-    assets?: {
-        id: string;
-        assetName: string;
-        assetType: string;
-        playlist: string;
-        fileSizeLabel: string;
-        downloadStatus: string;
-        localCacheStatus: string;
-        downloadedAt: string | null;
-    }[];
+    stretchToFit: boolean;
+    lastSeen: string | null;
+    lastSyncTime: string | null;
+    assignedPlaylist: string | null;
+    currentContent: string;
 }
 
 interface Props {
@@ -144,73 +79,39 @@ interface Props {
     onRunAction: (action: string) => Promise<void>;
 }
 
-const PERM_LABELS: Record<string, string> = {
-    internet: "Internet Permission",
-    storage: "Storage Permission",
-    foregroundService: "Foreground Service",
-    bootReceiver: "Boot Receiver",
-    wakeLock: "Wake Lock",
-    notification: "Notification Permission",
-    batteryOptimizationDisabled: "Battery Optimization Disabled",
-    autoStart: "Auto Start Enabled",
-    kioskMode: "Kiosk Mode Enabled",
-};
-
-const FEATURE_LABELS: Record<string, string> = {
-    autoSync: "Auto Sync",
-    offlinePlayback: "Offline Playback",
-    proofOfPlay: "Proof Of Play",
-    ticker: "Ticker",
-    watchdog: "Watchdog",
-    crashRecovery: "Crash Recovery",
-    backgroundSync: "Background Sync",
-    autoDownload: "Auto Download",
-    remoteLogs: "Remote Logs",
-};
-
-const LOG_CATEGORIES = ["all", "boot", "crash", "restart", "sync", "download", "proof_of_play", "error"];
-
 function describeError(error: unknown, fallback: string) {
     if (error instanceof ApiError) return error.message || fallback;
     if (error instanceof Error) return error.message || fallback;
     return fallback;
 }
 
-function formatBytes(bytes: number) {
-    if (bytes <= 0) return "0 B";
-    const units = ["B", "KB", "MB", "GB"];
-    const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-    const value = bytes / 1024 ** index;
-    return `${value >= 10 || index === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`;
+function normalizeOrientation(value?: string | null): "LANDSCAPE" | "PORTRAIT" {
+    return (value ?? "LANDSCAPE").trim().toUpperCase() === "PORTRAIT" ? "PORTRAIT" : "LANDSCAPE";
 }
 
-function metricBar(value: number, color: string) {
-    return (
-        <div style={{ height: 6, borderRadius: 3, background: "hsla(var(--border-subtle), 0.2)", overflow: "hidden" }}>
-            <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, value)}%` }}
-                transition={{ duration: 0.8 }}
-                style={{
-                    height: "100%",
-                    background: value > 80 ? "hsl(var(--status-danger))" : color,
-                    borderRadius: 3,
-                }}
-            />
-        </div>
-    );
+function resolvePlaylistLabel(device: Device, live?: DeviceLiveStatus | null) {
+    const fromLive = live?.assignedPlaylist?.trim();
+    if (fromLive) return fromLive;
+    const fromDevice = device.assignedPlaylist?.trim()
+        || (device.currentContent !== "N/A" ? device.currentContent?.trim() : "")
+        || "";
+    return fromDevice || null;
 }
 
-function statusDot(status: string) {
-    const c = status === "online" ? "#4ade80" : status === "warning" ? "#fbbf24" : "#f87171";
-    return {
-        width: 10,
-        height: 10,
-        borderRadius: "50%",
-        background: c,
-        boxShadow: `0 0 10px ${c}`,
-        flexShrink: 0,
-    };
+/** Relative label for last successful sync — ticks every second via `nowMs`. */
+function formatRelativeSync(iso: string | null | undefined, nowMs: number): string {
+    if (!iso) return "Never synced";
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return "Never synced";
+    const seconds = Math.max(0, Math.floor((nowMs - then) / 1000));
+    if (seconds < 5) return "Just now";
+    if (seconds < 60) return `${seconds} sec ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
 export function DeviceDetailPanel({
@@ -224,480 +125,459 @@ export function DeviceDetailPanel({
     onUnregister,
     onDelete,
     isBusy,
-    pendingAction,
-    onRunAction,
 }: Props) {
-    const [tab, setTab] = useState<Tab>("overview");
-    const [health, setHealth] = useState<DeviceHealth | null>(null);
-    const [permissions, setPermissions] = useState<DevicePermissions | null>(null);
-    const [settings, setSettings] = useState<DeviceSettings | null>(null);
-    const [features, setFeatures] = useState<DeviceFeatures | null>(null);
-    const [logs, setLogs] = useState<DeviceLog[]>([]);
-    const [logCategory, setLogCategory] = useState("all");
-    const [cache, setCache] = useState<DeviceCacheStatus | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [statusInfo, setStatusInfo] = useState<Record<string, string> | null>(null);
+    const [live, setLive] = useState<DeviceLiveStatus | null>(null);
+    const [orientation, setOrientation] = useState<"LANDSCAPE" | "PORTRAIT">(
+        normalizeOrientation(device.orientation),
+    );
+    const [stretchToFit, setStretchToFit] = useState(Boolean(device.stretchToFit));
+    const [saving, setSaving] = useState<"orientation" | "stretch" | null>(null);
+    const [nowMs, setNowMs] = useState(() => Date.now());
+    const canChangeDisplay = canEdit || canControl;
 
     const base = `/api/client-data/devices/${device.id}`;
+    const deviceRef = useRef(device);
+    deviceRef.current = device;
+    const onUpdatedRef = useRef(onDeviceUpdated);
+    onUpdatedRef.current = onDeviceUpdated;
 
-    const loadHealth = useCallback(async () => {
+    const refreshLive = useCallback(async () => {
         try {
-            const data = await apiRequest<DeviceHealth>(`${base}/health`, { headers: orgHeaders });
-            setHealth(data);
-        } catch { /* silent on poll */ }
-    }, [base, orgHeaders]);
+            const data = await apiRequest<DeviceLiveStatus>(`${base}/status`, {
+                headers: orgHeaders,
+            });
+            setLive(data);
+            setOrientation(normalizeOrientation(data.orientation));
+            setStretchToFit(Boolean(data.stretchToFit));
 
-    const loadAll = useCallback(async () => {
-        setLoading(true);
-        try {
-            const [status, healthData, perms, sett, feat, cacheData, logsData] = await Promise.all([
-                apiRequest<Record<string, string>>(`${base}/status`, { headers: orgHeaders }),
-                apiRequest<DeviceHealth>(`${base}/health`, { headers: orgHeaders }),
-                apiRequest<DevicePermissions>(`${base}/permissions`, { headers: orgHeaders }),
-                apiRequest<DeviceSettings>(`${base}/settings`, { headers: orgHeaders }),
-                apiRequest<DeviceFeatures>(`${base}/features`, { headers: orgHeaders }),
-                apiRequest<DeviceCacheStatus>(`${base}/cache/refresh-status`, { method: "POST", headers: orgHeaders }),
-                apiRequest<{ logs: DeviceLog[] }>(`${base}/logs${buildDeviceLogsQuery({ limit: 50 })}`, { headers: orgHeaders }),
-            ]);
-            setStatusInfo(status);
-            setHealth(healthData);
-            setPermissions(perms);
-            setSettings(sett);
-            setFeatures(feat);
-            setCache(cacheData);
-            setLogs(logsData.logs);
-        } catch (error) {
-            toast.error(describeError(error, "Failed to load device details"));
-        } finally {
-            setLoading(false);
+            const status = (data.status === "online" || data.status === "warning" || data.status === "offline")
+                ? data.status
+                : (data.online ? "online" : "offline");
+
+            const current = deviceRef.current;
+            const next: Device = {
+                ...current,
+                name: data.deviceName || current.name,
+                status,
+                orientation: normalizeOrientation(data.orientation),
+                stretchToFit: Boolean(data.stretchToFit),
+                lastSeen: data.lastSeen,
+                lastSyncTime: data.lastSyncTime,
+                assignedPlaylist: data.assignedPlaylist,
+                currentContent: data.assignedPlaylist ?? data.currentContent ?? "N/A",
+            };
+
+            const changed =
+                next.status !== current.status
+                || next.name !== current.name
+                || next.orientation !== current.orientation
+                || Boolean(next.stretchToFit) !== Boolean(current.stretchToFit)
+                || next.lastSeen !== current.lastSeen
+                || next.lastSyncTime !== current.lastSyncTime
+                || next.assignedPlaylist !== current.assignedPlaylist
+                || next.currentContent !== current.currentContent;
+
+            if (changed) onUpdatedRef.current(next);
+        } catch {
+            /* keep last known values on poll failure */
         }
     }, [base, orgHeaders]);
 
     useEffect(() => {
-        void loadAll();
-    }, [loadAll]);
+        void refreshLive();
+        const poll = setInterval(() => { void refreshLive(); }, 5000);
+        return () => clearInterval(poll);
+    }, [refreshLive]);
 
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (tab === "health" || tab === "overview") void loadHealth();
-        }, 15000);
-        return () => clearInterval(interval);
-    }, [tab, loadHealth]);
+        const tick = setInterval(() => setNowMs(Date.now()), 1000);
+        return () => clearInterval(tick);
+    }, []);
 
-    const loadLogs = async (category: string) => {
-        setLogCategory(category);
-        try {
-            const data = await apiRequest<{ logs: DeviceLog[] }>(
-                `${base}/logs${buildDeviceLogsQuery({ category, limit: 100 })}`,
-                { headers: orgHeaders },
-            );
-            setLogs(data.logs);
-        } catch (error) {
-            toast.error(describeError(error, "Failed to load logs"));
+    useEffect(() => {
+        setOrientation(normalizeOrientation(device.orientation));
+        setStretchToFit(Boolean(device.stretchToFit));
+    }, [device.id, device.orientation, device.stretchToFit]);
+
+    const patchDisplay = async (body: { orientation?: "LANDSCAPE" | "PORTRAIT"; stretchToFit?: boolean }) => {
+        if (!canChangeDisplay) {
+            toast.error("You only have view access to devices.");
+            return;
         }
-    };
-
-    const toggleFeature = async (key: string, value: boolean) => {
-        if (!canEdit) return;
+        const key = body.orientation !== undefined ? "orientation" : "stretch";
+        setSaving(key);
+        // Optimistic UI so the switch moves immediately.
+        if (typeof body.stretchToFit === "boolean") setStretchToFit(body.stretchToFit);
+        if (body.orientation) setOrientation(body.orientation);
         try {
-            const body = { [key]: value };
-            const updated = await apiRequest<DeviceFeatures>(`${base}/features`, {
+            const updated = await apiRequest<Device>(`${base}/settings`, {
                 method: "PATCH",
                 headers: orgHeaders,
                 body: JSON.stringify(body),
             });
-            setFeatures(updated);
-            toast.success(`${FEATURE_LABELS[key] ?? key} updated`);
+            onDeviceUpdated(updated);
+            if (body.orientation) setOrientation(normalizeOrientation(updated.orientation));
+            if (typeof body.stretchToFit === "boolean") setStretchToFit(Boolean(updated.stretchToFit));
+            toast.success(body.orientation ? "Screen orientation updated" : "Stretch to Fit updated");
         } catch (error) {
-            toast.error(describeError(error, "Failed to update feature"));
+            toast.error(describeError(error, "Failed to update display settings"));
+            await refreshLive();
+        } finally {
+            setSaving(null);
         }
     };
 
-    const tabs: { id: Tab; label: string; icon: typeof Cpu }[] = [
-        { id: "overview", label: "Info", icon: Wifi },
-        { id: "health", label: "Health", icon: Cpu },
-        { id: "permissions", label: "Permissions", icon: Shield },
-        { id: "settings", label: "Settings", icon: Settings },
-        { id: "features", label: "Features", icon: Sliders },
-        { id: "cache", label: "Cache", icon: Database },
-        { id: "logs", label: "Logs", icon: ScrollText },
-        { id: "actions", label: "Actions", icon: Zap },
-    ];
-
-    const infoItems = [
-        { label: "Device ID", value: device.id },
-        { label: "Hardware ID", value: device.hardwareId ?? statusInfo?.hardwareId ?? "—" },
-        { label: "Device Name", value: device.name },
-        { label: "Android Version", value: device.androidVersion ?? device.os },
-        { label: "Orion Player", value: device.playerVersion || "—" },
-        { label: "Status", value: device.status },
-        { label: "Last Seen", value: formatReportDateTime(device.lastSeen ?? statusInfo?.lastSeen ?? null) },
-        { label: "Last Sync", value: formatReportDateTime(device.lastSyncTime ?? null) },
-        { label: "IP Address", value: device.ip },
-        { label: "MAC Address", value: device.macAddress || "—" },
-        { label: "Model", value: device.deviceModel || "—" },
-        { label: "Manufacturer", value: device.manufacturer || "—" },
-        { label: "Resolution", value: device.resolution },
-        { label: "Orientation", value: device.orientation ?? "—" },
-        { label: "Timezone", value: device.timezone ?? "—" },
-    ];
+    const effectiveStatus = live?.status ?? device.status;
+    const isOnline = effectiveStatus === "online" || effectiveStatus === "warning";
+    const playlistLabel = resolvePlaylistLabel(device, live);
+    const lastSyncIso = live?.lastSyncTime ?? device.lastSyncTime ?? null;
 
     return (
         <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            style={{
-                position: "fixed",
-                inset: 0,
-                background: "hsla(var(--overlay-base), 0.78)",
-                backdropFilter: "blur(16px)",
-                zIndex: 100,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: 20,
-            }}
+            className="device-detail-overlay"
             onClick={onClose}
         >
             <motion.div
-                initial={{ scale: 0.9, y: 20 }}
+                initial={{ scale: 0.96, y: 16 }}
                 animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.9, y: 20 }}
-                className="glass-panel"
-                style={{ width: "100%", maxWidth: 1100, maxHeight: "92vh", overflow: "hidden", display: "flex", flexDirection: "column" }}
+                exit={{ scale: 0.96, y: 16 }}
+                className="device-detail-panel"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div style={{ padding: "20px 28px", borderBottom: "1px solid hsla(var(--border-subtle), 0.3)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                        <div style={statusDot(device.status)} />
-                        <div>
-                            <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{device.name}</h2>
-                            <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>{device.location}</p>
-                        </div>
+                <header className="device-detail-header">
+                    <div>
+                        <p className="device-detail-kicker">Device Details</p>
+                        <h2 className="device-detail-title">{device.name}</h2>
                     </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <button className="btn-outline" onClick={() => void loadAll()} disabled={loading} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem" }}>
-                            <RefreshCw size={14} className={loading ? "spin" : ""} /> Refresh
-                        </button>
-                        <button className="btn-icon-soft" onClick={onClose}><X size={22} /></button>
-                    </div>
-                </div>
+                    <button type="button" className="btn-icon-soft" onClick={onClose} aria-label="Close">
+                        <X size={20} />
+                    </button>
+                </header>
 
-                <div style={{ display: "flex", gap: 4, padding: "12px 20px", borderBottom: "1px solid hsla(var(--border-subtle), 0.2)", overflowX: "auto" }}>
-                    {tabs.map((t) => (
-                        <button
-                            key={t.id}
-                            onClick={() => setTab(t.id)}
-                            style={{
-                                padding: "8px 14px",
-                                borderRadius: 8,
-                                border: "none",
-                                cursor: "pointer",
-                                fontSize: "0.75rem",
-                                fontWeight: 600,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                                whiteSpace: "nowrap",
-                                background: tab === t.id ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                                color: tab === t.id ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                            }}
-                        >
-                            <t.icon size={14} /> {t.label}
-                        </button>
-                    ))}
-                </div>
-
-                <div style={{ padding: 28, overflow: "auto", flex: 1 }}>
-                    {tab === "overview" && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                            {infoItems.map((item) => (
-                                <div key={item.label} style={{ padding: 14, borderRadius: 12, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
-                                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
-                                    <p style={{ fontSize: "0.9rem", fontWeight: 600, wordBreak: "break-word" }}>{item.value}</p>
-                                </div>
-                            ))}
+                <div className="device-detail-grid">
+                    {/* Status */}
+                    <section className="device-detail-card">
+                        <p className="device-detail-label">Device Status</p>
+                        <div className={`device-status-pill ${isOnline ? "is-online" : "is-offline"}`}>
+                            <span className="device-status-dot" />
+                            <span>{isOnline ? "Online" : "Offline"}</span>
                         </div>
-                    )}
+                    </section>
 
-                    {tab === "health" && health && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
-                                Auto-refreshes every 15s · Last updated {formatReportDateTime(health.lastUpdated)}
-                            </p>
-                            {[
-                                { label: "CPU Usage", value: health.cpu, unit: "%", color: "hsl(var(--accent-primary))" },
-                                { label: "RAM Usage", value: health.ram, unit: "%", color: "hsl(var(--accent-secondary))" },
-                                { label: "Temperature", value: health.temp, unit: "°C", color: "hsl(var(--status-warning))" },
-                            ].map((m) => (
-                                <div key={m.label}>
-                                    <div className="flex-between" style={{ marginBottom: 6 }}>
-                                        <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{m.label}</span>
-                                        <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>{m.value}{m.unit}</span>
-                                    </div>
-                                    {metricBar(m.label === "Temperature" ? Math.min(100, health.temp) : m.value, m.color)}
-                                </div>
-                            ))}
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                                {[
-                                    { label: "Internal Storage", value: `${health.storage.usedLabel} / ${health.storage.totalLabel}` },
-                                    { label: "Free Storage", value: health.storage.freeLabel },
-                                    { label: "Cache Size", value: health.cacheSizeLabel },
-                                    { label: "Network", value: health.networkStatus },
-                                    { label: "WiFi Signal", value: `${health.wifiSignalStrength} dBm` },
-                                    { label: "Current Playlist", value: health.currentPlaylist },
-                                    { label: "Current Asset", value: health.currentAsset },
-                                    { label: "Playback Status", value: health.playbackStatus },
-                                    { label: "Playback Uptime", value: health.playbackUptime },
-                                ].map((item) => (
-                                    <div key={item.label} style={{ padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.3)" }}>
-                                        <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
-                                        <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{item.value}</p>
-                                    </div>
-                                ))}
+                    {/* Playlist */}
+                    <section className="device-detail-card">
+                        <p className="device-detail-label">Assigned Playlist</p>
+                        <div className="device-detail-value-row">
+                            <ListVideo size={18} className="device-detail-value-icon" />
+                            <span className={playlistLabel ? "device-detail-value" : "device-detail-value is-muted"}>
+                                {playlistLabel ?? "No Playlist Assigned"}
+                            </span>
+                        </div>
+                    </section>
+
+                    {/* Stretch to Fit */}
+                    <section className="device-detail-card device-detail-card-span">
+                        <div className="device-detail-row-between">
+                            <div>
+                                <p className="device-detail-label">Stretch to Fit</p>
+                                <p className="device-detail-hint">
+                                    When enabled, all assets in the currently assigned playlist will automatically stretch to fill the entire display.
+                                </p>
                             </div>
-                        </div>
-                    )}
-
-                    {tab === "permissions" && permissions && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
-                            {Object.entries(permissions.permissions).map(([key, granted]) => (
-                                <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, padding: 14, borderRadius: 10, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.3)" }}>
-                                    {granted ? <Check size={18} style={{ color: "#4ade80" }} /> : <XCircle size={18} style={{ color: "#f87171" }} />}
-                                    <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{PERM_LABELS[key] ?? key}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {tab === "settings" && settings && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
-                            {[
-                                { label: "Brightness", value: `${settings.brightness}%` },
-                                { label: "Volume", value: `${settings.volume}%` },
-                                { label: "Screen Timeout", value: `${settings.screenTimeoutSeconds}s` },
-                                { label: "Orientation", value: settings.orientation },
-                                { label: "Resolution", value: settings.resolution },
-                                { label: "Timezone", value: settings.timezone },
-                            ].map((item) => (
-                                <div key={item.label} style={{ padding: 14, borderRadius: 12, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
-                                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
-                                    <p style={{ fontSize: "1rem", fontWeight: 600 }}>{item.value}</p>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-
-                    {tab === "features" && features && (
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
-                            {Object.entries(features.features).map(([key, enabled]) => (
-                                <label key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 14, borderRadius: 10, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.3)", cursor: canEdit ? "pointer" : "default" }}>
-                                    <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>{FEATURE_LABELS[key] ?? key}</span>
-                                    <input
-                                        type="checkbox"
-                                        checked={enabled}
-                                        disabled={!canEdit}
-                                        onChange={(e) => void toggleFeature(key, e.target.checked)}
-                                        style={{ width: 18, height: 18, accentColor: "hsl(var(--accent-primary))" }}
-                                    />
-                                </label>
-                            ))}
-                        </div>
-                    )}
-
-                    {tab === "cache" && cache && (
-                        <div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 20 }}>
-                                {[
-                                    { label: "Current Playlist", value: cache.offlineCache.currentPlaylist },
-                                    { label: "Downloaded Assets", value: `${cache.offlineCache.cachedAssetCount} / ${cache.offlineCache.expectedAssetCount}` },
-                                    { label: "Cache Size", value: formatBytes(cache.offlineCache.totalCacheBytes) },
-                                    { label: "Storage Used", value: formatBytes(cache.offlineCache.storageUsedBytes) },
-                                    { label: "Last Sync", value: formatReportDateTime(cache.offlineCache.lastSyncTime) },
-                                    { label: "Pending Downloads", value: cache.offlineCache.pendingDownloads },
-                                ].map((item) => (
-                                    <div key={item.label} style={{ padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.3)" }}>
-                                        <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{item.label}</p>
-                                        <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{item.value}</p>
-                                    </div>
-                                ))}
-                            </div>
-                            {(cache.assets ?? []).length > 0 && (
-                                <div style={{ overflowX: "auto", borderRadius: 12, border: "1px solid hsla(var(--border-subtle), 0.35)" }}>
-                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
-                                        <thead>
-                                            <tr style={{ background: "hsla(var(--bg-base), 0.45)", textAlign: "left" }}>
-                                                {["Asset", "Type", "Playlist", "Size", "Status"].map((h) => (
-                                                    <th key={h} style={{ padding: "10px 12px", color: "hsl(var(--text-muted))", fontWeight: 700 }}>{h}</th>
-                                                ))}
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {(cache.assets ?? []).map((a) => (
-                                                <tr key={a.id} style={{ borderTop: "1px solid hsla(var(--border-subtle), 0.25)" }}>
-                                                    <td style={{ padding: "10px 12px", fontWeight: 600 }}>{a.assetName}</td>
-                                                    <td style={{ padding: "10px 12px" }}>{a.assetType}</td>
-                                                    <td style={{ padding: "10px 12px" }}>{a.playlist}</td>
-                                                    <td style={{ padding: "10px 12px" }}>{a.fileSizeLabel}</td>
-                                                    <td style={{ padding: "10px 12px", textTransform: "capitalize" }}>{a.localCacheStatus}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {tab === "logs" && (
-                        <div>
-                            <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-                                {LOG_CATEGORIES.map((cat) => (
-                                    <button
-                                        key={cat}
-                                        onClick={() => void loadLogs(cat)}
-                                        style={{
-                                            padding: "6px 12px",
-                                            borderRadius: 8,
-                                            border: "none",
-                                            cursor: "pointer",
-                                            fontSize: "0.75rem",
-                                            fontWeight: 600,
-                                            textTransform: "capitalize",
-                                            background: logCategory === cat ? "hsla(var(--accent-primary), 0.15)" : "hsla(var(--bg-base), 0.5)",
-                                            color: logCategory === cat ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                                        }}
-                                    >
-                                        {cat.replace(/_/g, " ")}
-                                    </button>
-                                ))}
-                            </div>
-                            {logs.length === 0 ? (
-                                <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>No system logs recorded yet.</p>
-                            ) : (
-                                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 400, overflow: "auto" }}>
-                                    {logs.map((log) => (
-                                        <div key={log.id} style={{ padding: 12, borderRadius: 8, background: "hsla(var(--bg-base), 0.35)", border: "1px solid hsla(var(--border-subtle), 0.25)" }}>
-                                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                                                <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "hsl(var(--accent-primary))", textTransform: "uppercase" }}>{log.category}</span>
-                                                <span style={{ fontSize: "0.7rem", color: "hsl(var(--text-muted))" }}>{formatReportDateTime(log.createdAt)}</span>
-                                            </div>
-                                            <p style={{ fontSize: "0.85rem" }}>{log.message}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {tab === "actions" && (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
-                                {[
-                                    { action: "restart-player", label: "Restart Player", icon: RotateCcw, color: undefined },
-                                    { action: "restart-device", label: "Restart Device", icon: Power, color: "#f87171" },
-                                    { action: "force-sync", label: "Force Sync", icon: RefreshCw, color: undefined },
-                                    { action: "clear-cache", label: "Clear Cache", icon: Trash2, color: "#f87171" },
-                                    { action: "redownload-playlist", label: "Redownload Playlist", icon: Download, color: undefined },
-                                    { action: "upload-logs", label: "Upload Logs", icon: Upload, color: undefined },
-                                    { action: "screenshot", label: "Take Screenshot", icon: Camera, color: undefined },
-                                    { action: "refresh-status", label: "Refresh Status", icon: RefreshCw, color: undefined },
-                                ].map((item) => (
-                                    <button
-                                        key={item.action}
-                                        className="btn-outline"
-                                        disabled={!canControl || isBusy}
-                                        onClick={() => void onRunAction(item.action)}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            gap: 8,
-                                            justifyContent: "center",
-                                            padding: 16,
-                                            color: item.color,
-                                            borderColor: item.color,
-                                            opacity: canControl ? 1 : 0.5,
-                                        }}
-                                    >
-                                        <item.icon size={16} className={pendingAction === item.action ? "spin" : ""} />
-                                        {item.label}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div
-                                style={{
-                                    borderTop: "1px solid hsla(var(--border-subtle), 0.3)",
-                                    paddingTop: 16,
-                                    display: "grid",
-                                    gridTemplateColumns: "repeat(3, 1fr)",
-                                    gap: 12,
-                                }}
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={stretchToFit}
+                                aria-label="Stretch to Fit"
+                                disabled={!canChangeDisplay || saving === "stretch" || isBusy}
+                                className={`device-toggle ${stretchToFit ? "is-on" : ""}`}
+                                onClick={() => void patchDisplay({ stretchToFit: !stretchToFit })}
                             >
-                                <button
-                                    className="btn-outline"
-                                    disabled={!canEdit || isBusy}
-                                    onClick={() => onEdit?.()}
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 8,
-                                        justifyContent: "center",
-                                        padding: 16,
-                                        opacity: canEdit ? 1 : 0.5,
-                                    }}
-                                >
-                                    <Pencil size={16} /> Edit Device
-                                </button>
-                                <button
-                                    className="btn-outline"
-                                    disabled={!canControl || isBusy}
-                                    onClick={() => onUnregister?.()}
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 8,
-                                        justifyContent: "center",
-                                        padding: 16,
-                                        color: "hsl(var(--status-warning))",
-                                        borderColor: "hsla(var(--status-warning), 0.45)",
-                                        opacity: canControl ? 1 : 0.5,
-                                    }}
-                                >
-                                    <Unplug size={16} /> Unregister
-                                </button>
-                                <button
-                                    className="btn-outline"
-                                    disabled={!canControl || isBusy}
-                                    onClick={() => onDelete?.()}
-                                    style={{
-                                        display: "flex",
-                                        alignItems: "center",
-                                        gap: 8,
-                                        justifyContent: "center",
-                                        padding: 16,
-                                        color: "hsl(var(--status-danger))",
-                                        borderColor: "hsla(var(--status-danger), 0.45)",
-                                        opacity: canControl ? 1 : 0.5,
-                                    }}
-                                >
-                                    <Trash2 size={16} /> Delete Device
-                                </button>
-                            </div>
-
-                            {device.lastScreenshotUrl && (
-                                <div style={{ marginTop: 4 }}>
-                                    <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 8 }}>
-                                        Last Screenshot · {formatReportDateTime(device.lastScreenshotAt ?? null)}
-                                    </p>
-                                    <img src={device.lastScreenshotUrl} alt="Device screenshot" style={{ maxWidth: "100%", borderRadius: 12, border: "1px solid hsla(var(--border-subtle), 0.3)" }} />
-                                </div>
-                            )}
+                                <span className="device-toggle-thumb" />
+                            </button>
                         </div>
-                    )}
+                    </section>
+
+                    {/* Orientation */}
+                    <section className="device-detail-card device-detail-card-span">
+                        <p className="device-detail-label">Screen Orientation</p>
+                        <div className="device-orient-seg" role="tablist" aria-label="Screen orientation">
+                            {([
+                                { id: "LANDSCAPE" as const, label: "Landscape", icon: Monitor },
+                                { id: "PORTRAIT" as const, label: "Portrait", icon: Monitor },
+                            ]).map((opt) => {
+                                const Icon = opt.icon;
+                                const active = orientation === opt.id;
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={active}
+                                        disabled={!canChangeDisplay || saving === "orientation" || isBusy}
+                                        className={`device-orient-pill ${active ? "is-active" : ""}`}
+                                        onClick={() => {
+                                            if (orientation === opt.id) return;
+                                            void patchDisplay({ orientation: opt.id });
+                                        }}
+                                    >
+                                        <Icon
+                                            size={16}
+                                            style={opt.id === "PORTRAIT" ? { transform: "rotate(90deg)" } : undefined}
+                                        />
+                                        {opt.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </section>
+
+                    {/* Last Sync */}
+                    <section className="device-detail-card device-detail-card-span">
+                        <p className="device-detail-label">Last Sync</p>
+                        <div className="device-detail-value-row">
+                            <Clock size={18} className="device-detail-value-icon" />
+                            <span className="device-detail-value">{formatRelativeSync(lastSyncIso, nowMs)}</span>
+                        </div>
+                    </section>
                 </div>
+
+                {(onEdit || onUnregister || onDelete) && (
+                    <footer className="device-detail-footer">
+                        {onEdit && (
+                            <button type="button" className="btn-outline" disabled={!canChangeDisplay || isBusy} onClick={onEdit}>
+                                <Pencil size={15} /> Edit
+                            </button>
+                        )}
+                        {onUnregister && (
+                            <button type="button" className="btn-outline" disabled={!canControl || isBusy} onClick={onUnregister}>
+                                <Unplug size={15} /> Unregister
+                            </button>
+                        )}
+                        {onDelete && (
+                            <button
+                                type="button"
+                                className="btn-outline device-detail-danger"
+                                disabled={!canControl || isBusy}
+                                onClick={onDelete}
+                            >
+                                <Trash2 size={15} /> Delete
+                            </button>
+                        )}
+                    </footer>
+                )}
             </motion.div>
+
+            <style jsx global>{`
+                .device-detail-overlay {
+                    position: fixed;
+                    inset: 0;
+                    z-index: 100;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 20px;
+                    background: hsl(var(--overlay-base) / 0.78);
+                    backdrop-filter: blur(14px);
+                }
+                .device-detail-panel {
+                    width: 100%;
+                    max-width: 560px;
+                    max-height: min(90vh, 820px);
+                    overflow: auto;
+                    padding: 28px;
+                    border-radius: 18px;
+                    background: hsl(var(--bg-surface) / 0.95);
+                    border: 1px solid hsl(var(--border-subtle) / 0.85);
+                    box-shadow: var(--shadow-md);
+                    color: hsl(var(--text-primary));
+                }
+                .device-detail-header {
+                    display: flex;
+                    align-items: flex-start;
+                    justify-content: space-between;
+                    gap: 16px;
+                    margin-bottom: 24px;
+                }
+                .device-detail-kicker {
+                    margin: 0 0 4px;
+                    font-size: 0.72rem;
+                    font-weight: 700;
+                    letter-spacing: 0.08em;
+                    text-transform: uppercase;
+                    color: hsl(var(--text-muted));
+                }
+                .device-detail-title {
+                    margin: 0;
+                    font-size: 1.4rem;
+                    font-weight: 700;
+                    line-height: 1.25;
+                }
+                .device-detail-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 14px;
+                }
+                .device-detail-card {
+                    padding: 16px 18px;
+                    border-radius: 14px;
+                    background: hsl(var(--bg-base) / 0.55);
+                    border: 1px solid hsl(var(--border-subtle) / 0.7);
+                }
+                .device-detail-card-span { grid-column: 1 / -1; }
+                .device-detail-label {
+                    margin: 0 0 10px;
+                    font-size: 0.72rem;
+                    font-weight: 700;
+                    letter-spacing: 0.06em;
+                    text-transform: uppercase;
+                    color: hsl(var(--text-muted));
+                }
+                .device-detail-hint {
+                    margin: 0;
+                    max-width: 340px;
+                    font-size: 0.8rem;
+                    line-height: 1.45;
+                    color: hsl(var(--text-secondary));
+                }
+                .device-detail-value-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                    min-width: 0;
+                }
+                .device-detail-value-icon {
+                    flex-shrink: 0;
+                    color: hsl(var(--accent-primary));
+                }
+                .device-detail-value {
+                    font-size: 1rem;
+                    font-weight: 600;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .device-detail-value.is-muted {
+                    font-weight: 500;
+                    color: hsl(var(--text-muted));
+                }
+                .device-detail-row-between {
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 18px;
+                }
+                .device-status-pill {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 12px;
+                    border-radius: 999px;
+                    font-size: 0.92rem;
+                    font-weight: 700;
+                }
+                .device-status-pill.is-online {
+                    color: hsl(var(--status-success));
+                    background: hsl(var(--status-success) / 0.12);
+                    border: 1px solid hsl(var(--status-success) / 0.35);
+                }
+                .device-status-pill.is-offline {
+                    color: hsl(var(--status-danger));
+                    background: hsl(var(--status-danger) / 0.12);
+                    border: 1px solid hsl(var(--status-danger) / 0.35);
+                }
+                .device-status-dot {
+                    width: 10px;
+                    height: 10px;
+                    border-radius: 50%;
+                    background: currentColor;
+                    box-shadow: 0 0 10px currentColor;
+                }
+                .device-toggle {
+                    position: relative;
+                    width: 52px;
+                    height: 30px;
+                    flex-shrink: 0;
+                    border: none;
+                    border-radius: 999px;
+                    background: hsl(var(--border-strong) / 0.65);
+                    cursor: pointer;
+                    transition: background 0.2s ease;
+                    padding: 0;
+                }
+                .device-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+                .device-toggle.is-on { background: hsl(var(--accent-primary)); }
+                .device-toggle-thumb {
+                    position: absolute;
+                    top: 3px;
+                    left: 3px;
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 50%;
+                    background: #fff;
+                    transition: transform 0.2s ease;
+                    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+                }
+                .device-toggle.is-on .device-toggle-thumb { transform: translateX(22px); }
+                .device-orient-seg {
+                    display: flex;
+                    gap: 6px;
+                    padding: 4px;
+                    border-radius: 12px;
+                    background: hsl(var(--bg-base) / 0.7);
+                    border: 1px solid hsl(var(--border-subtle) / 0.6);
+                }
+                .device-orient-pill {
+                    flex: 1;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 8px;
+                    padding: 10px 14px;
+                    border: none;
+                    border-radius: 10px;
+                    background: transparent;
+                    color: hsl(var(--text-muted));
+                    font-size: 0.88rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    transition: background 0.18s ease, color 0.18s ease;
+                }
+                .device-orient-pill:hover:not(:disabled) {
+                    color: hsl(var(--text-primary));
+                    background: hsl(var(--bg-surface-elevated) / 0.8);
+                }
+                .device-orient-pill.is-active {
+                    color: hsl(var(--accent-primary));
+                    background: hsl(var(--accent-primary) / 0.16);
+                    box-shadow: inset 0 0 0 1px hsl(var(--accent-primary) / 0.35);
+                }
+                .device-orient-pill:disabled { opacity: 0.55; cursor: not-allowed; }
+                .device-detail-footer {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 10px;
+                    margin-top: 22px;
+                    padding-top: 18px;
+                    border-top: 1px solid hsl(var(--border-subtle) / 0.6);
+                }
+                .device-detail-footer .btn-outline {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                .device-detail-danger {
+                    color: hsl(var(--status-danger)) !important;
+                    border-color: hsl(var(--status-danger) / 0.45) !important;
+                }
+                @media (max-width: 560px) {
+                    .device-detail-grid { grid-template-columns: 1fr; }
+                    .device-detail-row-between { flex-direction: column; align-items: flex-start; }
+                }
+            `}</style>
         </motion.div>
     );
 }

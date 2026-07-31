@@ -30,6 +30,7 @@ import { ReportsQueryDto } from './dto/reports-query.dto';
 import { AssignLayoutDto } from './dto/assign-layout.dto';
 import { DeviceLogsQueryDto } from '../device-management/dto/device-logs-query.dto';
 import { UpdateDeviceFeaturesDto } from '../device-management/dto/update-device-features.dto';
+import { UpdateDeviceDisplaySettingsDto } from '../device-management/dto/update-device-display-settings.dto';
 import { CreateLayoutDto } from './dto/create-layout.dto';
 import { SaveLayoutZonesDto } from './dto/save-layout-zones.dto';
 import { UpdateLayoutDto } from './dto/update-layout.dto';
@@ -313,6 +314,15 @@ export class ClientDataController {
   @Get('devices/:deviceId/settings')
   getDeviceSettings(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
     return this.clientDataService.getDeviceSettings(actor, deviceId);
+  }
+
+  @Patch('devices/:deviceId/settings')
+  updateDeviceDisplaySettings(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Body() body: UpdateDeviceDisplaySettingsDto,
+  ) {
+    return this.clientDataService.updateDeviceDisplaySettings(actor, deviceId, body);
   }
 
   @Get('devices/:deviceId/features')

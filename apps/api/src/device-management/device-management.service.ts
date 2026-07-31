@@ -71,6 +71,8 @@ export class DeviceManagementService {
 
   getDeviceStatus(device: DeviceWithPlaylist) {
     const status = this.resolveEffectiveStatus(device);
+    const assignedPlaylist =
+      device.currentPlaylist?.name ?? device.currentLayout?.name ?? null;
     return {
       deviceId: device.id,
       deviceName: device.name,
@@ -81,7 +83,8 @@ export class DeviceManagementService {
       ip: device.ip,
       macAddress: device.macAddress,
       resolution: device.resolution,
-      orientation: device.orientation,
+      orientation: this.normalizeOrientation(device.orientation),
+      stretchToFit: device.stretchToFit,
       timezone: device.timezone,
       androidVersion: device.androidVersion || device.os,
       playerVersion: device.playerVersion,
@@ -93,7 +96,8 @@ export class DeviceManagementService {
         ?? device.cacheLastReportedAt?.toISOString()
         ?? this.parseLastSyncFallback(device.lastSync),
       uptime: device.uptime,
-      currentContent: device.currentLayout?.name ?? device.currentPlaylist?.name ?? device.currentContent ?? 'N/A',
+      assignedPlaylist,
+      currentContent: assignedPlaylist ?? device.currentContent ?? 'N/A',
     };
   }
 
@@ -164,11 +168,39 @@ export class DeviceManagementService {
       brightness: device.brightness,
       volume: device.volume,
       screenTimeoutSeconds: device.screenTimeoutSeconds,
-      orientation: device.orientation,
+      orientation: this.normalizeOrientation(device.orientation),
+      stretchToFit: device.stretchToFit,
       resolution: device.resolution,
       timezone: device.timezone,
       lastReportedAt: device.lastSeenAt?.toISOString() ?? null,
     };
+  }
+
+  async updateDeviceDisplaySettings(
+    deviceId: string,
+    organizationId: string,
+    body: { orientation?: string; stretchToFit?: boolean },
+  ) {
+    await this.findDevice(deviceId, organizationId);
+
+    const data: Prisma.DeviceUpdateInput = { configVersion: { increment: 1 } };
+    if (typeof body.orientation === 'string') {
+      data.orientation = this.normalizeOrientation(body.orientation);
+    }
+    if (typeof body.stretchToFit === 'boolean') {
+      data.stretchToFit = body.stretchToFit;
+    }
+
+    const updated = await this.prisma.device.update({
+      where: { id: deviceId },
+      data,
+      include: {
+        currentPlaylist: { select: { name: true } },
+        currentLayout: { select: { name: true } },
+      },
+    });
+
+    return updated;
   }
 
   getDeviceFeatures(device: Device) {
@@ -305,6 +337,8 @@ export class DeviceManagementService {
   }
 
   getPlayerConfig(device: Device) {
+    const orientation = this.normalizeOrientation(device.orientation);
+    const stretchToFit = Boolean(device.stretchToFit);
     return {
       configVersion: device.configVersion,
       popLogsExpected: device.featureProofOfPlay,
@@ -312,6 +346,9 @@ export class DeviceManagementService {
       revisionPollIntervalSeconds: REVISION_POLL_INTERVAL_SECONDS,
       initialSyncPending: resolveInitialSyncState(device) === 'pending',
       initialSyncTimeoutSeconds: INITIAL_SYNC_TIMEOUT_SECONDS,
+      // Top-level fields for the Android player (and nested display for CMS UI).
+      orientation,
+      stretchToFit,
       features: {
         autoSync: device.featureAutoSync,
         offlinePlayback: device.featureOfflinePlayback,
@@ -323,7 +360,16 @@ export class DeviceManagementService {
         autoDownload: device.featureAutoDownload,
         remoteLogs: device.featureRemoteLogs,
       },
+      display: {
+        orientation,
+        stretchToFit,
+      },
     };
+  }
+
+  normalizeOrientation(value?: string | null): 'LANDSCAPE' | 'PORTRAIT' {
+    const normalized = (value ?? 'LANDSCAPE').trim().toUpperCase();
+    return normalized === 'PORTRAIT' ? 'PORTRAIT' : 'LANDSCAPE';
   }
 
   async ingestTelemetry(deviceId: string, report: DeviceTelemetryReport) {
@@ -350,7 +396,8 @@ export class DeviceManagementService {
     if (report.ip !== undefined) data.ip = report.ip;
     if (report.macAddress !== undefined) data.macAddress = report.macAddress;
     if (report.resolution !== undefined) data.resolution = report.resolution;
-    if (report.orientation !== undefined) data.orientation = report.orientation;
+    // Orientation is CMS-managed (Device Details → Screen Orientation) and pushed
+    // to the player via `display.orientation`. Do not overwrite from telemetry.
     if (report.timezone !== undefined) data.timezone = report.timezone;
     if (report.androidVersion !== undefined) {
       data.androidVersion = report.androidVersion;
