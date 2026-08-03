@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
-    Activity, Eye, Download, Search, Monitor, FileText,
+    Activity, Eye, Download, Search, FileText,
     RefreshCw, AlertTriangle, CheckCircle, XCircle, TrendingUp, Clock,
     ChevronLeft, ChevronRight, CalendarRange,
     Folder,
@@ -363,30 +363,23 @@ export default function ReportsPage() {
         {
             title: "Billed Impressions",
             value: (reportData?.kpis.billedImpressions ?? 0).toLocaleString(),
-            subtitle: `${(reportData?.kpis.verifiedCount ?? 0).toLocaleString()} verified • ${(reportData?.kpis.failedCount ?? 0).toLocaleString()} failed`,
+            subtitle: `${(reportData?.kpis.verifiedCount ?? 0).toLocaleString()} Verified • ${(reportData?.kpis.failedCount ?? 0).toLocaleString()} Failed`,
             icon: Eye,
-            color: "var(--accent-primary)",
+            tone: "var(--accent-primary)",
         },
         {
             title: "Avg. Duration",
             value: `${reportData?.kpis.avgEngagement ?? 0}s`,
             subtitle: "Average verified playback length",
             icon: Activity,
-            color: "var(--accent-secondary)",
+            tone: "var(--accent-secondary)",
         },
         {
             title: "Playback Fidelity",
             value: `${reportData?.kpis.playbackFidelity ?? 0}%`,
-            subtitle: "Verified / total impressions",
+            subtitle: "Verified / Total Impressions",
             icon: TrendingUp,
-            color: "var(--status-success)",
-        },
-        {
-            title: "Active Nodes",
-            value: `${(reportData?.kpis.activeNodes ?? 0).toLocaleString()} / ${(reportData?.kpis.totalNodes ?? 0).toLocaleString()}`,
-            subtitle: "Online devices right now",
-            icon: Monitor,
-            color: "var(--accent-tertiary)",
+            tone: "var(--status-success)",
         },
     ], [reportData]);
 
@@ -535,15 +528,21 @@ export default function ReportsPage() {
                 </div>
             )}
 
-            <div className="grid-stats" style={{ marginBottom: 32 }}>
+            <div className="reports-kpi-row">
                 {kpiCards.map((kpi, idx) => {
                     const Icon = kpi.icon;
                     return (
-                        <motion.div key={idx} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.08 }}
-                            className="glass-card reports-kpi" style={{ borderTop: `2px solid hsla(${kpi.color}, 0.45)` }}>
+                        <motion.div
+                            key={kpi.title}
+                            initial={{ opacity: 0, y: 16 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: idx * 0.06 }}
+                            className="reports-kpi"
+                            style={{ ["--kpi-tone" as string]: kpi.tone }}
+                        >
                             <div className="reports-kpi__top">
-                                <div className="reports-kpi__icon" style={{ background: `hsla(${kpi.color}, 0.12)` }}>
-                                    <Icon size={20} style={{ color: `hsl(${kpi.color})` }} />
+                                <div className="reports-kpi__icon">
+                                    <Icon size={18} />
                                 </div>
                                 <p className="reports-kpi__title">{kpi.title}</p>
                             </div>
@@ -934,45 +933,91 @@ export default function ReportsPage() {
                 .reports-notice--warning { border: 1px solid hsla(var(--status-warning), 0.3); }
                 .reports-notice--danger { border: 1px solid hsla(var(--status-danger), 0.3); align-items: center; }
 
+                .reports-kpi-row {
+                    display: grid;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 16px;
+                    margin-bottom: 28px;
+                    align-items: stretch;
+                }
                 .reports-kpi {
-                    padding: 22px;
-                    border-radius: 18px;
-                    transition: transform 0.18s ease, box-shadow 0.18s ease;
+                    display: flex;
+                    flex-direction: column;
+                    min-height: 148px;
+                    padding: 22px 22px 20px;
+                    border-radius: 16px;
+                    background: hsl(var(--bg-surface) / 0.72);
+                    border: 1px solid hsl(var(--border-subtle) / 0.85);
+                    border-top: 2px solid hsl(var(--kpi-tone) / 0.55);
+                    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
                 }
                 .reports-kpi:hover {
                     transform: translateY(-2px);
+                    border-color: hsl(var(--kpi-tone) / 0.45);
                     box-shadow: var(--shadow-md);
                 }
                 .reports-kpi__top {
                     display: flex;
                     align-items: center;
                     gap: 12px;
-                    margin-bottom: 14px;
+                    margin-bottom: 18px;
                 }
                 .reports-kpi__icon {
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 11px;
+                    width: 36px;
+                    height: 36px;
+                    border-radius: 10px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     flex-shrink: 0;
+                    background: hsl(var(--kpi-tone) / 0.14);
+                    color: hsl(var(--kpi-tone));
+                    border: 1px solid hsl(var(--kpi-tone) / 0.28);
                 }
                 .reports-kpi__title {
+                    margin: 0;
                     font-size: 0.78rem;
-                    font-weight: 600;
+                    font-weight: 700;
+                    letter-spacing: 0.04em;
+                    text-transform: uppercase;
                     color: hsl(var(--text-muted));
                 }
                 .reports-kpi__value {
-                    font-size: 1.9rem;
+                    margin: 0;
+                    font-size: 2.15rem;
                     font-weight: 800;
-                    line-height: 1.1;
+                    line-height: 1;
+                    letter-spacing: -0.02em;
                     font-variant-numeric: tabular-nums;
+                    color: hsl(var(--text-primary));
                 }
                 .reports-kpi__subtitle {
-                    font-size: 0.7rem;
+                    margin: 10px 0 0;
+                    font-size: 0.78rem;
+                    line-height: 1.35;
                     color: hsl(var(--text-muted));
-                    margin-top: 6px;
+                }
+                @media (max-width: 960px) {
+                    .reports-kpi-row {
+                        grid-template-columns: repeat(2, minmax(0, 1fr));
+                    }
+                    .reports-kpi:last-child {
+                        grid-column: 1 / -1;
+                    }
+                }
+                @media (max-width: 560px) {
+                    .reports-kpi-row {
+                        grid-template-columns: 1fr;
+                    }
+                    .reports-kpi:last-child {
+                        grid-column: auto;
+                    }
+                    .reports-kpi {
+                        min-height: 132px;
+                    }
+                    .reports-kpi__value {
+                        font-size: 1.85rem;
+                    }
                 }
 
                 .reports-panel-head {

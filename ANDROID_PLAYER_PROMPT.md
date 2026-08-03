@@ -79,15 +79,20 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 **1. Campaigns are gone (low effort):**
 - The backend no longer has any "Campaign" concept. Playlists now link directly to assets.
 
-**1C. CMS display settings (Stretch to Fit + Orientation) — July 2026:**
+**1C. CMS display settings (Stretch to Fit + Orientation + Playback Durations) — July/Aug 2026:**
 - Heartbeat, device-report, and `/sync` responses now include a `display` object:
   ```json
-  "display": { "orientation": "LANDSCAPE", "stretchToFit": false }
+  "display": {
+    "orientation": "LANDSCAPE",
+    "stretchToFit": false,
+    "playback": { "imageDuration": 10, "documentDuration": 20, "urlDuration": 20 }
+  }
   ```
 - `orientation` is `LANDSCAPE` or `PORTRAIT`. Apply it to the playback surface immediately (no app restart).
 - `stretchToFit: true` means every playlist asset must scale to fill the entire display (may crop / ignore aspect ratio). `false` means preserve aspect ratio (letterbox/pillarbox).
+- `playback` is the device-level default duration (seconds) for Images / Documents / URLs when the playlist item does not set an explicit duration. **Videos always use their native media length** unless a playlist slot overrides it.
 - Track `configVersion`. When it increases, re-apply `display` (and `features`) even if the playlist content is unchanged.
-- Do **not** wait for a full content re-download to apply orientation or stretch changes.
+- Do **not** wait for a full content re-download to apply orientation, stretch, or playback duration changes.
 - The `GET /api/player/sync` manifest is structurally **unchanged** (still a flat, ordered list of assets with `position` + `durationSeconds`). No change needed to playback.
 - In `POST /api/player/pop-logs`, the `campaignName` field is now **deprecated/optional**. Stop sending it (or send `null`). `assetName` + `playlistName` are all that's needed. Do **not** remove it from your data class if that breaks serialization — just leave it null.
 
@@ -849,6 +854,18 @@ data class PlayerDisplaySettings(
      * aspect ratio (letterbox / pillarbox as needed).
      */
     val stretchToFit: Boolean = false,
+    /**
+     * Device-level default durations (seconds) for non-video assets.
+     * Videos always use their native media duration unless a playlist slot overrides.
+     * Apply immediately when configVersion changes — no app restart.
+     */
+    val playback: PlayerPlaybackDurations? = null,
+)
+
+data class PlayerPlaybackDurations(
+    val imageDuration: Int = 10,
+    val documentDuration: Int = 20,
+    val urlDuration: Int = 20,
 )
 
 data class SyncRevisionResponse(

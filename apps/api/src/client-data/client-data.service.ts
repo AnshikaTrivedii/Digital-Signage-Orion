@@ -1074,7 +1074,13 @@ export class ClientDataService {
   async updateDeviceDisplaySettings(
     actor: RequestActor,
     deviceId: string,
-    body: { orientation?: string; stretchToFit?: boolean },
+    body: {
+      orientation?: string;
+      stretchToFit?: boolean;
+      defaultImageDuration?: number;
+      defaultDocumentDuration?: number;
+      defaultUrlDuration?: number;
+    },
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
@@ -1084,6 +1090,29 @@ export class ClientDataService {
       body,
     );
     return this.serializeDevice(updated);
+  }
+
+  async getDevicePlaybackSettings(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    const device = await this.deviceManagement.findDevice(deviceId, organizationId);
+    return this.deviceManagement.getDevicePlaybackSettings(device);
+  }
+
+  async updateDevicePlaybackSettings(
+    actor: RequestActor,
+    deviceId: string,
+    body: { imageDuration?: number; documentDuration?: number; urlDuration?: number },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    if (
+      body.imageDuration === undefined
+      && body.documentDuration === undefined
+      && body.urlDuration === undefined
+    ) {
+      throw new BadRequestException('Provide at least one playback duration to update');
+    }
+    return this.deviceManagement.updateDevicePlaybackSettings(deviceId, organizationId, body);
   }
 
   async getDeviceFeatures(actor: RequestActor, deviceId: string) {
@@ -1352,6 +1381,9 @@ export class ClientDataService {
     manufacturer?: string;
     orientation?: string;
     stretchToFit?: boolean;
+    defaultImageDuration?: number;
+    defaultDocumentDuration?: number;
+    defaultUrlDuration?: number;
     timezone?: string;
     networkStatus?: string;
     wifiSignalStrength?: number;
@@ -1410,6 +1442,9 @@ export class ClientDataService {
       manufacturer: device.manufacturer ?? '',
       orientation: this.deviceManagement.normalizeOrientation(device.orientation),
       stretchToFit: Boolean(device.stretchToFit),
+      defaultImageDuration: device.defaultImageDuration ?? 10,
+      defaultDocumentDuration: device.defaultDocumentDuration ?? 20,
+      defaultUrlDuration: device.defaultUrlDuration ?? 20,
       timezone: device.timezone ?? 'UTC',
       networkStatus: device.networkStatus ?? 'UNKNOWN',
       wifiSignalStrength: device.wifiSignalStrength ?? 0,
@@ -1852,7 +1887,7 @@ export class ClientDataService {
           if (isVerified) bucket.verified += 1;
         }
 
-        if (log.durationSeconds && log.durationSeconds > 0) {
+        if (isVerified && log.durationSeconds && log.durationSeconds > 0) {
           durationTotal += log.durationSeconds;
           durationSamples += 1;
         }

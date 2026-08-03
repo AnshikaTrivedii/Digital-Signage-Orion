@@ -441,6 +441,7 @@ export class PlayerService {
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
       display: playerConfig.display,
+      playback: playerConfig.playback,
       ...commandPayload,
     };
   }
@@ -528,6 +529,7 @@ export class PlayerService {
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
       display: playerConfig.display,
+      playback: playerConfig.playback,
       ...commandPayload,
     };
   }
@@ -546,6 +548,9 @@ export class PlayerService {
    */
   async getSyncRevision(authHeader: string | undefined) {
     const device = await this.resolveDeviceByToken(authHeader);
+    // Revision polls every ~5s — treat them as live presence so CMS status
+    // stays Online while the player is actively talking to the API.
+    await this.deviceManagement.touchPresence(device.id);
     const contentRevision = await this.getDeviceContentRevision(device);
     const syncRequired = await this.computeSyncRequired(device, contentRevision);
     const playerConfig = this.deviceManagement.getPlayerConfig(device);
@@ -563,6 +568,11 @@ export class PlayerService {
       initialSyncPending: playerConfig.initialSyncPending,
       revisionPollIntervalSeconds: playerConfig.revisionPollIntervalSeconds,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
+      configVersion: playerConfig.configVersion,
+      orientation: playerConfig.orientation,
+      stretchToFit: playerConfig.stretchToFit,
+      display: playerConfig.display,
+      playback: playerConfig.playback,
     };
   }
 
@@ -578,6 +588,7 @@ export class PlayerService {
    */
   async syncPlaylist(authHeader: string | undefined, query: SyncQueryDto = {}) {
     const device = await this.resolveDeviceByToken(authHeader);
+    await this.deviceManagement.touchPresence(device.id);
     const syncContext = this.buildSyncAssetContext(query);
 
     const payload = device.currentLayoutId

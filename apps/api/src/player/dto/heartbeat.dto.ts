@@ -156,6 +156,28 @@ export class HeartbeatDto {
   @IsBoolean()
   stretchToFit?: boolean;
 
+  /** Echo of device playback duration settings currently applied on the player. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(3600)
+  defaultImageDuration?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(3600)
+  defaultDocumentDuration?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(3600)
+  defaultUrlDuration?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

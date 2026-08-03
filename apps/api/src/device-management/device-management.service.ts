@@ -85,6 +85,9 @@ export class DeviceManagementService {
       resolution: device.resolution,
       orientation: this.normalizeOrientation(device.orientation),
       stretchToFit: device.stretchToFit,
+      defaultImageDuration: device.defaultImageDuration ?? 10,
+      defaultDocumentDuration: device.defaultDocumentDuration ?? 20,
+      defaultUrlDuration: device.defaultUrlDuration ?? 20,
       timezone: device.timezone,
       androidVersion: device.androidVersion || device.os,
       playerVersion: device.playerVersion,
@@ -170,16 +173,68 @@ export class DeviceManagementService {
       screenTimeoutSeconds: device.screenTimeoutSeconds,
       orientation: this.normalizeOrientation(device.orientation),
       stretchToFit: device.stretchToFit,
+      defaultImageDuration: device.defaultImageDuration ?? 10,
+      defaultDocumentDuration: device.defaultDocumentDuration ?? 20,
+      defaultUrlDuration: device.defaultUrlDuration ?? 20,
       resolution: device.resolution,
       timezone: device.timezone,
       lastReportedAt: device.lastSeenAt?.toISOString() ?? null,
     };
   }
 
+  getDevicePlaybackSettings(device: Device) {
+    return {
+      deviceId: device.id,
+      imageDuration: device.defaultImageDuration,
+      documentDuration: device.defaultDocumentDuration,
+      urlDuration: device.defaultUrlDuration,
+      lastUpdated: device.playbackSettingsUpdatedAt?.toISOString() ?? device.updatedAt.toISOString(),
+    };
+  }
+
+  async updateDevicePlaybackSettings(
+    deviceId: string,
+    organizationId: string,
+    body: {
+      imageDuration?: number;
+      documentDuration?: number;
+      urlDuration?: number;
+    },
+  ) {
+    await this.findDevice(deviceId, organizationId);
+
+    const data: Prisma.DeviceUpdateInput = {
+      configVersion: { increment: 1 },
+      playbackSettingsUpdatedAt: new Date(),
+    };
+    if (typeof body.imageDuration === 'number') {
+      data.defaultImageDuration = this.clampPlaybackDuration(body.imageDuration);
+    }
+    if (typeof body.documentDuration === 'number') {
+      data.defaultDocumentDuration = this.clampPlaybackDuration(body.documentDuration);
+    }
+    if (typeof body.urlDuration === 'number') {
+      data.defaultUrlDuration = this.clampPlaybackDuration(body.urlDuration);
+    }
+
+    const updated = await this.prisma.device.update({
+      where: { id: deviceId },
+      data,
+    });
+
+    return this.getDevicePlaybackSettings(updated);
+  }
+
   async updateDeviceDisplaySettings(
     deviceId: string,
     organizationId: string,
-    body: { orientation?: string; stretchToFit?: boolean },
+    body: {
+      orientation?: string;
+      stretchToFit?: boolean;
+      defaultImageDuration?: number;
+      defaultDocumentDuration?: number;
+      defaultUrlDuration?: number;
+    },
   ) {
     await this.findDevice(deviceId, organizationId);
 
@@ -189,6 +244,15 @@ export class DeviceManagementService {
     }
     if (typeof body.stretchToFit === 'boolean') {
       data.stretchToFit = body.stretchToFit;
+    }
+    if (typeof body.defaultImageDuration === 'number') {
+      data.defaultImageDuration = this.clampPlaybackDuration(body.defaultImageDuration);
+    }
+    if (typeof body.defaultDocumentDuration === 'number') {
+      data.defaultDocumentDuration = this.clampPlaybackDuration(body.defaultDocumentDuration);
+    }
+    if (typeof body.defaultUrlDuration === 'number') {
+      data.defaultUrlDuration = this.clampPlaybackDuration(body.defaultUrlDuration);
     }
 
     const updated = await this.prisma.device.update({
@@ -339,6 +403,14 @@ export class DeviceManagementService {
   getPlayerConfig(device: Device) {
     const orientation = this.normalizeOrientation(device.orientation);
     const stretchToFit = Boolean(device.stretchToFit);
+    const defaultImageDuration = this.clampPlaybackDuration(device.defaultImageDuration ?? 10);
+    const defaultDocumentDuration = this.clampPlaybackDuration(device.defaultDocumentDuration ?? 20);
+    const defaultUrlDuration = this.clampPlaybackDuration(device.defaultUrlDuration ?? 20);
+    const playback = {
+      imageDuration: defaultImageDuration,
+      documentDuration: defaultDocumentDuration,
+      urlDuration: defaultUrlDuration,
+    };
     return {
       configVersion: device.configVersion,
       popLogsExpected: device.featureProofOfPlay,
@@ -349,6 +421,9 @@ export class DeviceManagementService {
       // Top-level fields for the Android player (and nested display for CMS UI).
       orientation,
       stretchToFit,
+      defaultImageDuration,
+      defaultDocumentDuration,
+      defaultUrlDuration,
       features: {
         autoSync: device.featureAutoSync,
         offlinePlayback: device.featureOfflinePlayback,
@@ -363,13 +438,50 @@ export class DeviceManagementService {
       display: {
         orientation,
         stretchToFit,
+        playback,
       },
+      playback,
     };
   }
 
   normalizeOrientation(value?: string | null): 'LANDSCAPE' | 'PORTRAIT' {
     const normalized = (value ?? 'LANDSCAPE').trim().toUpperCase();
     return normalized === 'PORTRAIT' ? 'PORTRAIT' : 'LANDSCAPE';
+  }
+
+  clampPlaybackDuration(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    return Math.min(600, Math.max(1, Math.floor(value)));
+  }
+
+  /**
+   * Mark a device as recently seen from any authenticated player API call.
+   * Online/offline in the CMS is derived from `lastSeenAt` (5-minute threshold).
+   * Sync and revision polls must refresh presence — content can keep playing from
+   * cache even when heartbeats are missing, which previously showed Offline.
+   */
+  async touchPresence(deviceId: string) {
+    const now = new Date();
+    const existing = await this.prisma.device.findUnique({
+      where: { id: deviceId },
+      select: { lastSeenAt: true, status: true },
+    });
+    // Skip frequent writes from the 5s revision poll when already online.
+    if (
+      existing?.lastSeenAt
+      && now.getTime() - existing.lastSeenAt.getTime() < 30_000
+      && existing.status !== DeviceStatus.OFFLINE
+    ) {
+      return;
+    }
+
+    await this.prisma.device.update({
+      where: { id: deviceId },
+      data: {
+        lastSeenAt: now,
+        status: existing?.status === DeviceStatus.WARNING ? DeviceStatus.WARNING : DeviceStatus.ONLINE,
+      },
+    });
   }
 
   async ingestTelemetry(deviceId: string, report: DeviceTelemetryReport) {

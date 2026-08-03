@@ -127,6 +127,22 @@ function describeError(error: unknown, fallback: string) {
     return fallback;
 }
 
+function formatDeviceLastSync(value?: string | null): string {
+    if (!value || value === "Awaiting first sync" || value === "Unregistered") {
+        return value || "Never synced";
+    }
+    const then = new Date(value).getTime();
+    if (!Number.isFinite(then)) return value;
+    const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+    if (seconds < 5) return "Just now";
+    if (seconds < 60) return `${seconds} sec ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hr ago`;
+    return formatReportDateTime(value);
+}
+
 export default function DevicesPage() {
     const { canEdit, canControl } = useClientFeature("DEVICES");
     const { activeOrganizationId } = useAuth();
@@ -904,8 +920,8 @@ export default function DevicesPage() {
                                                     || "No Playlist Assigned"}
                                             </span>
                                         </td>
-                                        <td style={{ padding: "14px 16px", fontSize: "0.8rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>
-                                            {d.lastSync}
+                                        <td style={{ padding: "14px 16px", fontSize: "0.8rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }} title={d.lastSyncTime || d.lastSync || undefined}>
+                                            {formatDeviceLastSync(d.lastSyncTime || d.lastSync)}
                                         </td>
                                         <td style={{ padding: "10px 16px" }}>
                                             <div

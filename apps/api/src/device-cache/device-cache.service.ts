@@ -38,6 +38,8 @@ export class DeviceCacheService {
           expectedAssetCount: report.expectedAssetCount ?? report.assets?.length ?? 0,
           pendingDownloadCount: report.pendingDownloadCount ?? 0,
           cacheLastReportedAt: now,
+          lastSeenAt: now,
+          status: DeviceStatus.ONLINE,
           lastSuccessfulSyncAt: report.lastSuccessfulSyncAt
             ? new Date(report.lastSuccessfulSyncAt)
             : syncStatus === DeviceSyncReportStatus.OK

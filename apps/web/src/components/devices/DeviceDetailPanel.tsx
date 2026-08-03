@@ -4,9 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2,
+    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2, Timer,
 } from "lucide-react";
 import { apiRequest, ApiError } from "@/lib/api";
+
+const DEFAULT_IMAGE_DURATION = 10;
+const DEFAULT_DOCUMENT_DURATION = 20;
+const DEFAULT_URL_DURATION = 20;
+const MIN_DURATION = 1;
+const MAX_DURATION = 600;
 
 interface Device {
     id: string;
@@ -64,6 +70,26 @@ interface DeviceLiveStatus {
     currentContent: string;
 }
 
+interface PlaybackSettingsResponse {
+    deviceId: string;
+    imageDuration: number;
+    documentDuration: number;
+    urlDuration: number;
+    lastUpdated: string | null;
+}
+
+interface PlaybackForm {
+    imageDuration: string;
+    documentDuration: string;
+    urlDuration: string;
+}
+
+interface PlaybackErrors {
+    imageDuration?: string;
+    documentDuration?: string;
+    urlDuration?: string;
+}
+
 interface Props {
     device: Device;
     canEdit: boolean;
@@ -114,6 +140,20 @@ function formatRelativeSync(iso: string | null | undefined, nowMs: number): stri
     return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+function validateDuration(raw: string, label: string): string | undefined {
+    const trimmed = raw.trim();
+    if (!trimmed) return `${label} duration is required`;
+    if (!/^\d+$/.test(trimmed)) return `${label} must be a whole number`;
+    const value = Number(trimmed);
+    if (value < MIN_DURATION) return `${label} must be at least ${MIN_DURATION} second`;
+    if (value > MAX_DURATION) return `${label} must be at most ${MAX_DURATION} seconds`;
+    return undefined;
+}
+
+function parseDuration(raw: string): number {
+    return Number.parseInt(raw.trim(), 10);
+}
+
 export function DeviceDetailPanel({
     device,
     canEdit,
@@ -133,6 +173,20 @@ export function DeviceDetailPanel({
     const [stretchToFit, setStretchToFit] = useState(Boolean(device.stretchToFit));
     const [saving, setSaving] = useState<"orientation" | "stretch" | null>(null);
     const [nowMs, setNowMs] = useState(() => Date.now());
+    const [playbackForm, setPlaybackForm] = useState<PlaybackForm>({
+        imageDuration: String(DEFAULT_IMAGE_DURATION),
+        documentDuration: String(DEFAULT_DOCUMENT_DURATION),
+        urlDuration: String(DEFAULT_URL_DURATION),
+    });
+    const [playbackSaved, setPlaybackSaved] = useState<PlaybackForm>({
+        imageDuration: String(DEFAULT_IMAGE_DURATION),
+        documentDuration: String(DEFAULT_DOCUMENT_DURATION),
+        urlDuration: String(DEFAULT_URL_DURATION),
+    });
+    const [playbackErrors, setPlaybackErrors] = useState<PlaybackErrors>({});
+    const [playbackLastUpdated, setPlaybackLastUpdated] = useState<string | null>(null);
+    const [playbackLoading, setPlaybackLoading] = useState(true);
+    const [playbackSaving, setPlaybackSaving] = useState(false);
     const canChangeDisplay = canEdit || canControl;
 
     const base = `/api/client-data/devices/${device.id}`;
@@ -140,6 +194,32 @@ export function DeviceDetailPanel({
     deviceRef.current = device;
     const onUpdatedRef = useRef(onDeviceUpdated);
     onUpdatedRef.current = onDeviceUpdated;
+
+    const applyPlaybackResponse = useCallback((data: PlaybackSettingsResponse) => {
+        const next: PlaybackForm = {
+            imageDuration: String(data.imageDuration),
+            documentDuration: String(data.documentDuration),
+            urlDuration: String(data.urlDuration),
+        };
+        setPlaybackForm(next);
+        setPlaybackSaved(next);
+        setPlaybackLastUpdated(data.lastUpdated);
+        setPlaybackErrors({});
+    }, []);
+
+    const loadPlaybackSettings = useCallback(async () => {
+        setPlaybackLoading(true);
+        try {
+            const data = await apiRequest<PlaybackSettingsResponse>(`${base}/playback-settings`, {
+                headers: orgHeaders,
+            });
+            applyPlaybackResponse(data);
+        } catch (error) {
+            toast.error(describeError(error, "Failed to load playback settings"));
+        } finally {
+            setPlaybackLoading(false);
+        }
+    }, [applyPlaybackResponse, base, orgHeaders]);
 
     const refreshLive = useCallback(async () => {
         try {
@@ -190,6 +270,10 @@ export function DeviceDetailPanel({
     }, [refreshLive]);
 
     useEffect(() => {
+        void loadPlaybackSettings();
+    }, [loadPlaybackSettings]);
+
+    useEffect(() => {
         const tick = setInterval(() => setNowMs(Date.now()), 1000);
         return () => clearInterval(tick);
     }, []);
@@ -225,6 +309,69 @@ export function DeviceDetailPanel({
         } finally {
             setSaving(null);
         }
+    };
+
+    const validatePlaybackForm = (form: PlaybackForm): PlaybackErrors => ({
+        imageDuration: validateDuration(form.imageDuration, "Images"),
+        documentDuration: validateDuration(form.documentDuration, "Documents"),
+        urlDuration: validateDuration(form.urlDuration, "URLs"),
+    });
+
+    const playbackDirty =
+        playbackForm.imageDuration !== playbackSaved.imageDuration
+        || playbackForm.documentDuration !== playbackSaved.documentDuration
+        || playbackForm.urlDuration !== playbackSaved.urlDuration;
+
+    const savePlaybackSettings = async (form: PlaybackForm, successMessage: string) => {
+        if (!canChangeDisplay) {
+            toast.error("You only have view access to devices.");
+            return;
+        }
+        const errors = validatePlaybackForm(form);
+        setPlaybackErrors(errors);
+        if (errors.imageDuration || errors.documentDuration || errors.urlDuration) {
+            toast.error("Fix the highlighted duration values");
+            return;
+        }
+
+        setPlaybackSaving(true);
+        try {
+            const data = await apiRequest<PlaybackSettingsResponse>(`${base}/playback-settings`, {
+                method: "PATCH",
+                headers: orgHeaders,
+                body: JSON.stringify({
+                    imageDuration: parseDuration(form.imageDuration),
+                    documentDuration: parseDuration(form.documentDuration),
+                    urlDuration: parseDuration(form.urlDuration),
+                }),
+            });
+            applyPlaybackResponse(data);
+            toast.success(successMessage);
+            await refreshLive();
+        } catch (error) {
+            toast.error(describeError(error, "Failed to save playback settings"));
+        } finally {
+            setPlaybackSaving(false);
+        }
+    };
+
+    const handleRestoreDefaults = () => {
+        if (!canChangeDisplay) {
+            toast.error("You only have view access to devices.");
+            return;
+        }
+        const confirmed = window.confirm(
+            "Restore default playback durations?\n\nImages: 10 sec\nDocuments: 20 sec\nURLs: 20 sec",
+        );
+        if (!confirmed) return;
+        void savePlaybackSettings(
+            {
+                imageDuration: String(DEFAULT_IMAGE_DURATION),
+                documentDuration: String(DEFAULT_DOCUMENT_DURATION),
+                urlDuration: String(DEFAULT_URL_DURATION),
+            },
+            "Playback defaults restored",
+        );
     };
 
     const effectiveStatus = live?.status ?? device.status;
@@ -335,6 +482,84 @@ export function DeviceDetailPanel({
                         </div>
                     </section>
 
+                    {/* Playback Settings */}
+                    <section className="device-detail-card device-detail-card-span">
+                        <div className="device-detail-row-between" style={{ marginBottom: 12 }}>
+                            <div>
+                                <p className="device-detail-label" style={{ marginBottom: 4 }}>Playback Settings</p>
+                                <p className="device-detail-hint">
+                                    Default durations for images, documents, and URLs on this device. Videos always use their media length unless a playlist overrides them.
+                                </p>
+                            </div>
+                            <Timer size={18} className="device-detail-value-icon" />
+                        </div>
+
+                        {playbackLoading ? (
+                            <p className="device-detail-hint">Loading playback settings…</p>
+                        ) : (
+                            <>
+                                <div className="device-playback-grid">
+                                    {([
+                                        { key: "imageDuration" as const, label: "Images" },
+                                        { key: "documentDuration" as const, label: "Documents" },
+                                        { key: "urlDuration" as const, label: "URLs" },
+                                    ]).map((field) => (
+                                        <label key={field.key} className="device-playback-field">
+                                            <span>{field.label}</span>
+                                            <div className={`device-playback-input${playbackErrors[field.key] ? " has-error" : ""}`}>
+                                                <input
+                                                    type="number"
+                                                    min={MIN_DURATION}
+                                                    max={MAX_DURATION}
+                                                    step={1}
+                                                    inputMode="numeric"
+                                                    disabled={!canChangeDisplay || playbackSaving || isBusy}
+                                                    value={playbackForm[field.key]}
+                                                    onChange={(e) => {
+                                                        const value = e.target.value;
+                                                        setPlaybackForm((prev) => ({ ...prev, [field.key]: value }));
+                                                        setPlaybackErrors((prev) => ({
+                                                            ...prev,
+                                                            [field.key]: validateDuration(value, field.label),
+                                                        }));
+                                                    }}
+                                                />
+                                                <em>sec</em>
+                                            </div>
+                                            {playbackErrors[field.key] && (
+                                                <small className="device-playback-error">{playbackErrors[field.key]}</small>
+                                            )}
+                                        </label>
+                                    ))}
+                                </div>
+
+                                <div className="device-playback-actions">
+                                    <button
+                                        type="button"
+                                        className="btn-outline"
+                                        disabled={!canChangeDisplay || playbackSaving || isBusy}
+                                        onClick={handleRestoreDefaults}
+                                    >
+                                        Restore Defaults
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn-primary"
+                                        disabled={!canChangeDisplay || playbackSaving || isBusy || !playbackDirty}
+                                        onClick={() => void savePlaybackSettings(playbackForm, "Playback settings saved")}
+                                    >
+                                        {playbackSaving ? "Saving…" : "Save Changes"}
+                                    </button>
+                                </div>
+                                {playbackLastUpdated && (
+                                    <p className="device-playback-meta">
+                                        Last updated {formatRelativeSync(playbackLastUpdated, nowMs)}
+                                    </p>
+                                )}
+                            </>
+                        )}
+                    </section>
+
                     {/* Last Sync */}
                     <section className="device-detail-card device-detail-card-span">
                         <p className="device-detail-label">Last Sync</p>
@@ -386,7 +611,7 @@ export function DeviceDetailPanel({
                 .device-detail-panel {
                     width: 100%;
                     max-width: 560px;
-                    max-height: min(90vh, 820px);
+                    max-height: min(92vh, 900px);
                     overflow: auto;
                     padding: 28px;
                     border-radius: 18px;
@@ -556,6 +781,80 @@ export function DeviceDetailPanel({
                     box-shadow: inset 0 0 0 1px hsl(var(--accent-primary) / 0.35);
                 }
                 .device-orient-pill:disabled { opacity: 0.55; cursor: not-allowed; }
+                .device-playback-grid {
+                    display: grid;
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    gap: 12px;
+                    margin-bottom: 14px;
+                }
+                .device-playback-field {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 6px;
+                    min-width: 0;
+                }
+                .device-playback-field > span {
+                    font-size: 0.78rem;
+                    font-weight: 600;
+                    color: hsl(var(--text-secondary));
+                }
+                .device-playback-input {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 0 10px;
+                    border-radius: 10px;
+                    background: hsl(var(--bg-base) / 0.75);
+                    border: 1px solid hsl(var(--border-subtle) / 0.85);
+                    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+                }
+                .device-playback-input:focus-within {
+                    border-color: hsl(var(--accent-primary) / 0.7);
+                    box-shadow: 0 0 0 3px hsl(var(--accent-primary) / 0.14);
+                }
+                .device-playback-input.has-error {
+                    border-color: hsl(var(--status-danger) / 0.8);
+                    box-shadow: 0 0 0 3px hsl(var(--status-danger) / 0.12);
+                }
+                .device-playback-input input {
+                    width: 100%;
+                    min-width: 0;
+                    border: none;
+                    background: transparent;
+                    color: hsl(var(--text-primary));
+                    font-size: 0.95rem;
+                    font-weight: 700;
+                    padding: 10px 0;
+                    outline: none;
+                    font-variant-numeric: tabular-nums;
+                }
+                .device-playback-input input:disabled {
+                    opacity: 0.55;
+                    cursor: not-allowed;
+                }
+                .device-playback-input em {
+                    font-style: normal;
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                    color: hsl(var(--text-muted));
+                    flex-shrink: 0;
+                }
+                .device-playback-error {
+                    font-size: 0.7rem;
+                    color: hsl(var(--status-danger));
+                    line-height: 1.3;
+                }
+                .device-playback-actions {
+                    display: flex;
+                    flex-wrap: wrap;
+                    justify-content: flex-end;
+                    gap: 10px;
+                }
+                .device-playback-meta {
+                    margin: 10px 0 0;
+                    font-size: 0.72rem;
+                    color: hsl(var(--text-muted));
+                }
                 .device-detail-footer {
                     display: flex;
                     flex-wrap: wrap;
@@ -576,6 +875,9 @@ export function DeviceDetailPanel({
                 @media (max-width: 560px) {
                     .device-detail-grid { grid-template-columns: 1fr; }
                     .device-detail-row-between { flex-direction: column; align-items: flex-start; }
+                    .device-playback-grid { grid-template-columns: 1fr; }
+                    .device-playback-actions { width: 100%; }
+                    .device-playback-actions > button { flex: 1 1 auto; justify-content: center; }
                 }
             `}</style>
         </motion.div>
