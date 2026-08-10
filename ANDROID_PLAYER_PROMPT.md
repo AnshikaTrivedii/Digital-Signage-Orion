@@ -93,7 +93,10 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
 - `playback` is the device-level default duration (seconds) for Images / Documents / URLs when the playlist item does not set an explicit duration. **Videos always use their native media length** unless a playlist slot overrides it.
 - Track `configVersion`. When it increases, re-apply `display` (and `features`) even if the playlist content is unchanged.
 - Do **not** wait for a full content re-download to apply orientation, stretch, or playback duration changes.
-- The `GET /api/player/sync` manifest is structurally **unchanged** (still a flat, ordered list of assets with `position` + `durationSeconds`). No change needed to playback.
+- Manifest `durationSeconds` may be **`null`**. That means **no playlist override**:
+  - IMAGE / DOCUMENT / URL → use `display.playback` device defaults (`imageDuration` / `documentDuration` / `urlDuration`)
+  - VIDEO → play to natural media end
+- A positive integer `durationSeconds` is an explicit playlist override and must be respected.
 - In `POST /api/player/pop-logs`, the `campaignName` field is now **deprecated/optional**. Stop sending it (or send `null`). `assetName` + `playlistName` are all that's needed. Do **not** remove it from your data class if that breaks serialization — just leave it null.
 
 **2. Asset folders (no player change):**
@@ -516,16 +519,22 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 
 **Playback logic:**
 1. Sort assets by `position` (already sorted in response)
-2. Play each asset for `durationSeconds`
-3. For `IMAGE`: display using Glide/Coil for the specified duration
-4. For `VIDEO`: play using ExoPlayer (may exceed `durationSeconds` — play to completion)
+2. Resolve each asset's play length:
+   - If `durationSeconds` is a positive integer → play for that many seconds (playlist override)
+   - If `durationSeconds` is `null`:
+     - `IMAGE` → `display.playback.imageDuration` (fallback 10)
+     - `DOCUMENT` → `display.playback.documentDuration` (fallback 20)
+     - `URL` → `display.playback.urlDuration` (fallback 20)
+     - `VIDEO` → play to natural end (ignore device image/doc/url defaults)
+3. For `IMAGE`: display using Glide/Coil for the resolved duration
+4. For `VIDEO`: play using ExoPlayer to completion unless a playlist override duration is set
 5. For `DOCUMENT`:
    - Use local cached file (same download/cache path as IMAGE/VIDEO)
    - Prefer `documentFormat` (`pdf` | `doc` | `docx` | `ppt` | `pptx`; legacy may be `word` / `powerpoint`); fall back to `mimeType` / file extension
-   - **PDF**: render pages clearly fullscreen (PdfRenderer / similar); respect `durationSeconds`
-   - **Office** (DOC, DOCX, PPT, PPTX): render with the existing Office/WebView conversion approach fullscreen; respect `durationSeconds`
+   - **PDF**: render pages clearly fullscreen (PdfRenderer / similar); respect resolved duration
+   - **Office** (DOC, DOCX, PPT, PPTX): render with the existing Office/WebView conversion approach fullscreen; respect resolved duration
    - Never show a blank screen — if render fails, show a clear error placeholder and advance after duration
-6. For `URL`: load `url` in a WebView for `durationSeconds` (no download/cache — `downloadUrl` is null)
+6. For `URL`: load `url` in a WebView for the resolved duration (no download/cache — `downloadUrl` is null)
 7. Loop back to position 0 when the last asset finishes
 
 **Document sync/cache (same as IMAGE/VIDEO):**
@@ -952,7 +961,7 @@ data class AssetInfo(
     val type: String,        // IMAGE, VIDEO, DOCUMENT, URL
     val mimeType: String,
     val documentFormat: String?, // pdf | doc | docx | ppt | pptx (legacy: word | powerpoint); null for non-documents
-    val durationSeconds: Int,
+    val durationSeconds: Int?, // null = use device default (or native video length)
     val position: Int,
     val assetVersion: Int,
     val updatedAt: String,   // ISO 8601

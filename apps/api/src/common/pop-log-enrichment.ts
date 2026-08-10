@@ -11,7 +11,7 @@ type PlaylistWithAssets = {
   id: string;
   name: string;
   playlistAssets: {
-    durationSeconds: number;
+    durationSeconds: number | null;
     asset: { name: string };
   }[];
 };

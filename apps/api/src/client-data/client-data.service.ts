@@ -199,7 +199,8 @@ export class ClientDataService {
         playlistAssetId: pa.id,
         name: pa.asset.name,
         type: pa.asset.type,
-        durationSeconds: pa.durationSeconds,
+        // Preserve NULL — never coerce blank playlist duration to a type default.
+        durationSeconds: pa.durationSeconds ?? null,
         position: pa.position,
         downloadUrl: await this.resolveAssetDownloadUrl(pa.asset),
         thumbnailUrl: await this.resolveAssetThumbnailUrl(pa.asset),
@@ -214,7 +215,12 @@ export class ClientDataService {
     );
   }
 
-  async addPlaylistAsset(actor: RequestActor, playlistId: string, assetId: string, durationSeconds?: number) {
+  async addPlaylistAsset(
+    actor: RequestActor,
+    playlistId: string,
+    assetId: string,
+    durationSeconds?: number | null,
+  ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
     const playlist = await this.prisma.playlist.findFirst({ where: { id: playlistId, organizationId } });
@@ -225,8 +231,11 @@ export class ClientDataService {
     }
 
     // Same asset may be added multiple times — each call creates a new PlaylistAsset row.
-    const defaultDuration = asset.defaultDurationSeconds ?? 10;
-    const normalizedDuration = this.normalizeDurationSeconds(durationSeconds ?? defaultDuration);
+    // Blank/omitted duration MUST be SQL NULL (no playlist override). Never default to 10.
+    const normalizedDuration =
+      durationSeconds === undefined || durationSeconds === null
+        ? null
+        : this.normalizeDurationSeconds(durationSeconds);
 
     const lastAsset = await this.prisma.playlistAsset.findFirst({
       where: { playlistId },
@@ -246,18 +255,24 @@ export class ClientDataService {
 
     await this.playlistSync.bumpPlaylist(playlistId);
 
-    return { success: true, playlistAssetId: pa.id, durationSeconds: pa.durationSeconds };
+    return {
+      success: true,
+      playlistAssetId: pa.id,
+      // Explicit null in JSON (not omitted) so the CMS never falls back to asset defaults.
+      durationSeconds: pa.durationSeconds ?? null,
+    };
   }
 
   async updatePlaylistAssetDuration(
     actor: RequestActor,
     playlistId: string,
     playlistAssetId: string,
-    durationSeconds: number,
+    durationSeconds: number | null,
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
-    const normalizedDuration = this.normalizeDurationSeconds(durationSeconds);
+    const normalizedDuration =
+      durationSeconds === null ? null : this.normalizeDurationSeconds(durationSeconds);
 
     const playlistAsset = await this.prisma.playlistAsset.findFirst({
       where: { id: playlistAssetId, playlistId, playlist: { organizationId } },
@@ -280,7 +295,8 @@ export class ClientDataService {
 
     this.logger.log(
       `Playlist asset duration updated playlistId=${playlistId} playlistAssetId=${playlistAssetId} ` +
-        `assetId=${updated.assetId} previousDuration=${previousDuration}s newDuration=${updated.durationSeconds}s position=${updated.position}`,
+        `assetId=${updated.assetId} previousDuration=${previousDuration ?? 'null'}s ` +
+        `newDuration=${updated.durationSeconds ?? 'null'}s position=${updated.position}`,
     );
 
     return {
@@ -2755,13 +2771,16 @@ export class ClientDataService {
     name: string;
     status: PlaylistStatus;
     items: { id: string; name: string; type: string; durationSeconds: number }[];
-    playlistAssets: { durationSeconds: number }[];
+    playlistAssets: { durationSeconds: number | null }[];
     screens: number;
     lastPlayedAt: Date | null;
     color: string;
     devices: { id: string; name: string }[];
   }): PlaylistDto {
-    const totalSeconds = playlist.playlistAssets.reduce((sum, item) => sum + item.durationSeconds, 0);
+    const totalSeconds = playlist.playlistAssets.reduce(
+      (sum, item) => sum + (item.durationSeconds ?? 0),
+      0,
+    );
     return {
       id: playlist.id,
       name: playlist.name,

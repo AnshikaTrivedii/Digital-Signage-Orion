@@ -47,7 +47,7 @@ interface PlaylistAsset {
     playlistAssetId: string;
     name: string;
     type: string;
-    durationSeconds: number;
+    durationSeconds: number | null;
     position: number;
     downloadUrl: string | null;
     thumbnailUrl?: string | null;
@@ -134,13 +134,14 @@ function PlaylistAssetRow({
                 <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>Type: {asset.type}</p>
             </div>
 
-            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 120, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, flexWrap: "wrap" }}>
                 <Clock size={14} style={{ color: "hsl(var(--accent-primary))", flexShrink: 0 }} />
                 <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={asset.durationSeconds}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={asset.durationSeconds == null ? "" : String(asset.durationSeconds)}
+                    placeholder="Use device default"
                     disabled={!canEdit || savingDurationId === itemId}
                     onChange={(event) => onDurationChange(itemId, event.target.value)}
                     onBlur={() => onDurationSave(itemId)}
@@ -152,8 +153,9 @@ function PlaylistAssetRow({
                         }
                     }}
                     aria-label={`Duration for ${asset.name}`}
+                    title="Leave blank to use the device default playback duration"
                     style={{
-                        width: 72,
+                        width: 148,
                         padding: "8px 10px",
                         borderRadius: 10,
                         border: durationDirty
@@ -217,7 +219,7 @@ export default function PlaylistBuilderPage() {
     const pendingOrderRef = useRef<PlaylistAsset[] | null>(null);
     const savedOrderRef = useRef<string[]>([]);
     const playlistAssetsRef = useRef<PlaylistAsset[]>([]);
-    const savedDurationsRef = useRef<Record<string, number>>({});
+    const savedDurationsRef = useRef<Record<string, number | null>>({});
 
     // Asset-library drawer folder navigation
     const [libFolders, setLibFolders] = useState<Folder[]>([]);
@@ -298,7 +300,7 @@ export default function PlaylistBuilderPage() {
         );
     }, []);
 
-    const isDurationDirty = useCallback((playlistAssetId: string, durationSeconds: number) => {
+    const isDurationDirty = useCallback((playlistAssetId: string, durationSeconds: number | null) => {
         return savedDurationsRef.current[playlistAssetId] !== durationSeconds;
     }, []);
 
@@ -329,7 +331,13 @@ export default function PlaylistBuilderPage() {
             const timelineRes = await apiRequest<PlaylistAsset[]>(`/api/client-data/playlists/${playlistId}/assets`, {
                 headers: { "x-organization-id": activeOrganizationId },
             });
-            const ordered = [...timelineRes].sort((a, b) => a.position - b.position);
+            const ordered = [...timelineRes]
+                .sort((a, b) => a.position - b.position)
+                .map((asset) => ({
+                    ...asset,
+                    // Normalize missing duration to null so the input stays blank on reopen.
+                    durationSeconds: asset.durationSeconds == null ? null : asset.durationSeconds,
+                }));
             setPlaylistAssets(ordered);
             syncSavedDurations(ordered);
             savedOrderRef.current = ordered.map((asset) => asset.playlistAssetId);
@@ -360,25 +368,49 @@ export default function PlaylistBuilderPage() {
     const handleAddAsset = async (asset: Asset) => {
         if (!canEdit) return toast.error("Read-only mode");
         try {
-            const added = await apiRequest<{ success: boolean; playlistAssetId: string; durationSeconds?: number }>(
+            // Always create with blank duration (null). Do NOT send asset.defaultDurationSeconds
+            // or the library's durationSeconds alias — those are asset/device defaults, not playlist overrides.
+            const added = await apiRequest<{ success: boolean; playlistAssetId: string; durationSeconds: number | null }>(
                 `/api/client-data/playlists/${playlistId}/assets`,
                 {
                     method: "POST",
                     headers: { "x-organization-id": activeOrganizationId! },
-                    body: JSON.stringify({ assetId: asset.id, durationSeconds: asset.defaultDurationSeconds ?? 10 }),
+                    body: JSON.stringify({ assetId: asset.id, durationSeconds: null }),
                 },
             );
 
             if (added.success) {
-                const durationSeconds = added.durationSeconds ?? asset.defaultDurationSeconds ?? 10;
+                // Create always posts durationSeconds:null — keep the playlist slot blank.
+                // Do not adopt library asset.defaultDurationSeconds / durationSeconds aliases.
+                const durationSeconds = null;
+                if (added.durationSeconds != null) {
+                    // Heal legacy backends that still auto-filled type defaults on create.
+                    void apiRequest(
+                        `/api/client-data/playlists/${playlistId}/assets/${added.playlistAssetId}`,
+                        {
+                            method: "PATCH",
+                            headers: { "x-organization-id": activeOrganizationId! },
+                            body: JSON.stringify({ durationSeconds: null }),
+                        },
+                    ).catch(() => undefined);
+                }
                 setPlaylistAssets((prev) => {
-                    const next = [
+                    const next: PlaylistAsset[] = [
                         ...prev,
                         {
-                            ...asset,
+                            id: asset.id,
                             playlistAssetId: added.playlistAssetId,
+                            name: asset.name,
+                            type: asset.type,
                             durationSeconds,
                             position: prev.length,
+                            downloadUrl: asset.downloadUrl,
+                            thumbnailUrl: asset.thumbnailUrl ?? null,
+                            fileUrl: asset.fileUrl ?? null,
+                            url: asset.url ?? null,
+                            mimeType: asset.mimeType,
+                            documentFormat: asset.documentFormat ?? null,
+                            previewKind: asset.previewKind ?? null,
                         },
                     ];
                     savedOrderRef.current = next.map((item) => item.playlistAssetId);
@@ -413,14 +445,16 @@ export default function PlaylistBuilderPage() {
     };
 
     const persistDuration = useCallback(
-        async (playlistAssetId: string, durationSeconds: number): Promise<boolean> => {
+        async (playlistAssetId: string, durationSeconds: number | null): Promise<boolean> => {
             if (!canEdit || !activeOrganizationId) return false;
             if (!isDurationDirty(playlistAssetId, durationSeconds)) return true;
 
-            const normalized = Math.floor(durationSeconds);
-            if (!Number.isFinite(normalized) || normalized < 1) {
-                toast.error("Duration must be at least 1 second");
-                return false;
+            if (durationSeconds !== null) {
+                const normalized = Math.floor(durationSeconds);
+                if (!Number.isFinite(normalized) || normalized < 1) {
+                    toast.error("Duration must be at least 1 second");
+                    return false;
+                }
             }
 
             setSavingDurationId(playlistAssetId);
@@ -430,7 +464,7 @@ export default function PlaylistBuilderPage() {
                     {
                         method: "PATCH",
                         headers: { "x-organization-id": activeOrganizationId },
-                        body: JSON.stringify({ durationSeconds: normalized }),
+                        body: JSON.stringify({ durationSeconds }),
                     },
                 );
                 savedDurationsRef.current[playlistAssetId] = updated.durationSeconds;
@@ -464,9 +498,19 @@ export default function PlaylistBuilderPage() {
     }, [isDurationDirty, persistDuration]);
 
     const handleDurationChange = (playlistAssetId: string, value: string) => {
-        if (value.trim() === "") return;
-        const parsed = Math.floor(Number(value));
-        if (!Number.isFinite(parsed)) return;
+        const trimmed = value.trim();
+        if (trimmed === "") {
+            setPlaylistAssets((prev) =>
+                prev.map((asset) =>
+                    asset.playlistAssetId === playlistAssetId ? { ...asset, durationSeconds: null } : asset,
+                ),
+            );
+            return;
+        }
+        // Allow only positive integers while typing (ignore non-digits / decimals).
+        if (!/^\d+$/.test(trimmed)) return;
+        const parsed = Math.floor(Number(trimmed));
+        if (!Number.isFinite(parsed) || parsed < 1) return;
         setPlaylistAssets((prev) =>
             prev.map((asset) =>
                 asset.playlistAssetId === playlistAssetId ? { ...asset, durationSeconds: parsed } : asset,
@@ -545,7 +589,10 @@ export default function PlaylistBuilderPage() {
                 <div className="glass-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 16px", borderRadius: 12 }}>
                     <Clock size={16} style={{ color: "hsl(var(--accent-primary))" }} />
                     <span style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                        Total Duration: {playlistAssets.reduce((sum, a) => sum + a.durationSeconds, 0)}s
+                        Total Duration:{" "}
+                        {playlistAssets.some((a) => a.durationSeconds == null)
+                            ? "Uses device defaults"
+                            : `${playlistAssets.reduce((sum, a) => sum + (a.durationSeconds ?? 0), 0)}s`}
                     </span>
                 </div>
             </div>

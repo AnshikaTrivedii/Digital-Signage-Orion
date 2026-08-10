@@ -23,18 +23,18 @@ export function sortPlaylistAssetsBySequence<T extends PlaylistAssetRow>(rows: T
 }
 
 export function formatPlaylistOrderLog(
-  entries: { id: string; position: number; durationSeconds: number; name: string }[],
+  entries: { id: string; position: number; durationSeconds: number | null; name: string }[],
 ): string {
   return entries
-    .map((entry) => `${entry.position}:${entry.id}:${entry.durationSeconds}s:${entry.name}`)
+    .map((entry) => `${entry.position}:${entry.id}:${entry.durationSeconds ?? 'default'}s:${entry.name}`)
     .join(' → ');
 }
 
 /** Stable fingerprint of playlist order + per-slot durations for sync validation. */
 export function buildManifestSequenceSignature(
-  entries: { id: string; position: number; durationSeconds: number }[],
+  entries: { id: string; position: number; durationSeconds: number | null }[],
 ): string {
-  return entries.map((entry) => `${entry.position}:${entry.id}:${entry.durationSeconds}`).join('|');
+  return entries.map((entry) => `${entry.position}:${entry.id}:${entry.durationSeconds ?? 'default'}`).join('|');
 }
 
 export function isSequentialManifest(

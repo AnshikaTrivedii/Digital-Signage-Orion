@@ -70,7 +70,8 @@ type ManifestEntry = {
   type: string;
   mimeType: string;
   documentFormat: string | null;
-  durationSeconds: number;
+  /** null = player should use device default duration (non-video) or natural end (video). */
+  durationSeconds: number | null;
   position: number;
   assetVersion: number;
   updatedAt: string;
@@ -440,6 +441,11 @@ export class PlayerService {
       initialSyncPending: playerConfig.initialSyncPending,
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
+      orientation: playerConfig.orientation,
+      stretchToFit: playerConfig.stretchToFit,
+      defaultImageDuration: playerConfig.defaultImageDuration,
+      defaultDocumentDuration: playerConfig.defaultDocumentDuration,
+      defaultUrlDuration: playerConfig.defaultUrlDuration,
       display: playerConfig.display,
       playback: playerConfig.playback,
       ...commandPayload,
@@ -528,6 +534,11 @@ export class PlayerService {
       initialSyncPending: playerConfig.initialSyncPending,
       initialSyncTimeoutSeconds: playerConfig.initialSyncTimeoutSeconds,
       features: playerConfig.features,
+      orientation: playerConfig.orientation,
+      stretchToFit: playerConfig.stretchToFit,
+      defaultImageDuration: playerConfig.defaultImageDuration,
+      defaultDocumentDuration: playerConfig.defaultDocumentDuration,
+      defaultUrlDuration: playerConfig.defaultUrlDuration,
       display: playerConfig.display,
       playback: playerConfig.playback,
       ...commandPayload,
@@ -571,6 +582,9 @@ export class PlayerService {
       configVersion: playerConfig.configVersion,
       orientation: playerConfig.orientation,
       stretchToFit: playerConfig.stretchToFit,
+      defaultImageDuration: playerConfig.defaultImageDuration,
+      defaultDocumentDuration: playerConfig.defaultDocumentDuration,
+      defaultUrlDuration: playerConfig.defaultUrlDuration,
       display: playerConfig.display,
       playback: playerConfig.playback,
     };
@@ -848,7 +862,7 @@ export class PlayerService {
       if (zone.type === ZoneType.IMAGE && zone.asset) {
         const manifestEntry = await this.buildAssetManifestEntry(
           zone.asset,
-          zone.asset.defaultDurationSeconds ?? 10,
+          this.resolveManifestDurationSeconds(zone.asset.defaultDurationSeconds ?? null),
           0,
           syncContext,
         );
@@ -1112,7 +1126,7 @@ export class PlayerService {
 
   private async buildAssetManifestEntry(
     asset: ManifestAssetInput,
-    durationSeconds: number,
+    durationSeconds: number | null,
     position: number,
     syncContext: SyncAssetContext,
   ): Promise<ManifestEntry> {
@@ -1223,7 +1237,7 @@ export class PlayerService {
     playlist: {
       playlistAssets: {
         position: number;
-        durationSeconds: number;
+        durationSeconds: number | null;
         asset: ManifestAssetInput;
       }[];
     },
@@ -1236,7 +1250,7 @@ export class PlayerService {
       manifest.push(
         await this.buildAssetManifestEntry(
           playlistAsset.asset,
-          playlistAsset.durationSeconds,
+          this.resolveManifestDurationSeconds(playlistAsset.durationSeconds),
           sequence,
           syncContext,
         ),
@@ -1244,6 +1258,23 @@ export class PlayerService {
     }
 
     return manifest;
+  }
+
+  /**
+   * null playlist duration = no override → player uses device default (or native video length).
+   * Positive integer = explicit playlist override.
+   */
+  private resolveManifestDurationSeconds(
+    playlistDurationSeconds: number | null,
+  ): number | null {
+    if (playlistDurationSeconds == null) {
+      return null;
+    }
+    const raw = Math.floor(Number(playlistDurationSeconds));
+    if (!Number.isFinite(raw) || raw <= 0) {
+      return null;
+    }
+    return raw;
   }
 
   /**

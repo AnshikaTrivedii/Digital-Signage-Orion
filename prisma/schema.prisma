@@ -294,7 +294,8 @@ model PlaylistAsset {
   playlistId      String
   assetId         String
   position        Int
-  durationSeconds Int      @default(10)
+  /// null = no playlist override; player uses device default playback duration.
+  durationSeconds Int?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
