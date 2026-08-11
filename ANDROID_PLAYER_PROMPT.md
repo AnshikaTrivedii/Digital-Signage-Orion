@@ -288,11 +288,47 @@ Lightweight revision check. Poll every `revisionPollIntervalSeconds` (default **
   "contentType": "playlist",
   "playlistId": "clxyz123",
   "layoutId": null,
+  "contentSource": "schedule",
+  "activeSchedule": {
+    "scheduleId": "clsch456",
+    "scheduleName": "Morning Playlist",
+    "playlistId": "clxyz123",
+    "startDateTime": "2026-08-12T03:30:00.000Z",
+    "endDateTime": "2026-08-12T07:30:00.000Z"
+  },
   "initialSyncPending": false,
   "revisionPollIntervalSeconds": 5,
   "syncIntervalSeconds": 120
 }
 ```
+
+**Scheduling — the server already resolved it; the player does not.**
+
+`playlistId` is the playlist this device should be playing *right now*. When a CMS
+schedule is active, the server has already substituted the scheduled playlist here,
+so the existing "revision changed → call `/sync`" loop is all the player needs. Do
+not evaluate schedule windows on-device, and do not compare `startDateTime` /
+`endDateTime` against the local clock to decide what to play — clock drift on the
+device would fight the server.
+
+| Field | Meaning |
+| --- | --- |
+| `activeSchedule` | The schedule currently driving this device, or `null` when none applies. |
+| `contentSource` | `schedule`, `manual-playlist`, `manual-layout`, or `none` — why `playlistId` is what it is. |
+
+Server-side priority is **active schedule → manually assigned playlist/layout → nothing**.
+A schedule starting, ending, being edited, disabled or deleted all change `revision`,
+so each is picked up within one poll (~5s) with no push required. When a schedule
+ends, `playlistId` reverts to the device's manual assignment on its own.
+
+`activeSchedule` is informational — useful for logs and diagnostics screens:
+
+```kotlin
+Log.i("Sync", "playlistId=${res.playlistId} source=${res.contentSource} " +
+    "schedule=${res.activeSchedule?.scheduleName ?: "none"}")
+```
+
+`activeSchedule` and `contentSource` are also present on `GET /api/player/sync`.
 
 ---
 
@@ -911,9 +947,21 @@ data class SyncRevisionResponse(
     val contentType: String,
     val playlistId: String?,
     val layoutId: String?,
+    /** Why playlistId is what it is: schedule | manual-playlist | manual-layout | none. */
+    val contentSource: String? = null,
+    /** Informational only — the server has already applied the schedule to playlistId. */
+    val activeSchedule: ActiveSchedule? = null,
     val initialSyncPending: Boolean,
     val revisionPollIntervalSeconds: Int = 5,
     val syncIntervalSeconds: Int = 120,
+)
+
+data class ActiveSchedule(
+    val scheduleId: String,
+    val scheduleName: String,
+    val playlistId: String,
+    val startDateTime: String,
+    val endDateTime: String,
 )
 
 data class SyncResponse(

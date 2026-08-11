@@ -9,11 +9,12 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { PlayerModule } from './player/player.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { S3Module } from './s3/s3.module';
+import { SchedulingModule } from './scheduling/scheduling.module';
 import { SyncModule } from './sync/sync.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
-  imports: [PrismaModule, S3Module, SyncModule, AuditModule, AuthModule, UsersModule, OrganizationsModule, AssetsModule, ClientDataModule, PlayerModule],
+  imports: [PrismaModule, S3Module, SyncModule, AuditModule, AuthModule, UsersModule, OrganizationsModule, AssetsModule, ClientDataModule, SchedulingModule, PlayerModule],
   controllers: [HealthController],
   providers: [AppService],
 })

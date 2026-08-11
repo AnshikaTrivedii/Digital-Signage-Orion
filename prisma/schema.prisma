@@ -163,18 +163,8 @@ enum TickerBroadcastScope {
   SELECTED_DEVICES
 }
 
-enum ScheduleStatus {
-  SCHEDULED
-  ACTIVE
-  COMPLETED
-  PAUSED
-}
-
-enum SchedulePriority {
-  LOW
-  NORMAL
-  HIGH
-}
+/// Schedule status is never stored — it is derived from `enabled` plus the
+/// current instant against startDateTime/endDateTime, so it can never go stale.
 
 enum LayoutStatus {
   DRAFT
@@ -238,13 +228,15 @@ model Organization {
   primaryContactName  String?
   primaryContactEmail String?
   salesNotes          String?
+  /// IANA zone used to interpret and render schedule wall-clock times.
+  timezone            String                   @default("Asia/Kolkata")
   memberships         OrganizationMembership[]
   invitations         Invitation[]
   assets              Asset[]
   assetFolders        AssetFolder[]
   playlists           Playlist[]
   layouts             Layout[]
-  scheduleEvents      ScheduleEvent[]
+  schedules           Schedule[]
   devices             Device[]
   tickers             Ticker[]
   proofOfPlayLogs     ProofOfPlayLog[]
@@ -270,6 +262,7 @@ model Playlist {
   playlistAssets PlaylistAsset[]
   layoutZones    LayoutZone[]
   devices        Device[]
+  schedules      Schedule[]
 
   @@index([organizationId, createdAt])
 }
@@ -349,25 +342,30 @@ model LayoutZone {
   @@index([layoutId, zIndex])
 }
 
-model ScheduleEvent {
-  id             String           @id @default(cuid())
+/// A time-bounded playlist assignment. References the playlist by id — playlist
+/// contents are never copied here.
+model Schedule {
+  id             String   @id @default(cuid())
   organizationId String
   name           String
-  campaign       String
-  startTime      String
-  endTime        String
-  days           String[]
-  screens        Int              @default(0)
-  status         ScheduleStatus   @default(SCHEDULED)
-  color          String           @default("#4ade80")
-  priority       SchedulePriority @default(NORMAL)
-  recurring      Boolean          @default(true)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  playlistId     String
+  /// null = every device in the organization.
+  deviceId       String?
+  /// Absolute UTC instants. The operator's wall-clock input is converted using
+  /// Organization.timezone, so comparisons against now() are always UTC-to-UTC.
+  startDateTime  DateTime
+  endDateTime    DateTime
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  playlist     Playlist     @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  device       Device?      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 
-  @@index([organizationId, createdAt])
+  @@index([organizationId, startDateTime])
+  @@index([organizationId, deviceId, enabled])
+  @@index([playlistId])
 }
 
 model Device {
@@ -389,6 +387,9 @@ model Device {
   currentLayoutId          String?
   lastAckedPlaylistVersion Int?
   lastAckedLayoutVersion   Int?
+  /// Playlist the device last actually synced. A schedule can swap the effective
+  /// playlist without changing syncVersion, so identity must be tracked too.
+  lastAckedPlaylistId      String?
 
   // Initial onboarding sync (first playlist download after pairing)
   pendingInitialSync     Boolean   @default(false)
@@ -490,6 +491,7 @@ model Device {
   cachedAssets    DeviceCachedAsset[]
   cacheCommands   DeviceCacheCommand[]
   systemLogs      DeviceSystemLog[]
+  schedules       Schedule[]
 
   @@index([organizationId, createdAt])
   @@index([organizationId, currentPlaylistId])

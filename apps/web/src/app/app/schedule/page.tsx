@@ -3,124 +3,175 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    Calendar, Clock, Plus,
-    Trash2, Monitor, Play, Pause, X, Repeat,
-    Zap, Eye, CheckCircle, Pencil, AlertTriangle, RefreshCw,
+    AlertTriangle, Calendar, CalendarClock, CheckCircle, Clock, ListVideo,
+    Monitor, Pencil, Play, Plus, Power, RefreshCw, Trash2, X,
 } from "lucide-react";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 
-type ScheduleStatus = "scheduled" | "active" | "paused" | "completed";
-type SchedulePriority = "low" | "normal" | "high";
+type ScheduleStatus = "scheduled" | "active" | "completed" | "disabled";
+type StatusFilter = ScheduleStatus | "all";
 
-interface ScheduleEvent {
+interface Schedule {
     id: string;
     name: string;
-    campaign: string;
+    playlistId: string;
+    playlistName: string | null;
+    deviceId: string | null;
+    deviceName: string | null;
+    allDevices: boolean;
+    startDateTime: string;
+    endDateTime: string;
+    startDate: string;
     startTime: string;
+    endDate: string;
     endTime: string;
-    days: string[];
-    screens: number;
+    timezone: string;
+    enabled: boolean;
     status: ScheduleStatus;
-    color: string;
-    priority: SchedulePriority;
-    recurring: boolean;
 }
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const COLOR_PALETTE = ["#4ade80", "#00e5ff", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa", "#facc15", "#38bdf8"];
+interface NamedRef {
+    id: string;
+    name: string;
+}
 
-const statusIcon = (s: string) => {
-    if (s === "active") return <Play size={12} />;
-    if (s === "paused") return <Pause size={12} />;
-    if (s === "completed") return <CheckCircle size={12} />;
-    return <Clock size={12} />;
+const ALL_DEVICES = "__all__";
+
+/** Statuses are time-derived, so the table goes stale on its own without polling. */
+const STATUS_REFRESH_MS = 30_000;
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "active", label: "Active" },
+    { value: "scheduled", label: "Scheduled" },
+    { value: "completed", label: "Completed" },
+    { value: "disabled", label: "Disabled" },
+];
+
+const statusColor = (status: ScheduleStatus) => {
+    if (status === "active") return "var(--status-success)";
+    if (status === "scheduled") return "var(--accent-primary)";
+    if (status === "disabled") return "var(--status-warning)";
+    return "var(--text-muted)";
 };
 
-const statusColor = (s: string) => {
-    if (s === "active") return "var(--status-success)";
-    if (s === "paused") return "var(--status-warning)";
-    if (s === "completed") return "var(--text-muted)";
-    return "var(--accent-primary)";
-};
-
-const priorityLabel = (p: string) => {
-    if (p === "high") return { text: "HIGH", color: "var(--status-danger)" };
-    if (p === "low") return { text: "LOW", color: "var(--text-muted)" };
-    return { text: "NORMAL", color: "var(--accent-secondary)" };
+const statusIcon = (status: ScheduleStatus) => {
+    if (status === "active") return <Play size={12} />;
+    if (status === "scheduled") return <Clock size={12} />;
+    if (status === "disabled") return <Power size={12} />;
+    return <CheckCircle size={12} />;
 };
 
 const describeError = (error: unknown): string => {
     if (error instanceof ApiError) {
-        if (Array.isArray((error.payload as { message?: unknown })?.message)) {
-            return ((error.payload as { message: string[] }).message).join(", ");
-        }
+        const payload = error.payload as { message?: unknown; error?: unknown } | undefined;
+        if (Array.isArray(payload?.message)) return (payload.message as string[]).join(", ");
+        if (typeof payload?.message === "string") return payload.message;
         return error.message || `API ${error.status}`;
     }
     if (error instanceof Error) return error.message;
     return "Something went wrong.";
 };
 
+/** A conflict is the one error worth calling out by name in the form. */
+const isConflict = (error: unknown) => error instanceof ApiError && error.status === 409;
+
+const formatDisplayDate = (isoDate: string) => {
+    const [year, month, day] = isoDate.split("-").map(Number);
+    if (!year || !month || !day) return isoDate;
+    return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-GB", {
+        day: "2-digit", month: "short", year: "numeric", timeZone: "UTC",
+    });
+};
+
+const inputStyle = {
+    width: "100%", padding: 11, borderRadius: 10,
+    background: "hsla(var(--bg-base), 0.5)",
+    border: "1px solid hsla(var(--border-subtle), 0.5)",
+    color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem",
+} as const;
+
+const labelStyle = {
+    display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))",
+    fontWeight: 700, textTransform: "uppercase", marginBottom: 8,
+} as const;
+
+const cellStyle = {
+    padding: "14px 16px",
+    borderBottom: "1px solid hsla(var(--border-subtle), 0.25)",
+    fontSize: "0.85rem",
+    verticalAlign: "middle",
+} as const;
+
+const headerCellStyle = {
+    padding: "12px 16px", textAlign: "left", fontSize: "0.65rem", fontWeight: 700,
+    textTransform: "uppercase", letterSpacing: "0.06em",
+    color: "hsl(var(--text-muted))",
+    borderBottom: "1px solid hsla(var(--border-subtle), 0.4)",
+    whiteSpace: "nowrap",
+} as const;
+
 type EditorState = {
     name: string;
-    campaign: string;
+    playlistId: string;
+    deviceId: string;
+    startDate: string;
     startTime: string;
+    endDate: string;
     endTime: string;
-    days: string[];
-    screens: number;
-    status: ScheduleStatus;
-    priority: SchedulePriority;
-    recurring: boolean;
-    color: string;
+    enabled: boolean;
 };
 
-const DEFAULT_EDITOR: EditorState = {
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+const DEFAULT_EDITOR = (): EditorState => ({
     name: "",
-    campaign: "",
+    playlistId: "",
+    deviceId: ALL_DEVICES,
+    startDate: todayIso(),
     startTime: "09:00",
+    endDate: todayIso(),
     endTime: "17:00",
-    days: ["Mon", "Tue", "Wed", "Thu", "Fri"],
-    screens: 0,
-    status: "scheduled",
-    priority: "normal",
-    recurring: true,
-    color: COLOR_PALETTE[0],
-};
+    enabled: true,
+});
 
-export default function SchedulePage() {
+export default function SchedulingPage() {
     const { canEdit } = useClientFeature("SCHEDULE");
     const { activeOrganizationId } = useAuth();
 
-    const [events, setEvents] = useState<ScheduleEvent[]>([]);
+    const [schedules, setSchedules] = useState<Schedule[]>([]);
+    const [playlists, setPlaylists] = useState<NamedRef[]>([]);
+    const [devices, setDevices] = useState<NamedRef[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
-    const [selectedDay, setSelectedDay] = useState("Mon");
-    const [viewMode, setViewMode] = useState<"timeline" | "list">("timeline");
-    const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
+    const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+    const [deviceFilter, setDeviceFilter] = useState<string>("");
+    const [playlistFilter, setPlaylistFilter] = useState<string>("");
 
     const [editorOpen, setEditorOpen] = useState(false);
     const [editorMode, setEditorMode] = useState<"create" | "edit">("create");
     const [editorId, setEditorId] = useState<string | null>(null);
-    const [editor, setEditor] = useState<EditorState>(DEFAULT_EDITOR);
+    const [editor, setEditor] = useState<EditorState>(DEFAULT_EDITOR());
     const [editorError, setEditorError] = useState<string | null>(null);
+    const [editorConflict, setEditorConflict] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [pendingId, setPendingId] = useState<string | null>(null);
-    const [pendingAction, setPendingAction] = useState<"toggle" | "delete" | null>(null);
 
-    const loadEvents = useCallback(
+    const loadSchedules = useCallback(
         async (options: { silent?: boolean } = {}) => {
             if (!activeOrganizationId) return;
             if (!options.silent) setIsLoading(true);
             setLoadError(null);
             try {
-                const response = await apiRequest<ScheduleEvent[]>("/api/client-data/schedule-events", {
+                const response = await apiRequest<Schedule[]>("/api/client-data/schedules", {
                     headers: { "x-organization-id": activeOrganizationId },
                 });
-                setEvents(response);
+                setSchedules(response);
             } catch (error) {
                 setLoadError(describeError(error));
             } finally {
@@ -130,182 +181,205 @@ export default function SchedulePage() {
         [activeOrganizationId],
     );
 
-    useEffect(() => {
-        void loadEvents();
-    }, [loadEvents]);
+    const loadReferences = useCallback(async () => {
+        if (!activeOrganizationId) return;
+        const headers = { "x-organization-id": activeOrganizationId };
+        try {
+            const [playlistResponse, deviceResponse] = await Promise.all([
+                apiRequest<NamedRef[]>("/api/client-data/playlists", { headers }),
+                apiRequest<NamedRef[]>("/api/client-data/devices", { headers }),
+            ]);
+            setPlaylists(playlistResponse.map((p) => ({ id: p.id, name: p.name })));
+            setDevices(deviceResponse.map((d) => ({ id: d.id, name: d.name })));
+        } catch {
+            // Non-fatal: the table still renders, only the pickers are empty.
+        }
+    }, [activeOrganizationId]);
 
-    const todayEvents = useMemo(
-        () => events.filter((e) => e.days.includes(selectedDay)),
-        [events, selectedDay],
+    useEffect(() => {
+        void loadSchedules();
+        void loadReferences();
+    }, [loadSchedules, loadReferences]);
+
+    // Keep derived statuses honest as schedules start and end.
+    useEffect(() => {
+        const timer = setInterval(() => void loadSchedules({ silent: true }), STATUS_REFRESH_MS);
+        return () => clearInterval(timer);
+    }, [loadSchedules]);
+
+    const visibleSchedules = useMemo(
+        () =>
+            schedules.filter((schedule) => {
+                if (statusFilter !== "all" && schedule.status !== statusFilter) return false;
+                if (playlistFilter && schedule.playlistId !== playlistFilter) return false;
+                if (deviceFilter) {
+                    // An all-devices schedule genuinely plays on the filtered device.
+                    if (deviceFilter === ALL_DEVICES) return schedule.deviceId === null;
+                    if (schedule.deviceId !== null && schedule.deviceId !== deviceFilter) return false;
+                }
+                return true;
+            }),
+        [schedules, statusFilter, deviceFilter, playlistFilter],
     );
 
-    const timeToPercent = (time: string) => {
-        const [h, m] = time.split(":").map(Number);
-        return ((h * 60 + m) / (24 * 60)) * 100;
-    };
+    const timezone = schedules[0]?.timezone ?? null;
 
     const openCreate = () => {
         if (!canEdit) return toast.error("You only have view access to schedules.");
         setEditorMode("create");
         setEditorId(null);
-        setEditor({ ...DEFAULT_EDITOR, days: [selectedDay], color: COLOR_PALETTE[events.length % COLOR_PALETTE.length] });
+        setEditor({ ...DEFAULT_EDITOR(), playlistId: playlists[0]?.id ?? "" });
         setEditorError(null);
+        setEditorConflict(false);
         setEditorOpen(true);
     };
 
-    const openEdit = (event: ScheduleEvent) => {
+    const openEdit = (schedule: Schedule) => {
         if (!canEdit) return toast.error("You only have view access to schedules.");
         setEditorMode("edit");
-        setEditorId(event.id);
+        setEditorId(schedule.id);
         setEditor({
-            name: event.name,
-            campaign: event.campaign,
-            startTime: event.startTime,
-            endTime: event.endTime,
-            days: [...event.days],
-            screens: event.screens,
-            status: event.status,
-            priority: event.priority,
-            recurring: event.recurring,
-            color: event.color,
+            name: schedule.name,
+            playlistId: schedule.playlistId,
+            deviceId: schedule.deviceId ?? ALL_DEVICES,
+            startDate: schedule.startDate,
+            startTime: schedule.startTime,
+            endDate: schedule.endDate,
+            endTime: schedule.endTime,
+            enabled: schedule.enabled,
         });
         setEditorError(null);
+        setEditorConflict(false);
         setEditorOpen(true);
-        setSelectedEvent(null);
-    };
-
-    const closeEditor = () => {
-        setEditorOpen(false);
-        setEditorError(null);
-    };
-
-    const toggleEditorDay = (day: string) => {
-        setEditor((prev) => ({
-            ...prev,
-            days: prev.days.includes(day) ? prev.days.filter((d) => d !== day) : [...prev.days, day],
-        }));
-    };
-
-    const validateEditor = (state: EditorState): string | null => {
-        if (!state.name.trim()) return "Schedule name is required";
-        if (state.days.length === 0) return "Select at least one day";
-        const re = /^([01]\d|2[0-3]):[0-5]\d$/;
-        if (!re.test(state.startTime) || !re.test(state.endTime)) return "Times must be HH:MM (24h)";
-        const toMin = (t: string) => {
-            const [h, m] = t.split(":").map(Number);
-            return h * 60 + m;
-        };
-        if (toMin(state.endTime) <= toMin(state.startTime)) return "End time must be later than start time";
-        return null;
     };
 
     const handleSave = async () => {
-        if (!activeOrganizationId) {
-            setEditorError("Select an organization first");
-            return;
+        if (!canEdit) return toast.error("You only have view access to schedules.");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+
+        if (!editor.name.trim()) {
+            setEditorConflict(false);
+            return setEditorError("Schedule name is required.");
         }
-        const validationError = validateEditor(editor);
-        if (validationError) {
-            setEditorError(validationError);
-            return;
+        if (!editor.playlistId) {
+            setEditorConflict(false);
+            return setEditorError("Select a playlist to play during this window.");
         }
-        setEditorError(null);
+
         setIsSaving(true);
+        setEditorError(null);
+        setEditorConflict(false);
+        const body = {
+            name: editor.name.trim(),
+            playlistId: editor.playlistId,
+            deviceId: editor.deviceId === ALL_DEVICES ? null : editor.deviceId,
+            startDate: editor.startDate,
+            startTime: editor.startTime,
+            endDate: editor.endDate,
+            endTime: editor.endTime,
+            enabled: editor.enabled,
+        };
+
         try {
-            const body = {
-                name: editor.name.trim(),
-                campaign: editor.campaign.trim() || undefined,
-                startTime: editor.startTime,
-                endTime: editor.endTime,
-                days: editor.days,
-                screens: editor.screens,
-                status: editor.status,
-                priority: editor.priority,
-                recurring: editor.recurring,
-                color: editor.color,
-            };
             if (editorMode === "create") {
-                const created = await apiRequest<ScheduleEvent>("/api/client-data/schedule-events", {
+                await apiRequest<Schedule>("/api/client-data/schedules", {
                     method: "POST",
                     headers: { "x-organization-id": activeOrganizationId },
                     body: JSON.stringify(body),
                 });
-                setEvents((prev) => [created, ...prev]);
                 toast.success("Schedule created");
             } else if (editorId) {
-                const updated = await apiRequest<ScheduleEvent>(`/api/client-data/schedule-events/${editorId}`, {
+                await apiRequest<Schedule>(`/api/client-data/schedules/${editorId}`, {
                     method: "PATCH",
                     headers: { "x-organization-id": activeOrganizationId },
                     body: JSON.stringify(body),
                 });
-                setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
                 toast.success("Schedule updated");
             }
             setEditorOpen(false);
+            await loadSchedules({ silent: true });
         } catch (error) {
+            setEditorConflict(isConflict(error));
             setEditorError(describeError(error));
         } finally {
             setIsSaving(false);
         }
     };
 
-    const handleToggleStatus = async (event: ScheduleEvent) => {
+    const handleToggle = async (schedule: Schedule) => {
         if (!canEdit) return toast.error("You only have view access to schedules.");
         if (!activeOrganizationId) return toast.error("Select an organization first");
-        setPendingId(event.id);
-        setPendingAction("toggle");
+        setPendingId(schedule.id);
         try {
-            const updated = await apiRequest<ScheduleEvent>(`/api/client-data/schedule-events/${event.id}/toggle`, {
-                method: "PATCH",
-                headers: { "x-organization-id": activeOrganizationId },
-            });
-            setEvents((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
-            toast.success(updated.status === "active" ? "Schedule activated" : "Schedule paused");
+            const updated = await apiRequest<Schedule>(
+                `/api/client-data/schedules/${schedule.id}/toggle`,
+                {
+                    method: "PATCH",
+                    headers: { "x-organization-id": activeOrganizationId },
+                    body: JSON.stringify({ enabled: !schedule.enabled }),
+                },
+            );
+            setSchedules((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+            toast.success(updated.enabled ? "Schedule enabled" : "Schedule disabled");
         } catch (error) {
             toast.error(describeError(error));
         } finally {
             setPendingId(null);
-            setPendingAction(null);
         }
     };
 
-    const handleDelete = async (event: ScheduleEvent) => {
+    const handleDelete = async (schedule: Schedule) => {
         if (!canEdit) return toast.error("You only have view access to schedules.");
         if (!activeOrganizationId) return toast.error("Select an organization first");
-        if (typeof window !== "undefined" && !window.confirm(`Remove "${event.name}"? This cannot be undone.`)) return;
-        setPendingId(event.id);
-        setPendingAction("delete");
+        const warning =
+            schedule.status === "active"
+                ? `"${schedule.name}" is playing right now. Deleting it will send its devices back to their assigned playlist. Continue?`
+                : `Delete "${schedule.name}"? This cannot be undone.`;
+        if (typeof window !== "undefined" && !window.confirm(warning)) return;
+
+        setPendingId(schedule.id);
         try {
-            await apiRequest(`/api/client-data/schedule-events/${event.id}`, {
+            await apiRequest(`/api/client-data/schedules/${schedule.id}`, {
                 method: "DELETE",
                 headers: { "x-organization-id": activeOrganizationId },
             });
-            setEvents((prev) => prev.filter((e) => e.id !== event.id));
-            if (selectedEvent?.id === event.id) setSelectedEvent(null);
-            toast.success("Schedule removed");
+            setSchedules((prev) => prev.filter((s) => s.id !== schedule.id));
+            toast.success("Schedule deleted");
         } catch (error) {
             toast.error(describeError(error));
         } finally {
             setPendingId(null);
-            setPendingAction(null);
         }
     };
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        await loadEvents({ silent: true });
+        await Promise.all([loadSchedules({ silent: true }), loadReferences()]);
         setIsRefreshing(false);
         toast.success("Schedules refreshed");
     };
 
+    const counts = useMemo(
+        () => ({
+            active: schedules.filter((s) => s.status === "active").length,
+            scheduled: schedules.filter((s) => s.status === "scheduled").length,
+            completed: schedules.filter((s) => s.status === "completed").length,
+            disabled: schedules.filter((s) => s.status === "disabled").length,
+        }),
+        [schedules],
+    );
+
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            {!canEdit && <ReadOnlyNotice message="Schedules are read-only for this account. You can review schedule timelines, but create, save, and delete actions are disabled." />}
+            {!canEdit && <ReadOnlyNotice message="Scheduling is read-only for this account. You can review schedules, but create, edit, enable/disable and delete actions are disabled." />}
 
-            <div className="flex-between" style={{ marginBottom: 32, gap: 16 }}>
+            <div className="flex-between" style={{ marginBottom: 32, gap: 16, flexWrap: "wrap" }}>
                 <div>
-                    <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Content Schedule</h1>
-                    <p style={{ color: "hsl(var(--text-secondary))" }}>Orchestrate time-based content delivery across your signage network.</p>
+                    <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Scheduling</h1>
+                    <p style={{ color: "hsl(var(--text-secondary))" }}>
+                        Play a playlist on a device for a fixed window. Outside every window, devices fall back to their assigned playlist.
+                        {timezone && <> All times are in <strong>{timezone}</strong>.</>}
+                    </p>
                 </div>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                     <button className="btn-outline" onClick={handleRefresh} disabled={isRefreshing || isLoading} style={{ display: "flex", alignItems: "center", gap: 8, opacity: isRefreshing ? 0.6 : 1 }}>
@@ -313,7 +387,7 @@ export default function SchedulePage() {
                         Refresh
                     </button>
                     <button className="btn-primary" disabled={!canEdit} onClick={openCreate} style={{ display: "flex", alignItems: "center", gap: 8, opacity: canEdit ? 1 : 0.55, cursor: canEdit ? "pointer" : "not-allowed" }}>
-                        <Plus size={18} /> New Schedule
+                        <Plus size={18} /> Create Schedule
                     </button>
                 </div>
             </div>
@@ -325,335 +399,255 @@ export default function SchedulePage() {
                         <p style={{ fontSize: "0.85rem", fontWeight: 600 }}>Unable to load schedules</p>
                         <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{loadError}</p>
                     </div>
-                    <button className="btn-outline" onClick={() => loadEvents()}>Retry</button>
+                    <button className="btn-outline" onClick={() => loadSchedules()}>Retry</button>
                 </div>
             )}
 
             <div className="grid-stats" style={{ marginBottom: 24 }}>
                 {[
-                    { label: "Active Now", count: events.filter((e) => e.status === "active").length, icon: Play, color: "var(--status-success)" },
-                    { label: "Scheduled", count: events.filter((e) => e.status === "scheduled").length, icon: Clock, color: "var(--accent-primary)" },
-                    { label: "Recurring", count: events.filter((e) => e.recurring).length, icon: Repeat, color: "var(--accent-secondary)" },
-                    { label: "Total Screens", count: events.reduce((s, e) => s + e.screens, 0), icon: Monitor, color: "var(--accent-tertiary)" },
-                ].map((s, i) => (
-                    <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}
+                    { label: "Active Now", count: counts.active, icon: Play, color: "var(--status-success)" },
+                    { label: "Scheduled", count: counts.scheduled, icon: Clock, color: "var(--accent-primary)" },
+                    { label: "Completed", count: counts.completed, icon: CheckCircle, color: "var(--accent-secondary)" },
+                    { label: "Disabled", count: counts.disabled, icon: Power, color: "var(--status-warning)" },
+                ].map((stat, index) => (
+                    <motion.div key={stat.label} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}
                         className="glass-card" style={{ padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
-                        <div style={{ width: 44, height: 44, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `hsla(${s.color}, 0.1)`, border: `1px solid hsla(${s.color}, 0.2)` }}>
-                            <s.icon size={20} style={{ color: `hsl(${s.color})` }} />
+                        <div style={{ width: 44, height: 44, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `hsla(${stat.color}, 0.1)`, border: `1px solid hsla(${stat.color}, 0.2)` }}>
+                            <stat.icon size={20} style={{ color: `hsl(${stat.color})` }} />
                         </div>
                         <div>
-                            <p style={{ fontSize: "1.5rem", fontWeight: 800 }}>{s.count}</p>
-                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{s.label}</p>
+                            <p style={{ fontSize: "1.5rem", fontWeight: 800 }}>{stat.count}</p>
+                            <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{stat.label}</p>
                         </div>
                     </motion.div>
                 ))}
             </div>
 
             <div className="glass-panel" style={{ padding: 16, marginBottom: 24, display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
-                <div style={{ display: "flex", gap: 6, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
-                    {DAYS.map((day) => (
-                        <button key={day} onClick={() => setSelectedDay(day)} style={{
+                <div style={{ display: "flex", gap: 6, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10, flexWrap: "wrap" }}>
+                    {STATUS_FILTERS.map((filter) => (
+                        <button key={filter.value} onClick={() => setStatusFilter(filter.value)} style={{
                             padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600,
-                            background: selectedDay === day ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                            color: selectedDay === day ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                        }}>{day}</button>
+                            background: statusFilter === filter.value ? "hsla(var(--accent-primary), 0.15)" : "transparent",
+                            color: statusFilter === filter.value ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
+                        }}>{filter.label}</button>
                     ))}
                 </div>
-                <div style={{ display: "flex", gap: 4, background: "hsla(var(--bg-base), 0.7)", padding: 4, borderRadius: 10 }}>
-                    {(["timeline", "list"] as const).map((v) => (
-                        <button key={v} onClick={() => setViewMode(v)} style={{
-                            padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600, textTransform: "capitalize" as const,
-                            background: viewMode === v ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                            color: viewMode === v ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                        }}>{v}</button>
-                    ))}
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <select value={deviceFilter} onChange={(event) => setDeviceFilter(event.target.value)}
+                        aria-label="Filter by device"
+                        style={{ ...inputStyle, width: "auto", minWidth: 180, padding: "9px 12px", fontSize: "0.82rem" }}>
+                        <option value="">All devices</option>
+                        <option value={ALL_DEVICES}>Only &quot;All Devices&quot; schedules</option>
+                        {devices.map((device) => (
+                            <option key={device.id} value={device.id}>{device.name}</option>
+                        ))}
+                    </select>
+                    <select value={playlistFilter} onChange={(event) => setPlaylistFilter(event.target.value)}
+                        aria-label="Filter by playlist"
+                        style={{ ...inputStyle, width: "auto", minWidth: 180, padding: "9px 12px", fontSize: "0.82rem" }}>
+                        <option value="">All playlists</option>
+                        {playlists.map((playlist) => (
+                            <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
+                        ))}
+                    </select>
                 </div>
             </div>
 
-            {viewMode === "timeline" ? (
-                <div className="glass-panel" style={{ padding: 24, overflow: "hidden" }}>
-                    <h3 style={{ fontSize: "0.8rem", fontWeight: 700, color: "hsl(var(--text-muted))", textTransform: "uppercase", marginBottom: 20 }}>
-                        {selectedDay} Timeline — {todayEvents.length} scheduled event{todayEvents.length === 1 ? "" : "s"}
-                    </h3>
-                    <div style={{ position: "relative", height: Math.max(todayEvents.length * 56 + 40, 200) }}>
-                        {[0, 4, 8, 12, 16, 20, 24].map((h) => {
-                            const pct = (h / 24) * 100;
-                            return (
-                                <div key={h} style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, pointerEvents: "none" }}>
-                                    <div style={{ position: "absolute", left: `${pct}%`, top: 0, bottom: 0, width: 1, background: "hsla(var(--border-subtle), 0.15)" }} />
-                                    <div style={{ position: "absolute", left: `${pct}%`, top: -20, transform: "translateX(-50%)", fontSize: "0.65rem", color: "hsl(var(--text-muted))", fontWeight: 600, fontFamily: "monospace" }}>
-                                        {`${String(h === 24 ? 0 : h).padStart(2, "0")}:00`}
-                                    </div>
-                                </div>
-                            );
-                        })}
-                        {todayEvents.map((event, idx) => {
-                            const left = timeToPercent(event.startTime);
-                            const right = timeToPercent(event.endTime);
-                            const width = Math.max(right - left, 2);
-                            return (
-                                <motion.div key={event.id} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}
-                                    transition={{ delay: idx * 0.06 }} onClick={() => setSelectedEvent(event)}
-                                    style={{
-                                        position: "absolute", top: idx * 56 + 20, left: `${left}%`, width: `${width}%`,
-                                        height: 44, background: `${event.color}18`, border: `1px solid ${event.color}50`,
-                                        borderLeft: `4px solid ${event.color}`, borderRadius: 8, display: "flex",
-                                        alignItems: "center", padding: "0 12px", cursor: "pointer", overflow: "hidden",
-                                        transition: "all 0.2s", minWidth: 80,
-                                    }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: 8, overflow: "hidden" }}>
-                                        <span style={{ color: event.color, flexShrink: 0 }}>{statusIcon(event.status)}</span>
-                                        <span style={{ fontSize: "0.78rem", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{event.name}</span>
-                                        <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", whiteSpace: "nowrap" }}>{event.startTime}–{event.endTime}</span>
-                                    </div>
-                                </motion.div>
-                            );
-                        })}
-                        <motion.div animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 2, repeat: Infinity }}
-                            style={{
-                                position: "absolute", left: `${timeToPercent(new Date().toTimeString().substring(0, 5))}%`,
-                                top: 0, bottom: 0, width: 2, background: "#f87171", boxShadow: "0 0 8px #f87171", zIndex: 5,
-                            }}>
-                            <div style={{ position: "absolute", top: -6, left: -4, width: 10, height: 10, borderRadius: "50%", background: "#f87171" }} />
-                        </motion.div>
-                        {isLoading ? (
-                            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--text-muted))" }}>
-                                Loading schedule...
-                            </div>
-                        ) : null}
-                        {todayEvents.length === 0 && !isLoading && (
-                            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "hsl(var(--text-muted))" }}>
-                                <div style={{ textAlign: "center" }}>
-                                    <Calendar size={48} style={{ opacity: 0.15, marginBottom: 12 }} />
-                                    <p style={{ fontSize: "1rem", fontWeight: 500 }}>No events scheduled for {selectedDay}</p>
-                                </div>
-                            </div>
-                        )}
+            <div className="glass-panel" style={{ padding: 0, overflow: "hidden" }}>
+                {isLoading ? (
+                    <div style={{ padding: 60, textAlign: "center", color: "hsl(var(--text-muted))" }}>Loading schedules…</div>
+                ) : visibleSchedules.length === 0 ? (
+                    <div style={{ padding: 60, textAlign: "center" }}>
+                        <CalendarClock size={40} style={{ color: "hsl(var(--text-muted))", marginBottom: 14 }} />
+                        <p style={{ fontWeight: 600, marginBottom: 6 }}>
+                            {schedules.length === 0 ? "No schedules yet" : "No schedules match these filters"}
+                        </p>
+                        <p style={{ fontSize: "0.8rem", color: "hsl(var(--text-muted))" }}>
+                            {schedules.length === 0
+                                ? "Create a schedule to play a playlist on a device for a fixed window."
+                                : "Try widening the status, device or playlist filter."}
+                        </p>
                     </div>
-                </div>
-            ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <AnimatePresence mode="popLayout">
-                        {isLoading ? (
-                            <motion.div key="loading" className="glass-panel" style={{ padding: 60, textAlign: "center", color: "hsl(var(--text-muted))" }}>
-                                Loading schedules...
-                            </motion.div>
-                        ) : todayEvents.length === 0 ? (
-                            <motion.div key="empty" className="glass-panel" style={{ padding: "80px 40px", textAlign: "center", color: "hsl(var(--text-muted))" }}>
-                                <Calendar size={48} style={{ opacity: 0.15, marginBottom: 12, margin: "0 auto 12px" }} />
-                                <p style={{ fontSize: "1rem", fontWeight: 500 }}>No events for {selectedDay}</p>
-                            </motion.div>
-                        ) : (
-                            todayEvents.map((event, idx) => {
-                                const isPending = pendingId === event.id;
-                                return (
-                                    <motion.div key={event.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ delay: idx * 0.04 }}
-                                        className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
-                                        <div style={{ display: "flex", alignItems: "stretch" }}>
-                                            <div style={{ width: 6, background: event.color, flexShrink: 0 }} />
-                                            <div style={{ flex: 1, padding: "20px 24px" }}>
-                                                <div className="flex-between" style={{ marginBottom: 12 }}>
-                                                    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                                                        <h3 style={{ fontSize: "1.05rem", fontWeight: 700 }}>{event.name}</h3>
-                                                        <span style={{
-                                                            fontSize: "0.6rem", fontWeight: 700, padding: "3px 10px", borderRadius: 20, textTransform: "uppercase",
-                                                            background: `hsla(${statusColor(event.status)}, 0.1)`, color: `hsl(${statusColor(event.status)})`,
-                                                        }}>{event.status}</span>
-                                                        {event.recurring && (
-                                                            <span style={{ fontSize: "0.6rem", fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "hsla(var(--accent-secondary), 0.1)", color: "hsl(var(--accent-secondary))", display: "flex", alignItems: "center", gap: 4 }}>
-                                                                <Repeat size={10} /> Recurring
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div style={{ display: "flex", gap: 4 }}>
-                                                        <button className="btn-icon-soft" title="View" onClick={() => setSelectedEvent(event)}><Eye size={16} /></button>
-                                                        <button className="btn-icon-soft" title="Edit" disabled={!canEdit} onClick={() => openEdit(event)}><Pencil size={16} /></button>
-                                                        <button className="btn-icon-soft" title={event.status === "active" ? "Pause" : "Activate"} disabled={!canEdit || isPending} onClick={() => handleToggleStatus(event)}>
-                                                            {isPending && pendingAction === "toggle" ? <div style={{ width: 14, height: 14, border: "2px solid hsl(var(--accent-primary))", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.9s linear infinite" }} /> : event.status === "active" ? <Pause size={16} /> : <Play size={16} />}
-                                                        </button>
-                                                        <button className="btn-icon-soft" title="Delete" disabled={!canEdit || isPending} style={{ color: "hsl(var(--status-danger))" }} onClick={() => handleDelete(event)}>
-                                                            {isPending && pendingAction === "delete" ? <div style={{ width: 14, height: 14, border: "2px solid hsl(var(--status-danger))", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.9s linear infinite" }} /> : <Trash2 size={16} />}
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <p style={{ fontSize: "0.85rem", color: "hsl(var(--text-secondary))", marginBottom: 12 }}>{event.campaign || "No content label"}</p>
-                                                <div style={{ display: "flex", gap: 24, fontSize: "0.75rem", color: "hsl(var(--text-muted))", flexWrap: "wrap" }}>
-                                                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {event.startTime} – {event.endTime}</span>
-                                                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}><Monitor size={12} /> {event.screens} screens</span>
-                                                    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                                        <Zap size={12} style={{ color: `hsl(${priorityLabel(event.priority).color})` }} />
-                                                        <span style={{ color: `hsl(${priorityLabel(event.priority).color})` }}>{priorityLabel(event.priority).text}</span>
-                                                    </span>
-                                                </div>
-                                                <div style={{ display: "flex", gap: 6, marginTop: 12 }}>
-                                                    {DAYS.map((d) => (
-                                                        <span key={d} style={{
-                                                            fontSize: "0.6rem", fontWeight: 700, padding: "2px 8px", borderRadius: 6,
-                                                            background: event.days.includes(d) ? `${event.color}20` : "hsla(var(--bg-base), 0.4)",
-                                                            color: event.days.includes(d) ? event.color : "hsl(var(--text-muted))",
-                                                            border: `1px solid ${event.days.includes(d) ? `${event.color}40` : "transparent"}`,
-                                                        }}>{d}</span>
-                                                    ))}
-                                                </div>
+                ) : (
+                    <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1080 }}>
+                            <thead>
+                                <tr>
+                                    <th style={headerCellStyle}>Schedule Name</th>
+                                    <th style={headerCellStyle}>Playlist</th>
+                                    <th style={headerCellStyle}>Device</th>
+                                    <th style={headerCellStyle}>Start Date</th>
+                                    <th style={headerCellStyle}>Start Time</th>
+                                    <th style={headerCellStyle}>End Date</th>
+                                    <th style={headerCellStyle}>End Time</th>
+                                    <th style={headerCellStyle}>Status</th>
+                                    <th style={headerCellStyle}>Enabled</th>
+                                    <th style={{ ...headerCellStyle, textAlign: "right" }}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {visibleSchedules.map((schedule) => (
+                                    <tr key={schedule.id} style={{ opacity: pendingId === schedule.id ? 0.5 : 1 }}>
+                                        <td style={{ ...cellStyle, fontWeight: 600 }}>{schedule.name}</td>
+                                        <td style={cellStyle}>
+                                            <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                                                <ListVideo size={14} style={{ color: "hsl(var(--accent-secondary))", flexShrink: 0 }} />
+                                                {schedule.playlistName ?? "—"}
+                                            </span>
+                                        </td>
+                                        <td style={cellStyle}>
+                                            <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                                                <Monitor size={14} style={{ color: "hsl(var(--text-muted))", flexShrink: 0 }} />
+                                                {schedule.allDevices ? <em style={{ color: "hsl(var(--accent-primary))" }}>All Devices</em> : schedule.deviceName ?? "—"}
+                                            </span>
+                                        </td>
+                                        <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{formatDisplayDate(schedule.startDate)}</td>
+                                        <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{schedule.startTime}</td>
+                                        <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{formatDisplayDate(schedule.endDate)}</td>
+                                        <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{schedule.endTime}</td>
+                                        <td style={cellStyle}>
+                                            <span style={{
+                                                display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 999,
+                                                fontSize: "0.7rem", fontWeight: 700, textTransform: "capitalize",
+                                                background: `hsla(${statusColor(schedule.status)}, 0.12)`,
+                                                color: `hsl(${statusColor(schedule.status)})`,
+                                                border: `1px solid hsla(${statusColor(schedule.status)}, 0.3)`,
+                                            }}>
+                                                {statusIcon(schedule.status)}
+                                                {schedule.status}
+                                            </span>
+                                        </td>
+                                        <td style={cellStyle}>
+                                            <span style={{ fontSize: "0.75rem", fontWeight: 700, color: schedule.enabled ? "hsl(var(--status-success))" : "hsl(var(--text-muted))" }}>
+                                                {schedule.enabled ? "Enabled" : "Disabled"}
+                                            </span>
+                                        </td>
+                                        <td style={{ ...cellStyle, textAlign: "right", whiteSpace: "nowrap" }}>
+                                            <div style={{ display: "inline-flex", gap: 6 }}>
+                                                <button className="btn-icon-soft" title="Edit schedule" aria-label={`Edit ${schedule.name}`}
+                                                    disabled={!canEdit || pendingId === schedule.id} onClick={() => openEdit(schedule)}>
+                                                    <Pencil size={15} />
+                                                </button>
+                                                <button className="btn-icon-soft" title={schedule.enabled ? "Disable schedule" : "Enable schedule"}
+                                                    aria-label={`${schedule.enabled ? "Disable" : "Enable"} ${schedule.name}`}
+                                                    disabled={!canEdit || pendingId === schedule.id} onClick={() => handleToggle(schedule)}>
+                                                    <Power size={15} style={{ color: schedule.enabled ? "hsl(var(--status-warning))" : "hsl(var(--status-success))" }} />
+                                                </button>
+                                                <button className="btn-icon-soft" title="Delete schedule" aria-label={`Delete ${schedule.name}`}
+                                                    disabled={!canEdit || pendingId === schedule.id} onClick={() => handleDelete(schedule)}>
+                                                    <Trash2 size={15} style={{ color: "hsl(var(--status-danger))" }} />
+                                                </button>
                                             </div>
-                                        </div>
-                                    </motion.div>
-                                );
-                            })
-                        )}
-                    </AnimatePresence>
-                </div>
-            )}
-
-            <AnimatePresence>
-                {selectedEvent && (
-                    <motion.div key="detail" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                        style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.78)", backdropFilter: "blur(16px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-                        onClick={() => setSelectedEvent(null)}>
-                        <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
-                            className="glass-panel" style={{ width: "100%", maxWidth: 500, padding: 32 }} onClick={(e) => e.stopPropagation()}>
-                            <div className="flex-between" style={{ marginBottom: 28 }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: selectedEvent.color }} />
-                                    <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedEvent.name}</h2>
-                                </div>
-                                <button className="btn-icon-soft" onClick={() => setSelectedEvent(null)}><X size={24} /></button>
-                            </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
-                                {[
-                                    { label: "Content", value: selectedEvent.campaign || "Unassigned" },
-                                    { label: "Status", value: selectedEvent.status.charAt(0).toUpperCase() + selectedEvent.status.slice(1) },
-                                    { label: "Time Window", value: `${selectedEvent.startTime} - ${selectedEvent.endTime}` },
-                                    { label: "Screens", value: `${selectedEvent.screens} displays` },
-                                    { label: "Priority", value: priorityLabel(selectedEvent.priority).text },
-                                    { label: "Type", value: selectedEvent.recurring ? "Recurring" : "One-time" },
-                                ].map((f, i) => (
-                                    <div key={i}>
-                                        <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>{f.label}</p>
-                                        <p style={{ fontSize: "0.9rem", fontWeight: 600 }}>{f.value}</p>
-                                    </div>
+                                        </td>
+                                    </tr>
                                 ))}
-                            </div>
-                            <div style={{ marginBottom: 24 }}>
-                                <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 8 }}>Active Days</p>
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    {DAYS.map((d) => (
-                                        <span key={d} style={{
-                                            fontSize: "0.75rem", fontWeight: 700, padding: "6px 12px", borderRadius: 8,
-                                            background: selectedEvent.days.includes(d) ? `${selectedEvent.color}25` : "hsla(var(--bg-base), 0.4)",
-                                            color: selectedEvent.days.includes(d) ? selectedEvent.color : "hsl(var(--text-muted))",
-                                            border: `1px solid ${selectedEvent.days.includes(d) ? `${selectedEvent.color}50` : "transparent"}`,
-                                        }}>{d}</span>
-                                    ))}
-                                </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-                                <button className="btn-outline" disabled={!canEdit} onClick={() => handleDelete(selectedEvent)}>Remove</button>
-                                <button className="btn-primary" disabled={!canEdit} onClick={() => openEdit(selectedEvent)}>Edit</button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
+                            </tbody>
+                        </table>
+                    </div>
                 )}
-            </AnimatePresence>
+            </div>
 
             <AnimatePresence>
                 {editorOpen && (
-                    <motion.div key="creator" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    <motion.div key="schedule-editor" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         style={{ position: "fixed", inset: 0, background: "hsla(var(--overlay-base), 0.72)", backdropFilter: "blur(12px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
-                        onClick={closeEditor}>
+                        onClick={() => !isSaving && setEditorOpen(false)}>
                         <motion.div initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
-                            className="glass-panel" style={{ width: "100%", maxWidth: 560, padding: 32, maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-                            <div className="flex-between" style={{ marginBottom: 28 }}>
+                            className="glass-panel" style={{ width: "100%", maxWidth: 620, padding: 32, maxHeight: "90vh", overflowY: "auto" }}
+                            onClick={(event) => event.stopPropagation()}>
+                            <div className="flex-between" style={{ marginBottom: 26 }}>
                                 <h2 style={{ fontSize: "1.25rem", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}>
                                     <Calendar size={22} style={{ color: "hsl(var(--accent-primary))" }} />
-                                    {editorMode === "create" ? "New Schedule Slot" : "Edit Schedule"}
+                                    {editorMode === "create" ? "Create Schedule" : "Edit Schedule"}
                                 </h2>
-                                <button className="btn-icon-soft" onClick={closeEditor}><X size={24} /></button>
+                                <button className="btn-icon-soft" onClick={() => setEditorOpen(false)} disabled={isSaving}><X size={24} /></button>
                             </div>
 
                             {editorError && (
-                                <div style={{ padding: 12, borderRadius: 10, background: "hsla(var(--status-danger), 0.08)", border: "1px solid hsla(var(--status-danger), 0.25)", color: "hsl(var(--status-danger))", fontSize: "0.8rem", marginBottom: 20, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                                <div style={{ padding: 14, borderRadius: 10, background: "hsla(var(--status-danger), 0.08)", border: "1px solid hsla(var(--status-danger), 0.25)", color: "hsl(var(--status-danger))", fontSize: "0.8rem", marginBottom: 20, display: "flex", gap: 10, alignItems: "flex-start" }}>
                                     <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-                                    <span>{editorError}</span>
+                                    <div>
+                                        {editorConflict && <p style={{ fontWeight: 700, marginBottom: 4 }}>Schedule Conflict</p>}
+                                        <span>{editorError}</span>
+                                    </div>
                                 </div>
                             )}
 
                             <div style={{ marginBottom: 16 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Schedule Name</label>
-                                <input placeholder="e.g. Morning Welcome Loop" value={editor.name} onChange={(e) => setEditor((prev) => ({ ...prev, name: e.target.value }))}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.95rem" }} />
+                                <label style={labelStyle} htmlFor="schedule-name">Schedule Name</label>
+                                <input id="schedule-name" placeholder="e.g. Morning Playlist" value={editor.name}
+                                    onChange={(event) => setEditor((prev) => ({ ...prev, name: event.target.value }))}
+                                    style={inputStyle} />
                             </div>
-                            <div style={{ marginBottom: 16 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Content Label</label>
-                                <input placeholder="e.g. Morning playlist" value={editor.campaign} onChange={(e) => setEditor((prev) => ({ ...prev, campaign: e.target.value }))}
-                                    style={{ width: "100%", padding: 12, borderRadius: 10, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", fontSize: "0.9rem" }} />
-                            </div>
+
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
                                 <div>
-                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Start Time</label>
-                                    <input type="time" value={editor.startTime} onChange={(e) => setEditor((prev) => ({ ...prev, startTime: e.target.value }))}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
-                                </div>
-                                <div>
-                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>End Time</label>
-                                    <input type="time" value={editor.endTime} onChange={(e) => setEditor((prev) => ({ ...prev, endTime: e.target.value }))}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
-                                </div>
-                            </div>
-                            <div style={{ marginBottom: 16 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Active Days</label>
-                                <div style={{ display: "flex", gap: 8 }}>
-                                    {DAYS.map((d) => (
-                                        <button key={d} onClick={() => toggleEditorDay(d)} style={{
-                                            flex: 1, padding: "10px 0", borderRadius: 8, border: "1px solid", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer",
-                                            background: editor.days.includes(d) ? "hsla(var(--accent-primary), 0.15)" : "transparent",
-                                            borderColor: editor.days.includes(d) ? "hsl(var(--accent-primary))" : "hsla(var(--border-subtle), 0.3)",
-                                            color: editor.days.includes(d) ? "hsl(var(--accent-primary))" : "hsl(var(--text-muted))",
-                                        }}>{d}</button>
-                                    ))}
-                                </div>
-                            </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-                                <div>
-                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Status</label>
-                                    <select value={editor.status} onChange={(e) => setEditor((prev) => ({ ...prev, status: e.target.value as ScheduleStatus }))}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", textTransform: "capitalize" }}>
-                                        {(["scheduled", "active", "paused", "completed"] as ScheduleStatus[]).map((s) => <option key={s} value={s}>{s}</option>)}
+                                    <label style={labelStyle} htmlFor="schedule-playlist">Playlist</label>
+                                    <select id="schedule-playlist" value={editor.playlistId}
+                                        onChange={(event) => setEditor((prev) => ({ ...prev, playlistId: event.target.value }))}
+                                        style={inputStyle}>
+                                        <option value="">Select a playlist…</option>
+                                        {playlists.map((playlist) => (
+                                            <option key={playlist.id} value={playlist.id}>{playlist.name}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div>
-                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Priority</label>
-                                    <select value={editor.priority} onChange={(e) => setEditor((prev) => ({ ...prev, priority: e.target.value as SchedulePriority }))}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none", textTransform: "capitalize" }}>
-                                        {(["low", "normal", "high"] as SchedulePriority[]).map((p) => <option key={p} value={p}>{p}</option>)}
+                                    <label style={labelStyle} htmlFor="schedule-device">Device</label>
+                                    <select id="schedule-device" value={editor.deviceId}
+                                        onChange={(event) => setEditor((prev) => ({ ...prev, deviceId: event.target.value }))}
+                                        style={inputStyle}>
+                                        <option value={ALL_DEVICES}>All Devices</option>
+                                        {devices.map((device) => (
+                                            <option key={device.id} value={device.id}>{device.name}</option>
+                                        ))}
                                     </select>
-                                </div>
-                                <div>
-                                    <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Screens</label>
-                                    <input type="number" min={0} value={editor.screens} onChange={(e) => setEditor((prev) => ({ ...prev, screens: Math.max(0, Number(e.target.value) || 0) }))}
-                                        style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.5)", color: "hsl(var(--text-primary))", outline: "none" }} />
-                                </div>
-                            </div>
-                            <div style={{ display: "flex", gap: 16, alignItems: "center", marginBottom: 16 }}>
-                                <label style={{ fontSize: "0.75rem", fontWeight: 600, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-                                    <input type="checkbox" checked={editor.recurring} onChange={(e) => setEditor((prev) => ({ ...prev, recurring: e.target.checked }))} />
-                                    Recurring (repeats weekly)
-                                </label>
-                            </div>
-                            <div style={{ marginBottom: 24 }}>
-                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Display Color</label>
-                                <div style={{ display: "flex", gap: 10 }}>
-                                    {COLOR_PALETTE.map((c) => (
-                                        <button key={c} type="button" onClick={() => setEditor((prev) => ({ ...prev, color: c }))} style={{
-                                            width: 30, height: 30, borderRadius: "50%", cursor: "pointer", border: editor.color === c ? `2px solid hsl(var(--accent-primary))` : "2px solid transparent",
-                                            background: c, boxShadow: editor.color === c ? `0 0 10px ${c}80` : "none",
-                                        }} />
-                                    ))}
                                 </div>
                             </div>
 
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                                <div>
+                                    <label style={labelStyle} htmlFor="schedule-start-date">Start Date</label>
+                                    <input id="schedule-start-date" type="date" value={editor.startDate}
+                                        onChange={(event) => setEditor((prev) => ({ ...prev, startDate: event.target.value }))}
+                                        style={inputStyle} />
+                                </div>
+                                <div>
+                                    <label style={labelStyle} htmlFor="schedule-start-time">Start Time</label>
+                                    <input id="schedule-start-time" type="time" value={editor.startTime}
+                                        onChange={(event) => setEditor((prev) => ({ ...prev, startTime: event.target.value }))}
+                                        style={inputStyle} />
+                                </div>
+                            </div>
+
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                                <div>
+                                    <label style={labelStyle} htmlFor="schedule-end-date">End Date</label>
+                                    <input id="schedule-end-date" type="date" value={editor.endDate}
+                                        onChange={(event) => setEditor((prev) => ({ ...prev, endDate: event.target.value }))}
+                                        style={inputStyle} />
+                                </div>
+                                <div>
+                                    <label style={labelStyle} htmlFor="schedule-end-time">End Time</label>
+                                    <input id="schedule-end-time" type="time" value={editor.endTime}
+                                        onChange={(event) => setEditor((prev) => ({ ...prev, endTime: event.target.value }))}
+                                        style={inputStyle} />
+                                </div>
+                            </div>
+
+                            <label style={{ fontSize: "0.8rem", fontWeight: 600, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", marginBottom: 8 }}>
+                                <input type="checkbox" checked={editor.enabled}
+                                    onChange={(event) => setEditor((prev) => ({ ...prev, enabled: event.target.checked }))} />
+                                Enabled
+                            </label>
+                            <p style={{ fontSize: "0.72rem", color: "hsl(var(--text-muted))", marginBottom: 24 }}>
+                                A disabled schedule never becomes active, and never conflicts with another schedule.
+                                {timezone && <> Times are interpreted in <strong>{timezone}</strong>.</>}
+                            </p>
+
                             <div style={{ display: "flex", gap: 12, justifyContent: "flex-end" }}>
-                                <button className="btn-outline" onClick={closeEditor} disabled={isSaving}>Cancel</button>
+                                <button className="btn-outline" onClick={() => setEditorOpen(false)} disabled={isSaving}>Cancel</button>
                                 <button className="btn-primary" onClick={handleSave} disabled={isSaving || !canEdit} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     {isSaving && <div style={{ width: 14, height: 14, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.9s linear infinite" }} />}
                                     {editorMode === "create" ? "Create Schedule" : "Save Changes"}

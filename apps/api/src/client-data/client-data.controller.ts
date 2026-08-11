@@ -22,8 +22,6 @@ import { PairDeviceDto } from './dto/pair-device.dto';
 import { ReorderPlaylistAssetsDto } from './dto/reorder-playlist-assets.dto';
 import { UpdatePlaylistAssetDurationDto } from './dto/update-playlist-asset-duration.dto';
 import { UpdateDeviceDto } from './dto/update-device.dto';
-import { CreateScheduleEventDto } from './dto/create-schedule-event.dto';
-import { UpdateScheduleEventDto } from './dto/update-schedule-event.dto';
 import { CreateTickerDto } from './dto/create-ticker.dto';
 import { UpdateTickerDto } from './dto/update-ticker.dto';
 import { ReportsQueryDto } from './dto/reports-query.dto';
@@ -181,41 +179,6 @@ export class ClientDataController {
   @Delete('layouts/:layoutId')
   deleteLayout(@CurrentActor() actor: RequestActor, @Param('layoutId') layoutId: string) {
     return this.clientDataService.deleteLayout(actor, layoutId);
-  }
-
-  @Get('schedule-events')
-  listScheduleEvents(@CurrentActor() actor: RequestActor) {
-    return this.clientDataService.listScheduleEvents(actor);
-  }
-
-  @Post('schedule-events')
-  createScheduleEvent(
-    @CurrentActor() actor: RequestActor,
-    @Body() body: CreateScheduleEventDto,
-  ) {
-    return this.clientDataService.createScheduleEvent(actor, body);
-  }
-
-  @Patch('schedule-events/:eventId')
-  updateScheduleEvent(
-    @CurrentActor() actor: RequestActor,
-    @Param('eventId') eventId: string,
-    @Body() body: UpdateScheduleEventDto,
-  ) {
-    return this.clientDataService.updateScheduleEvent(actor, eventId, body);
-  }
-
-  @Patch('schedule-events/:eventId/toggle')
-  toggleScheduleStatus(
-    @CurrentActor() actor: RequestActor,
-    @Param('eventId') eventId: string,
-  ) {
-    return this.clientDataService.toggleScheduleStatus(actor, eventId);
-  }
-
-  @Delete('schedule-events/:eventId')
-  deleteScheduleEvent(@CurrentActor() actor: RequestActor, @Param('eventId') eventId: string) {
-    return this.clientDataService.deleteScheduleEvent(actor, eventId);
   }
 
   @Get('devices')

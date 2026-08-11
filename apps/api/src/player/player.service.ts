@@ -32,6 +32,8 @@ import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import type { ActiveScheduleSnapshot } from '../scheduling/schedule.service';
+import { ScheduleService } from '../scheduling/schedule.service';
 import type { CacheReportDto } from './dto/cache-report.dto';
 import type { SyncQueryDto } from './dto/sync-query.dto';
 
@@ -92,6 +94,22 @@ type ContentRevisionState = {
   layoutVersion: number | null;
 };
 
+/**
+ * What a device should actually be playing right now, after applying the
+ * scheduling priority rule:
+ *
+ *   ACTIVE SCHEDULE → MANUALLY ASSIGNED PLAYLIST/LAYOUT → NOTHING
+ *
+ * Manual assignment is never mutated by scheduling; it stays on the Device row
+ * as the fallback the device returns to the moment a schedule stops applying.
+ */
+type EffectiveContent = {
+  playlistId: string | null;
+  layoutId: string | null;
+  activeSchedule: ActiveScheduleSnapshot | null;
+  source: 'schedule' | 'manual-playlist' | 'manual-layout' | 'none';
+};
+
 @Injectable()
 export class PlayerService {
   private readonly logger = new Logger(PlayerService.name);
@@ -101,7 +119,55 @@ export class PlayerService {
     private readonly s3: S3Service,
     private readonly deviceCache: DeviceCacheService,
     private readonly deviceManagement: DeviceManagementService,
+    private readonly schedules: ScheduleService,
   ) {}
+
+  /**
+   * Apply the scheduling priority rule for a device at `now`.
+   *
+   * An active schedule replaces whatever is manually assigned — including a
+   * layout — for as long as its window lasts. Nothing is written to the Device
+   * row, so when the window closes the manual assignment is simply visible again.
+   */
+  private async resolveEffectiveContent(
+    device: PairedDevice,
+    now: Date = new Date(),
+  ): Promise<EffectiveContent> {
+    const activeSchedule = await this.schedules.resolveActiveScheduleForDevice(
+      device.organizationId,
+      device.id,
+      now,
+    );
+
+    if (activeSchedule) {
+      return {
+        playlistId: activeSchedule.playlistId,
+        layoutId: null,
+        activeSchedule,
+        source: 'schedule',
+      };
+    }
+
+    if (device.currentLayoutId) {
+      return {
+        playlistId: null,
+        layoutId: device.currentLayoutId,
+        activeSchedule: null,
+        source: 'manual-layout',
+      };
+    }
+
+    if (device.currentPlaylistId) {
+      return {
+        playlistId: device.currentPlaylistId,
+        layoutId: null,
+        activeSchedule: null,
+        source: 'manual-playlist',
+      };
+    }
+
+    return { playlistId: null, layoutId: null, activeSchedule: null, source: 'none' };
+  }
 
   /**
    * Generate a random 6-character alphanumeric pairing code.
@@ -564,8 +630,9 @@ export class PlayerService {
     // Revision polls every ~5s — treat them as live presence so CMS status
     // stays Online while the player is actively talking to the API.
     await this.deviceManagement.touchPresence(device.id);
-    const contentRevision = await this.getDeviceContentRevision(device);
-    const syncRequired = await this.computeSyncRequired(device, contentRevision);
+    const effective = await this.resolveEffectiveContent(device);
+    const contentRevision = await this.getDeviceContentRevision(device, effective);
+    const syncRequired = await this.computeSyncRequired(device, contentRevision, effective);
     const playerConfig = this.deviceManagement.getPlayerConfig(device);
 
     return {
@@ -575,9 +642,11 @@ export class PlayerService {
       syncRequired,
       playlistVersion: contentRevision.playlistVersion,
       layoutVersion: contentRevision.layoutVersion,
-      contentType: device.currentLayoutId ? 'layout' : device.currentPlaylistId ? 'playlist' : 'none',
-      playlistId: device.currentPlaylistId,
-      layoutId: device.currentLayoutId,
+      contentType: effective.layoutId ? 'layout' : effective.playlistId ? 'playlist' : 'none',
+      playlistId: effective.playlistId,
+      layoutId: effective.layoutId,
+      activeSchedule: effective.activeSchedule,
+      contentSource: effective.source,
       initialSyncPending: playerConfig.initialSyncPending,
       revisionPollIntervalSeconds: playerConfig.revisionPollIntervalSeconds,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
@@ -607,10 +676,11 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     await this.deviceManagement.touchPresence(device.id);
     const syncContext = this.buildSyncAssetContext(query);
+    const effective = await this.resolveEffectiveContent(device);
 
-    const payload = device.currentLayoutId
+    const payload = effective.layoutId
       ? await this.syncLayout(device, query, syncContext)
-      : await this.buildPlaylistSyncResponse(device, query, syncContext);
+      : await this.buildPlaylistSyncResponse(device, query, syncContext, effective.playlistId);
 
     const pendingCommand = (await this.deviceCache.deliverPendingCommand(device.id)) ?? null;
     const refreshedDevice = await this.prisma.device.findUnique({ where: { id: device.id } });
@@ -618,13 +688,17 @@ export class PlayerService {
       refreshedDevice?.organizationId != null
         ? { ...refreshedDevice, organizationId: refreshedDevice.organizationId }
         : device;
-    const contentRevision = await this.getDeviceContentRevision(effectiveDevice);
+    // Re-resolve against the refreshed row so the acked state written during the
+    // build above is taken into account.
+    const refreshedEffective = await this.resolveEffectiveContent(effectiveDevice);
+    const contentRevision = await this.getDeviceContentRevision(effectiveDevice, refreshedEffective);
     const assets = Array.isArray(payload.assets) ? payload.assets : [];
     const pendingDownloadCount = assets.filter(
       (entry) => (entry as { requiresDownload?: boolean }).requiresDownload,
     ).length;
     const syncRequired =
-      (await this.computeSyncRequired(effectiveDevice, contentRevision)) || pendingDownloadCount > 0;
+      (await this.computeSyncRequired(effectiveDevice, contentRevision, refreshedEffective)) ||
+      pendingDownloadCount > 0;
 
     return {
       ...payload,
@@ -632,6 +706,8 @@ export class PlayerService {
       syncRequired,
       pendingDownloadCount,
       contentRevision: contentRevision.revision,
+      activeSchedule: effective.activeSchedule,
+      contentSource: effective.source,
       cacheCommand: pendingCommand,
       pendingCommand,
       ...this.deviceManagement.getPlayerConfig(effectiveDevice),
@@ -647,14 +723,19 @@ export class PlayerService {
     device: PairedDevice,
     query: SyncQueryDto,
     syncContext: SyncAssetContext,
+    effectivePlaylistId: string | null = device.currentPlaylistId,
   ) {
     const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
 
-    if (!device.currentPlaylistId) {
+    if (!effectivePlaylistId) {
       const removedAssetIds = syncContext.knownAssetIds;
       await this.prisma.device.update({
         where: { id: device.id },
-        data: { lastSync: new Date().toISOString(), lastAckedPlaylistVersion: null },
+        data: {
+          lastSync: new Date().toISOString(),
+          lastAckedPlaylistVersion: null,
+          lastAckedPlaylistId: null,
+        },
       });
       return {
         unchanged: false,
@@ -668,7 +749,7 @@ export class PlayerService {
     }
 
     const playlist = await this.prisma.playlist.findUnique({
-      where: { id: device.currentPlaylistId },
+      where: { id: effectivePlaylistId },
       include: {
         playlistAssets: {
           orderBy: [{ position: 'asc' }, { assetId: 'asc' }],
@@ -681,7 +762,11 @@ export class PlayerService {
       const removedAssetIds = syncContext.knownAssetIds;
       await this.prisma.device.update({
         where: { id: device.id },
-        data: { lastSync: new Date().toISOString(), lastAckedPlaylistVersion: null },
+        data: {
+          lastSync: new Date().toISOString(),
+          lastAckedPlaylistVersion: null,
+          lastAckedPlaylistId: null,
+        },
       });
       return {
         unchanged: false,
@@ -746,6 +831,7 @@ export class PlayerService {
         ...(shouldAckPlaylistVersion
           ? {
               lastAckedPlaylistVersion: playlist.syncVersion,
+              lastAckedPlaylistId: playlist.id,
               ...(device.pendingInitialSync
                 ? { pendingInitialSync: false, initialSyncRequestedAt: null }
                 : {}),
@@ -937,7 +1023,7 @@ export class PlayerService {
       data: {
         lastSync: new Date().toISOString(),
         ...(shouldAckLayoutVersion ? { lastAckedLayoutVersion: layout.syncVersion } : {}),
-        ...(shouldAckLayoutVersion ? { lastAckedPlaylistVersion: null } : {}),
+        ...(shouldAckLayoutVersion ? { lastAckedPlaylistVersion: null, lastAckedPlaylistId: null } : {}),
         ...(shouldAckLayoutVersion && device.pendingInitialSync
           ? { pendingInitialSync: false, initialSyncRequestedAt: null }
           : {}),
@@ -986,12 +1072,21 @@ export class PlayerService {
     return `:tk${aggregate._max.updatedAt?.getTime() ?? 0}c${aggregate._count._all}`;
   }
 
-  private async getDeviceContentRevision(device: PairedDevice): Promise<ContentRevisionState> {
+  private async getDeviceContentRevision(
+    device: PairedDevice,
+    effective?: EffectiveContent,
+  ): Promise<ContentRevisionState> {
     const tickerSuffix = await this.getTickerRevisionSuffix(device.organizationId, device.id);
+    const content = effective ?? (await this.resolveEffectiveContent(device));
+    // Fold the winning schedule into the revision so a window opening or closing
+    // is itself a content change, even when the underlying playlist never moved.
+    const scheduleSuffix = content.activeSchedule
+      ? `:sc${content.activeSchedule.scheduleId}`
+      : ':sc0';
 
-    if (device.currentLayoutId) {
+    if (content.layoutId) {
       const layout = await this.prisma.layout.findUnique({
-        where: { id: device.currentLayoutId },
+        where: { id: content.layoutId },
         select: { id: true, syncVersion: true, updatedAt: true },
       });
       if (!layout) {
@@ -1004,16 +1099,16 @@ export class PlayerService {
       }
 
       return {
-        revision: `ly:${layout.id}:v${layout.syncVersion}:${layout.updatedAt.getTime()}${tickerSuffix}`,
+        revision: `ly:${layout.id}:v${layout.syncVersion}:${layout.updatedAt.getTime()}${tickerSuffix}${scheduleSuffix}`,
         updatedAt: layout.updatedAt.toISOString(),
         playlistVersion: null,
         layoutVersion: layout.syncVersion,
       };
     }
 
-    if (device.currentPlaylistId) {
+    if (content.playlistId) {
       const playlist = await this.prisma.playlist.findUnique({
-        where: { id: device.currentPlaylistId },
+        where: { id: content.playlistId },
         select: { id: true, syncVersion: true, updatedAt: true },
       });
       if (!playlist) {
@@ -1026,7 +1121,7 @@ export class PlayerService {
       }
 
       return {
-        revision: `pl:${playlist.id}:v${playlist.syncVersion}:${playlist.updatedAt.getTime()}${tickerSuffix}`,
+        revision: `pl:${playlist.id}:v${playlist.syncVersion}:${playlist.updatedAt.getTime()}${tickerSuffix}${scheduleSuffix}`,
         updatedAt: playlist.updatedAt.toISOString(),
         playlistVersion: playlist.syncVersion,
         layoutVersion: null,
@@ -1044,16 +1139,24 @@ export class PlayerService {
   private async computeSyncRequired(
     device: PairedDevice,
     content: ContentRevisionState,
+    effective?: EffectiveContent,
   ): Promise<boolean> {
     if (content.revision === 'none') return false;
 
-    if (device.currentLayoutId) {
+    const resolved = effective ?? (await this.resolveEffectiveContent(device));
+
+    if (resolved.layoutId) {
       const layoutSyncRequired =
         content.layoutVersion != null &&
         (device.lastAckedLayoutVersion == null ||
           device.lastAckedLayoutVersion !== content.layoutVersion);
       if (layoutSyncRequired) return true;
-    } else if (device.currentPlaylistId) {
+    } else if (resolved.playlistId) {
+      // Two different playlists can share a syncVersion, so a schedule swapping
+      // the effective playlist would otherwise look like "no change". Compare
+      // identity before version.
+      if (device.lastAckedPlaylistId !== resolved.playlistId) return true;
+
       const playlistSyncRequired =
         content.playlistVersion != null &&
         (device.lastAckedPlaylistVersion == null ||

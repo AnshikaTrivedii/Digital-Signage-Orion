@@ -9,7 +9,7 @@ const allClientNavItems: PortalNavItem[] = [
     { name: "Playlists", path: "/app/playlists", icon: ListVideo, featureKey: "PLAYLISTS", requiredAccess: "VIEW" },
     { name: "Assets", path: "/app/assets", icon: ImageIcon, featureKey: "ASSETS", requiredAccess: "VIEW" },
     { name: "Tickers", path: "/app/tickers", icon: Type, featureKey: "TICKERS", requiredAccess: "VIEW" },
-    { name: "Schedule", path: "/app/schedule", icon: CalendarClock, featureKey: "SCHEDULE", requiredAccess: "VIEW" },
+    { name: "Scheduling", path: "/app/schedule", icon: CalendarClock, featureKey: "SCHEDULE", requiredAccess: "VIEW" },
     { name: "Analytics", path: "/app/reports", icon: Activity, featureKey: "REPORTS", requiredAccess: "VIEW" },
     { name: "Settings", path: "/app/settings", icon: Settings, featureKey: "SETTINGS", requiredAccess: "VIEW" },
 ];

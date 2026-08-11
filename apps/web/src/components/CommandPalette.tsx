@@ -10,7 +10,7 @@ const initialResults = [
     { id: "a1", title: "Global_Summer_Promo.mp4", type: "Asset", icon: FileText, link: "/assets" },
     { id: "s1", title: "Security Settings", type: "Action", icon: Shield, link: "/settings" },
     { id: "r1", title: "Q1 Audience Report", type: "Report", icon: Zap, link: "/reports" },
-    { id: "sc1", title: "Content Schedule", type: "Action", icon: CalendarClock, link: "/schedule" },
+    { id: "sc1", title: "Scheduling", type: "Action", icon: CalendarClock, link: "/schedule" },
     { id: "dsp1", title: "Live Display Preview", type: "Action", icon: Monitor, link: "/display" },
 ];
 

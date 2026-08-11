@@ -19,8 +19,6 @@ import {
   LayoutStatus,
   PlaylistStatus,
   ProofOfPlayStatus,
-  SchedulePriority,
-  ScheduleStatus,
   TickerPriority,
   TickerBroadcastScope,
   TickerPosition,
@@ -49,8 +47,20 @@ import { DeviceManagementService, resolveInitialSyncState } from '../device-mana
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
+import { deriveScheduleStatus } from '../scheduling/schedule-resolution';
 
 const colorPalette = ['#4ade80', '#00e5ff', '#a78bfa', '#f472b6', '#fb923c', '#60a5fa'];
+
+/** `HH:MM` in the organization timezone for the dashboard schedule strip. */
+function formatPreviewTime(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).format(instant);
+}
 
 /** Columns every proof-of-play surface reads. */
 const POP_LOG_SCAN_SELECT = {
@@ -116,18 +126,27 @@ export class ClientDataService {
 
   async dashboard(actor: RequestActor) {
     const organizationId = this.getOrgId(actor);
-    const [devices, assets, playlists, tickers, scheduleEvents, logs, layouts] = await Promise.all([
+    const [devices, assets, playlists, tickers, schedules, logs, layouts, organization] = await Promise.all([
       this.prisma.device.findMany({ where: { organizationId }, orderBy: { createdAt: 'asc' } }),
       this.prisma.asset.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' }, take: 5 }),
       this.prisma.playlist.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.ticker.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
-      this.prisma.scheduleEvent.findMany({ where: { organizationId }, orderBy: { startTime: 'asc' }, take: 4 }),
+      this.prisma.schedule.findMany({
+        where: { organizationId, endDateTime: { gt: new Date() } },
+        orderBy: { startDateTime: 'asc' },
+        take: 4,
+      }),
       this.prisma.proofOfPlayLog.findMany({ where: { organizationId }, orderBy: { timestamp: 'desc' }, take: 8 }),
       this.prisma.layout.findMany({
         where: { organizationId },
         include: this.layoutReadinessInclude(),
       }),
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { timezone: true },
+      }),
     ]);
+    const scheduleTimezone = organization?.timezone || 'Asia/Kolkata';
 
     const onlineDevices = devices.filter((device) => device.status === DeviceStatus.ONLINE).length;
     const warningDevices = devices.filter((device) => device.status === DeviceStatus.WARNING).length;
@@ -162,12 +181,15 @@ export class ClientDataService {
         uptime: device.uptime,
         status: this.toLowerStatus(device.status),
       })),
-      schedulePreview: scheduleEvents.map((event) => ({
-        name: event.name,
-        time: `${event.startTime}-${event.endTime}`,
-        color: event.color,
-        active: event.status === ScheduleStatus.ACTIVE,
-      })),
+      schedulePreview: schedules.map((schedule) => {
+        const status = deriveScheduleStatus(schedule, new Date());
+        return {
+          name: schedule.name,
+          time: `${formatPreviewTime(schedule.startDateTime, scheduleTimezone)}-${formatPreviewTime(schedule.endDateTime, scheduleTimezone)}`,
+          color: status === 'active' ? '#4ade80' : status === 'disabled' ? '#94a3b8' : '#38bdf8',
+          active: status === 'active',
+        };
+      }),
       recentAssets: assets.map((asset) => ({
         id: asset.id,
         name: asset.name,
@@ -541,213 +563,6 @@ export class ClientDataService {
     if (!updated) throw new NotFoundException('Playlist not found');
 
     return this.serializePlaylist(updated);
-  }
-
-  async listScheduleEvents(actor: RequestActor) {
-    const organizationId = this.getOrgId(actor);
-    const events = await this.prisma.scheduleEvent.findMany({
-      where: { organizationId },
-      orderBy: [{ startTime: 'asc' }, { createdAt: 'desc' }],
-    });
-
-    return events.map((event) => this.serializeScheduleEvent(event));
-  }
-
-  async createScheduleEvent(
-    actor: RequestActor,
-    body: {
-      name: string;
-      campaign?: string;
-      startTime: string;
-      endTime: string;
-      days: string[];
-      screens?: number;
-      status?: string;
-      priority?: string;
-      recurring?: boolean;
-      color?: string;
-    },
-  ) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const name = body.name?.trim();
-    if (!name) throw new BadRequestException('Schedule name is required');
-    if (!body.days?.length) throw new BadRequestException('At least one day is required');
-    if (!this.isValidTime(body.startTime) || !this.isValidTime(body.endTime)) {
-      throw new BadRequestException('Start and end time must be in HH:MM 24h format');
-    }
-    if (this.timeToMinutes(body.endTime) <= this.timeToMinutes(body.startTime)) {
-      throw new BadRequestException('End time must be later than start time');
-    }
-
-    const count = await this.prisma.scheduleEvent.count({ where: { organizationId } });
-    const event = await this.prisma.scheduleEvent.create({
-      data: {
-        organizationId,
-        name,
-        campaign: body.campaign?.trim() || 'Unassigned',
-        startTime: body.startTime,
-        endTime: body.endTime,
-        days: body.days,
-        screens: body.screens ?? 0,
-        status: this.toScheduleStatus(body.status),
-        priority: this.toSchedulePriority(body.priority),
-        recurring: body.recurring ?? true,
-        color: this.sanitizeHexColor(body.color, colorPalette[count % colorPalette.length]),
-      },
-    });
-
-    return this.serializeScheduleEvent(event);
-  }
-
-  async updateScheduleEvent(
-    actor: RequestActor,
-    eventId: string,
-    body: {
-      name?: string;
-      campaign?: string;
-      startTime?: string;
-      endTime?: string;
-      days?: string[];
-      screens?: number;
-      status?: string;
-      priority?: string;
-      recurring?: boolean;
-      color?: string;
-    },
-  ) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
-    if (!existing) throw new NotFoundException('Schedule event not found');
-
-    const data: Record<string, unknown> = {};
-    if (body.name !== undefined) {
-      const trimmed = body.name.trim();
-      if (!trimmed) throw new BadRequestException('Schedule name cannot be empty');
-      data.name = trimmed;
-    }
-    if (body.campaign !== undefined) data.campaign = body.campaign.trim() || 'Unassigned';
-    if (body.startTime !== undefined) {
-      if (!this.isValidTime(body.startTime)) throw new BadRequestException('startTime must be HH:MM');
-      data.startTime = body.startTime;
-    }
-    if (body.endTime !== undefined) {
-      if (!this.isValidTime(body.endTime)) throw new BadRequestException('endTime must be HH:MM');
-      data.endTime = body.endTime;
-    }
-    const nextStart = (data.startTime as string | undefined) ?? existing.startTime;
-    const nextEnd = (data.endTime as string | undefined) ?? existing.endTime;
-    if (this.timeToMinutes(nextEnd) <= this.timeToMinutes(nextStart)) {
-      throw new BadRequestException('End time must be later than start time');
-    }
-    if (body.days !== undefined) {
-      if (!body.days.length) throw new BadRequestException('At least one day is required');
-      data.days = body.days;
-    }
-    if (body.screens !== undefined) data.screens = Math.max(0, body.screens);
-    if (body.status !== undefined) data.status = this.toScheduleStatus(body.status);
-    if (body.priority !== undefined) data.priority = this.toSchedulePriority(body.priority);
-    if (body.recurring !== undefined) data.recurring = body.recurring;
-    if (body.color !== undefined) data.color = this.sanitizeHexColor(body.color, existing.color);
-
-    const updated = await this.prisma.scheduleEvent.update({
-      where: { id: eventId },
-      data,
-    });
-
-    return this.serializeScheduleEvent(updated);
-  }
-
-  async toggleScheduleStatus(actor: RequestActor, eventId: string) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
-    if (!existing) throw new NotFoundException('Schedule event not found');
-
-    const next =
-      existing.status === ScheduleStatus.ACTIVE
-        ? ScheduleStatus.PAUSED
-        : existing.status === ScheduleStatus.PAUSED
-          ? ScheduleStatus.ACTIVE
-          : ScheduleStatus.ACTIVE;
-
-    const updated = await this.prisma.scheduleEvent.update({
-      where: { id: eventId },
-      data: { status: next },
-    });
-
-    return this.serializeScheduleEvent(updated);
-  }
-
-  async deleteScheduleEvent(actor: RequestActor, eventId: string) {
-    this.assertCanEdit(actor);
-    const organizationId = this.getOrgId(actor);
-    const existing = await this.prisma.scheduleEvent.findFirst({ where: { id: eventId, organizationId } });
-    if (!existing) throw new NotFoundException('Schedule event not found');
-    await this.prisma.scheduleEvent.delete({ where: { id: eventId } });
-    return { success: true };
-  }
-
-  private serializeScheduleEvent(event: {
-    id: string;
-    name: string;
-    campaign: string;
-    startTime: string;
-    endTime: string;
-    days: string[];
-    screens: number;
-    status: ScheduleStatus;
-    color: string;
-    priority: SchedulePriority;
-    recurring: boolean;
-  }) {
-    return {
-      id: event.id,
-      name: event.name,
-      campaign: event.campaign,
-      startTime: event.startTime,
-      endTime: event.endTime,
-      days: event.days,
-      screens: event.screens,
-      status: this.toLowerStatus(event.status),
-      color: event.color,
-      priority: this.toLowerStatus(event.priority),
-      recurring: event.recurring,
-    };
-  }
-
-  private toScheduleStatus(value?: string): ScheduleStatus {
-    switch ((value ?? '').toLowerCase()) {
-      case 'active':
-        return ScheduleStatus.ACTIVE;
-      case 'paused':
-        return ScheduleStatus.PAUSED;
-      case 'completed':
-        return ScheduleStatus.COMPLETED;
-      default:
-        return ScheduleStatus.SCHEDULED;
-    }
-  }
-
-  private toSchedulePriority(value?: string): SchedulePriority {
-    switch ((value ?? '').toLowerCase()) {
-      case 'high':
-        return SchedulePriority.HIGH;
-      case 'low':
-        return SchedulePriority.LOW;
-      default:
-        return SchedulePriority.NORMAL;
-    }
-  }
-
-  private isValidTime(value: string): boolean {
-    return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
-  }
-
-  private timeToMinutes(value: string): number {
-    const [h, m] = value.split(':').map(Number);
-    return h * 60 + m;
   }
 
   private sanitizeHexColor(value: string | undefined, fallback: string): string {

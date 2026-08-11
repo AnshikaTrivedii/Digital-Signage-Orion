@@ -19,7 +19,7 @@ const allNavItems = [
     { name: "Playlists", path: "/playlists", icon: ListVideo },
     { name: "Assets", path: "/assets", icon: ImageIcon },
     { name: "Tickers", path: "/tickers", icon: Type },
-    { name: "Schedule", path: "/schedule", icon: CalendarClock },
+    { name: "Scheduling", path: "/schedule", icon: CalendarClock },
     { name: "Analytics", path: "/reports", icon: Activity },
     { name: "Settings", path: "/settings", icon: Settings },
 ];
