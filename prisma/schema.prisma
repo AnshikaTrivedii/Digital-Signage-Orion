@@ -427,9 +427,10 @@ model Device {
   orientation    String    @default("LANDSCAPE")
   /// When true, the player stretches playlist assets to fill the full display.
   stretchToFit   Boolean   @default(false)
-  /// Device-level default durations (seconds) when playlist asset has no custom duration.
-  /// Videos always use their native media length unless a playlist slot overrides.
+  /// Device-level default durations (seconds), used only when the playlist slot
+  /// leaves durationSeconds NULL. A playlist override always wins.
   defaultImageDuration       Int       @default(10)
+  defaultVideoDuration       Int       @default(10)
   defaultDocumentDuration    Int       @default(20)
   defaultUrlDuration         Int       @default(20)
   playbackSettingsUpdatedAt  DateTime?

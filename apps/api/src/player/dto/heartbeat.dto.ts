@@ -169,6 +169,13 @@ export class HeartbeatDto {
   @IsInt()
   @Min(1)
   @Max(3600)
+  defaultVideoDuration?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(3600)
   defaultDocumentDuration?: number;
 
   @IsOptional()

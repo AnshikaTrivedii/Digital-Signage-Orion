@@ -9,6 +9,7 @@ import {
 import { apiRequest, ApiError } from "@/lib/api";
 
 const DEFAULT_IMAGE_DURATION = 10;
+const DEFAULT_VIDEO_DURATION = 10;
 const DEFAULT_DOCUMENT_DURATION = 20;
 const DEFAULT_URL_DURATION = 20;
 const MIN_DURATION = 1;
@@ -73,6 +74,7 @@ interface DeviceLiveStatus {
 interface PlaybackSettingsResponse {
     deviceId: string;
     imageDuration: number;
+    videoDuration: number;
     documentDuration: number;
     urlDuration: number;
     lastUpdated: string | null;
@@ -80,15 +82,19 @@ interface PlaybackSettingsResponse {
 
 interface PlaybackForm {
     imageDuration: string;
+    videoDuration: string;
     documentDuration: string;
     urlDuration: string;
 }
 
-interface PlaybackErrors {
-    imageDuration?: string;
-    documentDuration?: string;
-    urlDuration?: string;
-}
+type PlaybackErrors = Partial<Record<keyof PlaybackForm, string>>;
+
+const PLAYBACK_FIELDS: { key: keyof PlaybackForm; label: string }[] = [
+    { key: "imageDuration", label: "Images" },
+    { key: "videoDuration", label: "Videos" },
+    { key: "documentDuration", label: "Documents" },
+    { key: "urlDuration", label: "URLs" },
+];
 
 interface Props {
     device: Device;
@@ -175,11 +181,13 @@ export function DeviceDetailPanel({
     const [nowMs, setNowMs] = useState(() => Date.now());
     const [playbackForm, setPlaybackForm] = useState<PlaybackForm>({
         imageDuration: String(DEFAULT_IMAGE_DURATION),
+        videoDuration: String(DEFAULT_VIDEO_DURATION),
         documentDuration: String(DEFAULT_DOCUMENT_DURATION),
         urlDuration: String(DEFAULT_URL_DURATION),
     });
     const [playbackSaved, setPlaybackSaved] = useState<PlaybackForm>({
         imageDuration: String(DEFAULT_IMAGE_DURATION),
+        videoDuration: String(DEFAULT_VIDEO_DURATION),
         documentDuration: String(DEFAULT_DOCUMENT_DURATION),
         urlDuration: String(DEFAULT_URL_DURATION),
     });
@@ -198,6 +206,7 @@ export function DeviceDetailPanel({
     const applyPlaybackResponse = useCallback((data: PlaybackSettingsResponse) => {
         const next: PlaybackForm = {
             imageDuration: String(data.imageDuration),
+            videoDuration: String(data.videoDuration),
             documentDuration: String(data.documentDuration),
             urlDuration: String(data.urlDuration),
         };
@@ -313,14 +322,14 @@ export function DeviceDetailPanel({
 
     const validatePlaybackForm = (form: PlaybackForm): PlaybackErrors => ({
         imageDuration: validateDuration(form.imageDuration, "Images"),
+        videoDuration: validateDuration(form.videoDuration, "Videos"),
         documentDuration: validateDuration(form.documentDuration, "Documents"),
         urlDuration: validateDuration(form.urlDuration, "URLs"),
     });
 
-    const playbackDirty =
-        playbackForm.imageDuration !== playbackSaved.imageDuration
-        || playbackForm.documentDuration !== playbackSaved.documentDuration
-        || playbackForm.urlDuration !== playbackSaved.urlDuration;
+    const playbackDirty = PLAYBACK_FIELDS.some(
+        (field) => playbackForm[field.key] !== playbackSaved[field.key],
+    );
 
     const savePlaybackSettings = async (form: PlaybackForm, successMessage: string) => {
         if (!canChangeDisplay) {
@@ -329,18 +338,21 @@ export function DeviceDetailPanel({
         }
         const errors = validatePlaybackForm(form);
         setPlaybackErrors(errors);
-        if (errors.imageDuration || errors.documentDuration || errors.urlDuration) {
+        if (PLAYBACK_FIELDS.some((field) => errors[field.key])) {
             toast.error("Fix the highlighted duration values");
             return;
         }
 
         setPlaybackSaving(true);
         try {
+            // Device defaults only — playlist asset durations are a separate resource
+            // and are never rewritten by this request.
             const data = await apiRequest<PlaybackSettingsResponse>(`${base}/playback-settings`, {
                 method: "PATCH",
                 headers: orgHeaders,
                 body: JSON.stringify({
                     imageDuration: parseDuration(form.imageDuration),
+                    videoDuration: parseDuration(form.videoDuration),
                     documentDuration: parseDuration(form.documentDuration),
                     urlDuration: parseDuration(form.urlDuration),
                 }),
@@ -361,12 +373,13 @@ export function DeviceDetailPanel({
             return;
         }
         const confirmed = window.confirm(
-            "Restore default playback durations?\n\nImages: 10 sec\nDocuments: 20 sec\nURLs: 20 sec",
+            `Restore default playback durations?\n\nImages: ${DEFAULT_IMAGE_DURATION} sec\nVideos: ${DEFAULT_VIDEO_DURATION} sec\nDocuments: ${DEFAULT_DOCUMENT_DURATION} sec\nURLs: ${DEFAULT_URL_DURATION} sec\n\nPlaylist durations are not affected.`,
         );
         if (!confirmed) return;
         void savePlaybackSettings(
             {
                 imageDuration: String(DEFAULT_IMAGE_DURATION),
+                videoDuration: String(DEFAULT_VIDEO_DURATION),
                 documentDuration: String(DEFAULT_DOCUMENT_DURATION),
                 urlDuration: String(DEFAULT_URL_DURATION),
             },
@@ -488,7 +501,7 @@ export function DeviceDetailPanel({
                             <div>
                                 <p className="device-detail-label" style={{ marginBottom: 4 }}>Playback Settings</p>
                                 <p className="device-detail-hint">
-                                    Default durations for images, documents, and URLs on this device. Videos always use their media length unless a playlist overrides them.
+                                    Fallback durations used only when a playlist leaves an asset&apos;s duration blank. Assets with an explicit playlist duration always keep it.
                                 </p>
                             </div>
                             <Timer size={18} className="device-detail-value-icon" />
@@ -499,11 +512,7 @@ export function DeviceDetailPanel({
                         ) : (
                             <>
                                 <div className="device-playback-grid">
-                                    {([
-                                        { key: "imageDuration" as const, label: "Images" },
-                                        { key: "documentDuration" as const, label: "Documents" },
-                                        { key: "urlDuration" as const, label: "URLs" },
-                                    ]).map((field) => (
+                                    {PLAYBACK_FIELDS.map((field) => (
                                         <label key={field.key} className="device-playback-field">
                                             <span>{field.label}</span>
                                             <div className={`device-playback-input${playbackErrors[field.key] ? " has-error" : ""}`}>
@@ -783,7 +792,7 @@ export function DeviceDetailPanel({
                 .device-orient-pill:disabled { opacity: 0.55; cursor: not-allowed; }
                 .device-playback-grid {
                     display: grid;
-                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    grid-template-columns: repeat(4, minmax(0, 1fr));
                     gap: 12px;
                     margin-bottom: 14px;
                 }
@@ -875,7 +884,7 @@ export function DeviceDetailPanel({
                 @media (max-width: 560px) {
                     .device-detail-grid { grid-template-columns: 1fr; }
                     .device-detail-row-between { flex-direction: column; align-items: flex-start; }
-                    .device-playback-grid { grid-template-columns: 1fr; }
+                    .device-playback-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
                     .device-playback-actions { width: 100%; }
                     .device-playback-actions > button { flex: 1 1 auto; justify-content: center; }
                 }

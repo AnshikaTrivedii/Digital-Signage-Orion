@@ -86,6 +86,7 @@ export class DeviceManagementService {
       orientation: this.normalizeOrientation(device.orientation),
       stretchToFit: device.stretchToFit,
       defaultImageDuration: device.defaultImageDuration ?? 10,
+      defaultVideoDuration: device.defaultVideoDuration ?? 10,
       defaultDocumentDuration: device.defaultDocumentDuration ?? 20,
       defaultUrlDuration: device.defaultUrlDuration ?? 20,
       timezone: device.timezone,
@@ -174,6 +175,7 @@ export class DeviceManagementService {
       orientation: this.normalizeOrientation(device.orientation),
       stretchToFit: device.stretchToFit,
       defaultImageDuration: device.defaultImageDuration ?? 10,
+      defaultVideoDuration: device.defaultVideoDuration ?? 10,
       defaultDocumentDuration: device.defaultDocumentDuration ?? 20,
       defaultUrlDuration: device.defaultUrlDuration ?? 20,
       resolution: device.resolution,
@@ -186,17 +188,23 @@ export class DeviceManagementService {
     return {
       deviceId: device.id,
       imageDuration: device.defaultImageDuration,
+      videoDuration: device.defaultVideoDuration,
       documentDuration: device.defaultDocumentDuration,
       urlDuration: device.defaultUrlDuration,
       lastUpdated: device.playbackSettingsUpdatedAt?.toISOString() ?? device.updatedAt.toISOString(),
     };
   }
 
+  /**
+   * Device defaults only. Playlist slot durations live on PlaylistAsset and are
+   * never written here, so an explicit playlist override always survives.
+   */
   async updateDevicePlaybackSettings(
     deviceId: string,
     organizationId: string,
     body: {
       imageDuration?: number;
+      videoDuration?: number;
       documentDuration?: number;
       urlDuration?: number;
     },
@@ -209,6 +217,9 @@ export class DeviceManagementService {
     };
     if (typeof body.imageDuration === 'number') {
       data.defaultImageDuration = this.clampPlaybackDuration(body.imageDuration);
+    }
+    if (typeof body.videoDuration === 'number') {
+      data.defaultVideoDuration = this.clampPlaybackDuration(body.videoDuration);
     }
     if (typeof body.documentDuration === 'number') {
       data.defaultDocumentDuration = this.clampPlaybackDuration(body.documentDuration);
@@ -232,6 +243,7 @@ export class DeviceManagementService {
       orientation?: string;
       stretchToFit?: boolean;
       defaultImageDuration?: number;
+      defaultVideoDuration?: number;
       defaultDocumentDuration?: number;
       defaultUrlDuration?: number;
     },
@@ -247,6 +259,9 @@ export class DeviceManagementService {
     }
     if (typeof body.defaultImageDuration === 'number') {
       data.defaultImageDuration = this.clampPlaybackDuration(body.defaultImageDuration);
+    }
+    if (typeof body.defaultVideoDuration === 'number') {
+      data.defaultVideoDuration = this.clampPlaybackDuration(body.defaultVideoDuration);
     }
     if (typeof body.defaultDocumentDuration === 'number') {
       data.defaultDocumentDuration = this.clampPlaybackDuration(body.defaultDocumentDuration);
@@ -404,10 +419,13 @@ export class DeviceManagementService {
     const orientation = this.normalizeOrientation(device.orientation);
     const stretchToFit = Boolean(device.stretchToFit);
     const defaultImageDuration = this.clampPlaybackDuration(device.defaultImageDuration ?? 10);
+    const defaultVideoDuration = this.clampPlaybackDuration(device.defaultVideoDuration ?? 10);
     const defaultDocumentDuration = this.clampPlaybackDuration(device.defaultDocumentDuration ?? 20);
     const defaultUrlDuration = this.clampPlaybackDuration(device.defaultUrlDuration ?? 20);
+    // Fallbacks only — the player applies these when a manifest entry has durationSeconds: null.
     const playback = {
       imageDuration: defaultImageDuration,
+      videoDuration: defaultVideoDuration,
       documentDuration: defaultDocumentDuration,
       urlDuration: defaultUrlDuration,
     };
@@ -422,6 +440,7 @@ export class DeviceManagementService {
       orientation,
       stretchToFit,
       defaultImageDuration,
+      defaultVideoDuration,
       defaultDocumentDuration,
       defaultUrlDuration,
       features: {

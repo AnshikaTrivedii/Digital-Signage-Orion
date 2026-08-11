@@ -1094,6 +1094,7 @@ export class ClientDataService {
       orientation?: string;
       stretchToFit?: boolean;
       defaultImageDuration?: number;
+      defaultVideoDuration?: number;
       defaultDocumentDuration?: number;
       defaultUrlDuration?: number;
     },
@@ -1117,12 +1118,18 @@ export class ClientDataService {
   async updateDevicePlaybackSettings(
     actor: RequestActor,
     deviceId: string,
-    body: { imageDuration?: number; documentDuration?: number; urlDuration?: number },
+    body: {
+      imageDuration?: number;
+      videoDuration?: number;
+      documentDuration?: number;
+      urlDuration?: number;
+    },
   ) {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
     if (
       body.imageDuration === undefined
+      && body.videoDuration === undefined
       && body.documentDuration === undefined
       && body.urlDuration === undefined
     ) {
@@ -1398,6 +1405,7 @@ export class ClientDataService {
     orientation?: string;
     stretchToFit?: boolean;
     defaultImageDuration?: number;
+    defaultVideoDuration?: number;
     defaultDocumentDuration?: number;
     defaultUrlDuration?: number;
     timezone?: string;
@@ -1459,6 +1467,7 @@ export class ClientDataService {
       orientation: this.deviceManagement.normalizeOrientation(device.orientation),
       stretchToFit: Boolean(device.stretchToFit),
       defaultImageDuration: device.defaultImageDuration ?? 10,
+      defaultVideoDuration: device.defaultVideoDuration ?? 10,
       defaultDocumentDuration: device.defaultDocumentDuration ?? 20,
       defaultUrlDuration: device.defaultUrlDuration ?? 20,
       timezone: device.timezone ?? 'UTC',

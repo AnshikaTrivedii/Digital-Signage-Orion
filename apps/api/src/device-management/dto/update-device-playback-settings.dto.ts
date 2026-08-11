@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export const DEFAULT_IMAGE_DURATION_SECONDS = 10;
+export const DEFAULT_VIDEO_DURATION_SECONDS = 10;
 export const DEFAULT_DOCUMENT_DURATION_SECONDS = 20;
 export const DEFAULT_URL_DURATION_SECONDS = 20;
 export const MIN_PLAYBACK_DURATION_SECONDS = 1;
@@ -14,6 +15,13 @@ export class UpdateDevicePlaybackSettingsDto {
   @Min(MIN_PLAYBACK_DURATION_SECONDS)
   @Max(MAX_PLAYBACK_DURATION_SECONDS)
   imageDuration?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(MIN_PLAYBACK_DURATION_SECONDS)
+  @Max(MAX_PLAYBACK_DURATION_SECONDS)
+  videoDuration?: number;
 
   @IsOptional()
   @Type(() => Number)
