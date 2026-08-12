@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm install && npm run prisma:generate && npm run build:api
-    startCommand: npm run start:api
+    startCommand: bash scripts/start-api.sh
     envVars:
       - key: NODE_ENV
         value: production
