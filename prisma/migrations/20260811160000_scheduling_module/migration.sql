@@ -1,4 +1,7 @@
 -- Scheduling module: time-bounded playlist assignments resolved at sync time.
+--
+-- Every statement is idempotent so a retry after a failed/partial apply (e.g. via
+-- Supabase pooler) can complete safely without duplicate-object errors.
 
 -- Organization-level IANA zone used to interpret operator wall-clock input.
 ALTER TABLE "Organization" ADD COLUMN IF NOT EXISTS "timezone" TEXT NOT NULL DEFAULT 'Asia/Kolkata';
@@ -26,15 +29,30 @@ CREATE INDEX IF NOT EXISTS "Schedule_organizationId_startDateTime_idx" ON "Sched
 CREATE INDEX IF NOT EXISTS "Schedule_organizationId_deviceId_enabled_idx" ON "Schedule"("organizationId", "deviceId", "enabled");
 CREATE INDEX IF NOT EXISTS "Schedule_playlistId_idx" ON "Schedule"("playlistId");
 
-ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_organizationId_fkey"
-    FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_playlistId_fkey"
-    FOREIGN KEY ("playlistId") REFERENCES "Playlist"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_deviceId_fkey"
-    FOREIGN KEY ("deviceId") REFERENCES "Device"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_organizationId_fkey"
+        FOREIGN KEY ("organizationId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_playlistId_fkey"
+        FOREIGN KEY ("playlistId") REFERENCES "Playlist"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE "Schedule" ADD CONSTRAINT "Schedule_deviceId_fkey"
+        FOREIGN KEY ("deviceId") REFERENCES "Device"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
 
 -- The previous recurring-weekly schedule prototype had no playlist/device links and
 -- never reached the player. It is replaced by "Schedule" above.
-DROP TABLE IF EXISTS "ScheduleEvent";
+DROP TABLE IF EXISTS "ScheduleEvent" CASCADE;
+
 DROP TYPE IF EXISTS "ScheduleStatus";
 DROP TYPE IF EXISTS "SchedulePriority";

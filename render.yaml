@@ -10,5 +10,8 @@ services:
         value: production
       - key: DATABASE_URL
         sync: false
+      # Supabase → Settings → Database → Connection string → URI (direct, NOT pooler)
+      - key: DIRECT_URL
+        sync: false
       - key: JWT_SECRET
         sync: false

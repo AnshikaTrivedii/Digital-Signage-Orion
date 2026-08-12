@@ -16,6 +16,7 @@
     "lint:web": "npm run lint --workspace @orion/web",
     "prisma:generate": "npx prisma generate",
     "db:deploy": "npx prisma migrate deploy",
+    "db:recover-scheduling": "bash scripts/recover-scheduling-migration.sh",
     "db:push": "npx prisma db push",
     "db:seed": "ORION_SEED_DEMO_DATA=true npx prisma db seed",
     "start:api": "bash scripts/start-api.sh",
