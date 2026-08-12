@@ -40,6 +40,7 @@ echo "==> Marking failed migration as rolled back..."
 npx prisma migrate resolve --rolled-back 20260811160000_scheduling_module
 
 echo "==> Re-applying migrations via direct connection..."
-npx prisma migrate deploy
+MIGRATE_DATABASE_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
+DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma migrate deploy
 
 echo "==> Done. Redeploy Render or restart the API."

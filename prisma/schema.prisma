@@ -3,11 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  // Supabase pooler (PgBouncer) cannot run DDL migrations reliably — migrate deploy
-  // uses this direct connection while the app keeps using DATABASE_URL (pooler).
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum PlatformRole {

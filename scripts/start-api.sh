@@ -19,7 +19,9 @@ if [[ "${DATABASE_URL:-}" == *"pooler.supabase.com"* && "${DIRECT_URL}" == *"poo
 fi
 
 echo "Running database migrations..."
-npx prisma migrate deploy
+# Supabase pooler cannot run DDL — migrate via DIRECT_URL when set, else DATABASE_URL.
+MIGRATE_DATABASE_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
+DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma migrate deploy
 
 echo "Running database seed..."
 npx prisma db seed
