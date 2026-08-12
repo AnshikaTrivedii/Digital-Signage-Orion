@@ -2,8 +2,10 @@
 # One-time recovery for production P3009 on 20260811160000_scheduling_module.
 #
 # Prerequisites (Render / Supabase):
-#   DATABASE_URL  = pooler URL (for the running app)
-#   DIRECT_URL    = direct Postgres URL (db.<ref>.supabase.co — NOT pooler)
+#   DATABASE_URL  = application connection URL
+#   DIRECT_URL    = migration connection URL. On Render, use Supabase's Session
+#                   pooler URI (pooler.supabase.com:5432), since the direct
+#                   db.<ref>.supabase.co endpoint is IPv6-only by default.
 #
 # Usage (from repo root, with production env vars exported or in .env):
 #   bash scripts/recover-scheduling-migration.sh
@@ -30,9 +32,9 @@ if [[ -z "${DIRECT_URL:-}" ]]; then
   exit 1
 fi
 
-if [[ "${DATABASE_URL:-}" == *"pooler.supabase.com"* && "${DIRECT_URL}" == *"pooler.supabase.com"* ]]; then
-  echo "ERROR: DIRECT_URL must be the Supabase *direct* connection (db.<ref>.supabase.co)," >&2
-  echo "       not the pooler (pooler.supabase.com). See Supabase → Settings → Database." >&2
+if [[ "${DIRECT_URL}" == *"pooler.supabase.com:6543/"* ]]; then
+  echo "ERROR: DIRECT_URL must not use Supabase's transaction pooler (port 6543)." >&2
+  echo "       Use the direct connection, or Supavisor Session pooler (port 5432) on Render." >&2
   exit 1
 fi
 

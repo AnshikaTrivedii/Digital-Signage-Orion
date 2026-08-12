@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# Local dev: fall back to DATABASE_URL when DIRECT_URL is unset.
+# Local dev: fall back to DATABASE_URL when DIRECT_URL is unset. Despite the
+# legacy name, DIRECT_URL is the connection used specifically for migrations.
+# On IPv4-only hosts such as Render, use Supabase's *Session* pooler (port
+# 5432); the direct db.<ref>.supabase.co endpoint is IPv6-only unless the
+# Supabase IPv4 add-on is enabled.
 export DIRECT_URL="${DIRECT_URL:-${DATABASE_URL:-}}"
 
 if [[ -z "${DIRECT_URL:-}" ]]; then
@@ -12,10 +16,9 @@ if [[ -z "${DIRECT_URL:-}" ]]; then
   exit 1
 fi
 
-if [[ "${DATABASE_URL:-}" == *"pooler.supabase.com"* && "${DIRECT_URL}" == *"pooler.supabase.com"* ]]; then
-  echo "ERROR: Set DIRECT_URL to Supabase direct connection (db.<ref>.supabase.co)." >&2
-  echo "       Migrations cannot run through pooler.supabase.com." >&2
-  echo "       Or run scripts/supabase-recover-scheduling.sql in Supabase SQL Editor." >&2
+if [[ "${DIRECT_URL}" == *"pooler.supabase.com:6543/"* ]]; then
+  echo "ERROR: DIRECT_URL must not use Supabase's transaction pooler (port 6543)." >&2
+  echo "       Use the direct connection, or Supavisor Session pooler (port 5432) on Render." >&2
   exit 1
 fi
 
