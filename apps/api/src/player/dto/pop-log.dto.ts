@@ -39,6 +39,15 @@ class PopLogEntry {
   @IsString()
   playlistName?: string;
 
+  /** Playlist that was playing when the asset started (preferred over server "now"). */
+  @IsOptional()
+  @IsString()
+  playlistId?: string;
+
+  @IsOptional()
+  @IsString()
+  assetId?: string;
+
   @IsOptional()
   @IsString()
   campaignName?: string;

@@ -390,6 +390,9 @@ model Device {
   /// Playlist the device last actually synced. A schedule can swap the effective
   /// playlist without changing syncVersion, so identity must be tracked too.
   lastAckedPlaylistId      String?
+  /// Schedule id last applied by the device (null = no active schedule).
+  /// Required so schedule start/end forces syncRequired even when playlistId is unchanged.
+  lastAckedScheduleId      String?
 
   // Initial onboarding sync (first playlist download after pairing)
   pendingInitialSync     Boolean   @default(false)

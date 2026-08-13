@@ -132,6 +132,7 @@ export class PlayerService {
   private async resolveEffectiveContent(
     device: PairedDevice,
     now: Date = new Date(),
+    options: { log?: boolean } = {},
   ): Promise<EffectiveContent> {
     const activeSchedule = await this.schedules.resolveActiveScheduleForDevice(
       device.organizationId,
@@ -139,34 +140,51 @@ export class PlayerService {
       now,
     );
 
+    let effective: EffectiveContent;
     if (activeSchedule) {
-      return {
+      effective = {
         playlistId: activeSchedule.playlistId,
         layoutId: null,
         activeSchedule,
         source: 'schedule',
       };
-    }
-
-    if (device.currentLayoutId) {
-      return {
+    } else if (device.currentLayoutId) {
+      effective = {
         playlistId: null,
         layoutId: device.currentLayoutId,
         activeSchedule: null,
         source: 'manual-layout',
       };
-    }
-
-    if (device.currentPlaylistId) {
-      return {
+    } else if (device.currentPlaylistId) {
+      effective = {
         playlistId: device.currentPlaylistId,
         layoutId: null,
         activeSchedule: null,
         source: 'manual-playlist',
       };
+    } else {
+      effective = { playlistId: null, layoutId: null, activeSchedule: null, source: 'none' };
     }
 
-    return { playlistId: null, layoutId: null, activeSchedule: null, source: 'none' };
+    const scheduleChanged =
+      (activeSchedule?.scheduleId ?? null) !== (device.lastAckedScheduleId ?? null);
+    if (options.log || scheduleChanged) {
+      const calculatedStatus = activeSchedule
+        ? 'active'
+        : effective.source === 'none'
+          ? 'none'
+          : 'fallback';
+      this.logger.log(
+        `[SCHEDULE_RESOLUTION] serverNow=${now.toISOString()} deviceId=${device.id} ` +
+          `scheduleId=${activeSchedule?.scheduleId ?? 'none'} playlistId=${effective.playlistId ?? 'none'} ` +
+          `startTime=${activeSchedule?.startDateTime ?? 'n/a'} endTime=${activeSchedule?.endDateTime ?? 'n/a'} ` +
+          `timezone=UTC calculatedStatus=${calculatedStatus} contentSource=${effective.source} ` +
+          `lastAckedScheduleId=${device.lastAckedScheduleId ?? 'none'} ` +
+          `lastAckedPlaylistId=${device.lastAckedPlaylistId ?? 'none'}`,
+      );
+    }
+
+    return effective;
   }
 
   /**
@@ -399,6 +417,7 @@ export class PlayerService {
    */
   private async resolveDeviceByToken(authHeader: string | undefined): Promise<PairedDevice> {
     if (!authHeader?.startsWith('Bearer ')) {
+      this.logger.warn('[TOKEN] tokenValid=false tokenExpiry=n/a refreshAttempt=false refreshResult=missing_bearer');
       throw new UnauthorizedException({
         message: 'Missing device token',
         deviceStatus: 'DELETED',
@@ -411,6 +430,7 @@ export class PlayerService {
     });
 
     if (!device) {
+      this.logger.warn('[TOKEN] tokenValid=false tokenExpiry=n/a refreshAttempt=false refreshResult=unknown_token');
       throw new UnauthorizedException({
         message: 'Device has been deleted',
         deviceStatus: 'DELETED',
@@ -418,10 +438,20 @@ export class PlayerService {
     }
 
     if (!device.isPaired || !device.organizationId) {
+      this.logger.warn(
+        `[TOKEN] tokenValid=false tokenExpiry=n/a refreshAttempt=false refreshResult=unpaired deviceId=${device.id}`,
+      );
       throw new UnauthorizedException({
         message: 'Device has been unregistered',
         deviceStatus: 'UNREGISTERED',
       });
+    }
+
+    // Device pairing tokens do not expire and are never rotated by schedule transitions.
+    if (process.env.PLAYER_TOKEN_LOG === 'true') {
+      this.logger.log(
+        `[TOKEN] tokenValid=true tokenExpiry=none refreshAttempt=false refreshResult=ok deviceId=${device.id}`,
+      );
     }
 
     return { ...device, organizationId: device.organizationId };
@@ -488,9 +518,24 @@ export class PlayerService {
       );
     }
     await this.deviceManagement.ingestTelemetry(device.id, data);
-    const contentRevision = await this.getDeviceContentRevision(device);
+    const now = new Date();
+    const effective = await this.resolveEffectiveContent(device, now, { log: false });
+    const contentRevision = await this.getDeviceContentRevision(device, effective);
     const refreshed = await this.prisma.device.findUnique({ where: { id: device.id } });
-    const syncRequired = await this.computeSyncRequired(device, contentRevision);
+    const pairedRefreshed: PairedDevice | null =
+      refreshed?.organizationId != null
+        ? { ...refreshed, organizationId: refreshed.organizationId }
+        : null;
+    const syncRequired = await this.computeSyncRequired(
+      pairedRefreshed ?? device,
+      contentRevision,
+      effective,
+    );
+    const nextChange = await this.schedules.nextContentChangeAtForDevice(
+      device.organizationId,
+      device.id,
+      now,
+    );
     const pendingCommand = await this.deviceCache.deliverPendingCommand(device.id);
     const playerConfig = this.deviceManagement.getPlayerConfig(refreshed ?? device);
     const commandPayload = this.formatPlayerCommandPayload(pendingCommand);
@@ -500,6 +545,12 @@ export class PlayerService {
       deviceStatus: 'REGISTERED',
       contentRevision: contentRevision.revision,
       syncRequired,
+      contentSource: effective.source,
+      activeSchedule: effective.activeSchedule,
+      playlistId: effective.playlistId,
+      nextContentChangeAt: nextChange?.toISOString() ?? null,
+      scheduleValidUntil: effective.activeSchedule?.endDateTime ?? null,
+      serverNow: now.toISOString(),
       configVersion: playerConfig.configVersion,
       popLogsExpected: playerConfig.popLogsExpected,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
@@ -630,9 +681,15 @@ export class PlayerService {
     // Revision polls every ~5s — treat them as live presence so CMS status
     // stays Online while the player is actively talking to the API.
     await this.deviceManagement.touchPresence(device.id);
-    const effective = await this.resolveEffectiveContent(device);
+    const now = new Date();
+    const effective = await this.resolveEffectiveContent(device, now);
     const contentRevision = await this.getDeviceContentRevision(device, effective);
     const syncRequired = await this.computeSyncRequired(device, contentRevision, effective);
+    const nextChange = await this.schedules.nextContentChangeAtForDevice(
+      device.organizationId,
+      device.id,
+      now,
+    );
     const playerConfig = this.deviceManagement.getPlayerConfig(device);
 
     return {
@@ -647,6 +704,11 @@ export class PlayerService {
       layoutId: effective.layoutId,
       activeSchedule: effective.activeSchedule,
       contentSource: effective.source,
+      /** ISO instant when schedule start/end may change effective content; null if none pending. */
+      nextContentChangeAt: nextChange?.toISOString() ?? null,
+      /** When a schedule is active, same as activeSchedule.endDateTime — convenience for the player. */
+      scheduleValidUntil: effective.activeSchedule?.endDateTime ?? null,
+      serverNow: now.toISOString(),
       initialSyncPending: playerConfig.initialSyncPending,
       revisionPollIntervalSeconds: playerConfig.revisionPollIntervalSeconds,
       syncIntervalSeconds: playerConfig.syncIntervalSeconds,
@@ -676,16 +738,18 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     await this.deviceManagement.touchPresence(device.id);
     const syncContext = this.buildSyncAssetContext(query);
-    const effective = await this.resolveEffectiveContent(device);
-    this.logger.log(
-      `[SCHEDULE] deviceId=${device.id} scheduleId=${effective.activeSchedule?.scheduleId ?? 'none'} ` +
-        `playlistId=${effective.playlistId ?? 'none'} start=${effective.activeSchedule?.startDateTime ?? 'n/a'} ` +
-        `end=${effective.activeSchedule?.endDateTime ?? 'n/a'} status=${effective.source}`,
-    );
+    const now = new Date();
+    const effective = await this.resolveEffectiveContent(device, now, { log: true });
 
     const payload = effective.layoutId
-      ? await this.syncLayout(device, query, syncContext)
-      : await this.buildPlaylistSyncResponse(device, query, syncContext, effective.playlistId);
+      ? await this.syncLayout(device, query, syncContext, effective.activeSchedule?.scheduleId ?? null)
+      : await this.buildPlaylistSyncResponse(
+          device,
+          query,
+          syncContext,
+          effective.playlistId,
+          effective.activeSchedule?.scheduleId ?? null,
+        );
 
     const pendingCommand = (await this.deviceCache.deliverPendingCommand(device.id)) ?? null;
     const refreshedDevice = await this.prisma.device.findUnique({ where: { id: device.id } });
@@ -695,7 +759,7 @@ export class PlayerService {
         : device;
     // Re-resolve against the refreshed row so the acked state written during the
     // build above is taken into account.
-    const refreshedEffective = await this.resolveEffectiveContent(effectiveDevice);
+    const refreshedEffective = await this.resolveEffectiveContent(effectiveDevice, now, { log: false });
     const contentRevision = await this.getDeviceContentRevision(effectiveDevice, refreshedEffective);
     const assets = Array.isArray(payload.assets) ? payload.assets : [];
     const pendingDownloadCount = assets.filter(
@@ -704,6 +768,11 @@ export class PlayerService {
     const syncRequired =
       (await this.computeSyncRequired(effectiveDevice, contentRevision, refreshedEffective)) ||
       pendingDownloadCount > 0;
+    const nextChange = await this.schedules.nextContentChangeAtForDevice(
+      device.organizationId,
+      device.id,
+      now,
+    );
 
     return {
       ...payload,
@@ -713,6 +782,9 @@ export class PlayerService {
       contentRevision: contentRevision.revision,
       activeSchedule: effective.activeSchedule,
       contentSource: effective.source,
+      nextContentChangeAt: nextChange?.toISOString() ?? null,
+      scheduleValidUntil: effective.activeSchedule?.endDateTime ?? null,
+      serverNow: now.toISOString(),
       cacheCommand: pendingCommand,
       pendingCommand,
       ...this.deviceManagement.getPlayerConfig(effectiveDevice),
@@ -729,8 +801,19 @@ export class PlayerService {
     query: SyncQueryDto,
     syncContext: SyncAssetContext,
     effectivePlaylistId: string | null = device.currentPlaylistId,
+    appliedScheduleId: string | null = null,
   ) {
     const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
+
+    if ((device.lastAckedScheduleId ?? null) !== appliedScheduleId) {
+      this.logger.log(
+        `[SCHEDULE_SWITCH] deviceId=${device.id} previousPlaylist=${device.lastAckedPlaylistId ?? 'none'} ` +
+          `newPlaylist=${effectivePlaylistId ?? 'none'} previousSchedule=${device.lastAckedScheduleId ?? 'none'} ` +
+          `newSchedule=${appliedScheduleId ?? 'none'} reason=${
+            appliedScheduleId ? 'schedule_active_sync' : 'schedule_ended_or_fallback'
+          }`,
+      );
+    }
 
     if (!effectivePlaylistId) {
       const removedAssetIds = syncContext.knownAssetIds;
@@ -740,6 +823,7 @@ export class PlayerService {
           lastSync: new Date().toISOString(),
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
+          lastAckedScheduleId: appliedScheduleId,
         },
       });
       return {
@@ -771,6 +855,7 @@ export class PlayerService {
           lastSync: new Date().toISOString(),
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
+          lastAckedScheduleId: appliedScheduleId,
         },
       });
       return {
@@ -833,6 +918,9 @@ export class PlayerService {
       where: { id: device.id },
       data: {
         lastSync: new Date().toISOString(),
+        // Always acknowledge the schedule state the device was told to apply.
+        // Playlist version ack still waits until the manifest is fully cached.
+        lastAckedScheduleId: appliedScheduleId,
         ...(shouldAckPlaylistVersion
           ? {
               lastAckedPlaylistVersion: playlist.syncVersion,
@@ -864,6 +952,7 @@ export class PlayerService {
     device: PairedDevice,
     query: SyncQueryDto,
     syncContext: SyncAssetContext,
+    appliedScheduleId: string | null = null,
   ) {
     const { knownAssetIds } = syncContext;
     const activeTickers = await this.fetchActiveTickers(device.organizationId, device.id);
@@ -892,7 +981,11 @@ export class PlayerService {
     if (!layout || layout.organizationId !== device.organizationId) {
       await this.prisma.device.update({
         where: { id: device.id },
-        data: { lastSync: new Date().toISOString(), lastAckedLayoutVersion: null },
+        data: {
+          lastSync: new Date().toISOString(),
+          lastAckedLayoutVersion: null,
+          lastAckedScheduleId: appliedScheduleId,
+        },
       });
       return {
         unchanged: false,
@@ -1027,6 +1120,7 @@ export class PlayerService {
       where: { id: device.id },
       data: {
         lastSync: new Date().toISOString(),
+        lastAckedScheduleId: appliedScheduleId,
         ...(shouldAckLayoutVersion ? { lastAckedLayoutVersion: layout.syncVersion } : {}),
         ...(shouldAckLayoutVersion ? { lastAckedPlaylistVersion: null, lastAckedPlaylistId: null } : {}),
         ...(shouldAckLayoutVersion && device.pendingInitialSync
@@ -1146,9 +1240,23 @@ export class PlayerService {
     content: ContentRevisionState,
     effective?: EffectiveContent,
   ): Promise<boolean> {
-    if (content.revision === 'none') return false;
+    const resolved = effective ?? (await this.resolveEffectiveContent(device, new Date(), { log: false }));
+    const currentScheduleId = resolved.activeSchedule?.scheduleId ?? null;
 
-    const resolved = effective ?? (await this.resolveEffectiveContent(device));
+    // Schedule start/end must force a re-sync even when playlistId is unchanged
+    // (manual playlist === scheduled playlist) and even when revision becomes 'none'.
+    if ((device.lastAckedScheduleId ?? null) !== currentScheduleId) {
+      return true;
+    }
+
+    if (content.revision === 'none') {
+      // Clear leftover playlist/layout state after schedule expiry with no fallback.
+      return (
+        device.lastAckedPlaylistId != null ||
+        device.lastAckedLayoutVersion != null ||
+        device.lastAckedScheduleId != null
+      );
+    }
 
     if (resolved.layoutId) {
       const layoutSyncRequired =
@@ -1167,8 +1275,8 @@ export class PlayerService {
         (device.lastAckedPlaylistVersion == null ||
           device.lastAckedPlaylistVersion !== content.playlistVersion);
       if (playlistSyncRequired) return true;
-    } else {
-      return false;
+    } else if (device.lastAckedPlaylistId != null || device.lastAckedLayoutVersion != null) {
+      return true;
     }
 
     const tickerAggregate = await this.prisma.ticker.aggregate({
@@ -1445,6 +1553,8 @@ export class PlayerService {
       assetName?: string;
       content?: string;
       playlistName?: string;
+      playlistId?: string;
+      assetId?: string;
       campaignName?: string;
       status: string;
       startTime?: string;
@@ -1479,13 +1589,12 @@ export class PlayerService {
     }
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
-    const effective = await this.resolveEffectiveContent(device);
-    const playbackPlaylistId = effective.playlistId;
+    const effectiveNow = await this.resolveEffectiveContent(device, new Date(), { log: false });
 
     this.logger.log(
-      `[POP] deviceId=${device.id} playlistId=${playbackPlaylistId ?? 'none'} ` +
-        `contentSource=${effective.source} scheduleId=${effective.activeSchedule?.scheduleId ?? 'none'} ` +
-        `batch=${batchSize}`,
+      `[POP] deviceId=${device.id} playlistId=${effectiveNow.playlistId ?? 'none'} ` +
+        `contentSource=${effectiveNow.source} scheduleId=${effectiveNow.activeSchedule?.scheduleId ?? 'none'} ` +
+        `batch=${batchSize} (per-event playlist resolved at playback startTime)`,
     );
 
     // A playback timestamp ahead of "now" means the device clock is wrong. Such a
@@ -1495,10 +1604,25 @@ export class PlayerService {
     let clockSkewed = 0;
     let maxSkewMs = 0;
 
-    const rows = logs.flatMap((log) => {
+    const rows: {
+      organizationId: string;
+      deviceId: string;
+      device: string;
+      content: string;
+      assetName: string;
+      playlistName: string | null;
+      campaignName: string | null;
+      status: ProofOfPlayStatus;
+      timestamp: Date;
+      startTime: Date;
+      endTime: Date | null;
+      durationSeconds: number | null;
+    }[] = [];
+
+    for (const log of logs) {
       if (!log.assetName?.trim() && !log.content?.trim()) {
         this.logger.warn(`Skipping PoP log from ${device.name}: missing assetName/content`);
-        return [];
+        continue;
       }
 
       const assetName = (log.assetName ?? log.content ?? 'Unknown asset').trim();
@@ -1506,19 +1630,32 @@ export class PlayerService {
       const startTime = rawStart ? new Date(rawStart) : new Date();
       if (Number.isNaN(startTime.getTime())) {
         this.logger.warn(`Skipping PoP log from ${device.name}: invalid start time for ${assetName}`);
-        return [];
+        continue;
       }
 
       const maxFutureMs = 24 * 60 * 60 * 1000;
       const skewMs = startTime.getTime() - Date.now();
       if (skewMs > maxFutureMs) {
         this.logger.warn(`Skipping PoP log from ${device.name}: start time too far in the future for ${assetName}`);
-        return [];
+        continue;
       }
       if (skewMs > clockSkewToleranceMs) {
         clockSkewed += 1;
         maxSkewMs = Math.max(maxSkewMs, skewMs);
       }
+
+      // Prefer client-stamped playlistId; otherwise reconstruct which schedule was
+      // active at the playback instant so delayed uploads after expiry stay correct.
+      const playbackPlaylistId =
+        (typeof log.playlistId === 'string' && log.playlistId.trim()
+          ? log.playlistId.trim()
+          : null) ??
+        (await this.schedules.resolvePlaylistIdAt(
+          device.organizationId,
+          device.id,
+          startTime,
+          device.currentPlaylistId,
+        ));
 
       const playbackContext = contextIndex.resolve(assetName, playbackPlaylistId);
       const enriched = enrichPopLogFields(
@@ -1538,7 +1675,15 @@ export class PlayerService {
           ? ProofOfPlayStatus.VERIFIED
           : ProofOfPlayStatus.FAILED;
 
-      const baseRow = {
+      const endTime = enriched.endTime;
+      this.logger.log(
+        `[POP] deviceId=${device.id} playlistId=${playbackPlaylistId ?? 'none'} ` +
+          `assetId=${log.assetId ?? 'n/a'} assetName=${assetName} ` +
+          `startTime=${startTime.toISOString()} endTime=${endTime?.toISOString() ?? 'n/a'} ` +
+          `duration=${enriched.durationSeconds ?? 'n/a'} responseStatus=pending`,
+      );
+
+      rows.push({
         organizationId: device.organizationId,
         deviceId: device.id,
         device: device.name,
@@ -1549,12 +1694,10 @@ export class PlayerService {
         status: normalizedStatus,
         timestamp: startTime,
         startTime,
-        endTime: enriched.endTime,
+        endTime,
         durationSeconds: enriched.durationSeconds,
-      };
-
-      return [baseRow];
-    });
+      });
+    }
 
     if (!rows.length) {
       return this.buildPopLogSubmitResponse(device, {
@@ -1585,9 +1728,8 @@ export class PlayerService {
     const duplicates = rows.length - stored;
 
     this.logger.log(
-      `[POP] deviceId=${device.id} playlistId=${playbackPlaylistId ?? 'none'} ` +
-        `eventCreated=${stored} skipped=${batchSize - stored} duplicates=${duplicates} ` +
-        `serverResponse=accepted`,
+      `[POP] deviceId=${device.id} eventCreated=${stored} skipped=${batchSize - stored} ` +
+        `duplicates=${duplicates} responseStatus=accepted`,
     );
     this.logger.log(
       `Stored ${stored} PoP logs from deviceId=${device.id} (${device.name})` +

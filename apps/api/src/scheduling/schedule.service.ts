@@ -16,6 +16,7 @@ import type { UpdateScheduleDto } from './dto/update-schedule.dto';
 import {
   deriveScheduleStatus,
   findConflicts,
+  nextTransitionAt,
   resolveActiveSchedule,
   type ScheduleStatus,
 } from './schedule-resolution';
@@ -306,6 +307,48 @@ export class ScheduleService {
       startDateTime: winner.startDateTime.toISOString(),
       endDateTime: winner.endDateTime.toISOString(),
     };
+  }
+
+  /**
+   * Next instant when this device's effective content may change (schedule
+   * start or end). Exposed to the player so it can wake exactly at boundaries
+   * instead of waiting only for the next poll.
+   */
+  async nextContentChangeAtForDevice(
+    organizationId: string,
+    deviceId: string,
+    now: Date = new Date(),
+  ): Promise<Date | null> {
+    const schedules = await this.prisma.schedule.findMany({
+      where: {
+        organizationId,
+        enabled: true,
+        OR: [{ deviceId }, { deviceId: null }],
+      },
+      select: {
+        id: true,
+        deviceId: true,
+        startDateTime: true,
+        endDateTime: true,
+        enabled: true,
+      },
+    });
+    return nextTransitionAt(schedules, deviceId, now);
+  }
+
+  /**
+   * Resolve which playlist was driving the device at an arbitrary past instant.
+   * Used by Proof-of-Play so delayed uploads after schedule expiry still attribute
+   * to the playlist that was actually playing when the asset started.
+   */
+  async resolvePlaylistIdAt(
+    organizationId: string,
+    deviceId: string,
+    at: Date,
+    fallbackPlaylistId: string | null,
+  ): Promise<string | null> {
+    const active = await this.resolveActiveScheduleForDevice(organizationId, deviceId, at);
+    return active?.playlistId ?? fallbackPlaylistId;
   }
 
   // ----------------------------------------------------- conflict detection

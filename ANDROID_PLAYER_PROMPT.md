@@ -315,20 +315,50 @@ device would fight the server.
 | --- | --- |
 | `activeSchedule` | The schedule currently driving this device, or `null` when none applies. |
 | `contentSource` | `schedule`, `manual-playlist`, `manual-layout`, or `none` — why `playlistId` is what it is. |
+| `nextContentChangeAt` | Next ISO instant when a schedule may start or end for this device (`null` if none). |
+| `scheduleValidUntil` | When a schedule is active, equals `activeSchedule.endDateTime`. |
+| `serverNow` | Server UTC clock at response time — diagnostics only. |
+| `syncRequired` | **Must** be honored. Becomes `true` when a schedule starts or ends, even if `playlistId` is unchanged. |
 
 Server-side priority is **active schedule → manually assigned playlist/layout → nothing**.
-A schedule starting, ending, being edited, disabled or deleted all change `revision`,
-so each is picked up within one poll (~5s) with no push required. When a schedule
-ends, `playlistId` reverts to the device's manual assignment on its own.
+A schedule starting, ending, being edited, disabled or deleted all change `revision`
+(suffix `:sc{scheduleId}` → `:sc0`) **and** set `syncRequired=true` until the device
+calls `/sync`. When a schedule ends, `playlistId` reverts to the device's manual
+assignment (or `null` / empty state).
 
-`activeSchedule` is informational — useful for logs and diagnostics screens:
+### HARD REQUIREMENTS — schedule expiry (do not restart the app)
+
+When `revision` changes **OR** `syncRequired` is true **OR** `activeSchedule` becomes
+`null` while `contentSource` was `"schedule"` **OR** `playlistId` / `contentSource` changes:
+
+1. Immediately call `GET /api/player/sync` (do not wait for the 120s full-sync timer).
+2. Switch playback to the new `playlistId` / empty state from that response.
+3. Do **NOT** restart the Android app, kill the foreground service, clear cache,
+   unpair, or wipe the playlist disk cache.
+4. Optional: schedule a local wake at `nextContentChangeAt` / `scheduleValidUntil` to
+   poll revision immediately at the boundary (still trust the server response, not the
+   device clock, for what to play).
+5. After offline reconnect, call `/sync-revision` then `/sync` if needed — never keep
+   playing an expired scheduled playlist from local memory alone.
 
 ```kotlin
 Log.i("Sync", "playlistId=${res.playlistId} source=${res.contentSource} " +
-    "schedule=${res.activeSchedule?.scheduleName ?: "none"}")
+    "schedule=${res.activeSchedule?.scheduleName ?: "none"} " +
+    "syncRequired=${res.syncRequired} nextChange=${res.nextContentChangeAt}")
 ```
 
-`activeSchedule` and `contentSource` are also present on `GET /api/player/sync`.
+`activeSchedule`, `contentSource`, `nextContentChangeAt`, and `scheduleValidUntil`
+are also present on `GET /api/player/sync` and heartbeat.
+
+### Proof-of-Play during scheduled playback
+
+Use the **same** PoP pipeline as manual playback. When an asset starts, stamp:
+
+- `playlistId` / `playlistName` from the currently playing sync playlist (the scheduled one)
+- `assetId`, `assetName`, `startTime`, `endTime`, `durationSeconds`
+
+Do not omit playlist identity — delayed flush after schedule expiry must still
+attribute to the playlist that was playing at `startTime`.
 
 ---
 
@@ -947,6 +977,9 @@ data class SyncRevisionResponse(
     val contentType: String,
     val playlistId: String?,
     val layoutId: String?,
+    val nextContentChangeAt: String? = null,
+    val scheduleValidUntil: String? = null,
+    val serverNow: String? = null,
     /** Why playlistId is what it is: schedule | manual-playlist | manual-layout | none. */
     val contentSource: String? = null,
     /** Informational only — the server has already applied the schedule to playlistId. */
