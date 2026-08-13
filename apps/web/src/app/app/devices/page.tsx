@@ -145,7 +145,7 @@ function formatDeviceLastSync(value?: string | null): string {
 
 export default function DevicesPage() {
     const { canEdit, canControl } = useClientFeature("DEVICES");
-    const { activeOrganizationId } = useAuth();
+    const { activeOrganizationId, refreshSession } = useAuth();
 
     const [devices, setDevices] = useState<Device[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -182,7 +182,11 @@ export default function DevicesPage() {
     );
 
     const loadDevices = useCallback(async () => {
-        if (!activeOrganizationId) return;
+        if (!activeOrganizationId) {
+            setIsLoading(false);
+            setLoadError("Select an organization from the header, then retry.");
+            return;
+        }
         setIsLoading(true);
         setLoadError(null);
         try {
@@ -195,11 +199,21 @@ export default function DevicesPage() {
                 return response.find((d) => d.id === current.id) ?? current;
             });
         } catch (error) {
-            setLoadError(describeError(error, "Failed to load devices"));
+            const message = describeError(error, "Failed to load devices");
+            if (message.toLowerCase().includes("organization context")) {
+                try {
+                    await refreshSession();
+                } catch {
+                    // Session heal is best-effort; surface the original error below.
+                }
+                setLoadError("Workspace context was missing or stale. Click Retry after the organization is selected.");
+            } else {
+                setLoadError(message);
+            }
         } finally {
             setIsLoading(false);
         }
-    }, [activeOrganizationId]);
+    }, [activeOrganizationId, refreshSession]);
 
     useEffect(() => {
         void loadDevices();

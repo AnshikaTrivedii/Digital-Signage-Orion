@@ -70,10 +70,26 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     }, [hasElevatedDashboardAccess, portal]);
 
     useEffect(() => {
-        if (portal !== "client" || !hasElevatedDashboardAccess) return;
-        if (activeOrganizationId || allOrganizations.length === 0) return;
-        void setActiveOrganization(allOrganizations[0].id);
-    }, [activeOrganizationId, allOrganizations, hasElevatedDashboardAccess, portal, setActiveOrganization]);
+        if (portal !== "client" || activeOrganizationId) return;
+
+        // Platform operators: pick the first tenant from the org directory.
+        if (hasElevatedDashboardAccess && allOrganizations.length > 0) {
+            void setActiveOrganization(allOrganizations[0].id);
+            return;
+        }
+
+        // Regular workspace users: heal a missing/stale selection from memberships.
+        if (memberships.length > 0) {
+            void setActiveOrganization(memberships[0].organization.id);
+        }
+    }, [
+        activeOrganizationId,
+        allOrganizations,
+        hasElevatedDashboardAccess,
+        memberships,
+        portal,
+        setActiveOrganization,
+    ]);
 
     useEffect(() => {
         const onAuthError = (event: Event) => {

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InvitationStatus, MembershipStatus, OrganizationRole, OrganizationStatus, PlatformRole, UserStatus } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
@@ -13,6 +13,8 @@ import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -188,6 +190,7 @@ export class AuthService {
     }
 
     const memberships = user.memberships
+      .filter((membership) => membership.status === MembershipStatus.ACTIVE)
       .map((membership) => ({
         id: membership.id,
         role: membership.role,
@@ -256,6 +259,12 @@ export class AuthService {
       platformRole: user.platformRole,
     };
 
+    const canImpersonateOrganization =
+      user.platformRole === PlatformRole.SUPER_ADMIN ||
+      user.platformRole === PlatformRole.PLATFORM_ADMIN ||
+      user.platformRole === PlatformRole.SALES ||
+      user.platformRole === PlatformRole.SUPPORT;
+
     const orgMembership = user.memberships.find((membership) => {
       if (scope.organizationId) {
         return membership.organizationId === scope.organizationId;
@@ -266,27 +275,18 @@ export class AuthService {
       return false;
     });
 
-    const fallbackMembership = !scope.organizationId && !scope.organizationSlug && user.memberships.length === 1
-      ? user.memberships[0]
-      : undefined;
-
-    if (orgMembership || fallbackMembership) {
-      const resolvedMembership = orgMembership ?? fallbackMembership!;
+    if (orgMembership) {
       actor.organization = {
-        id: resolvedMembership.organization.id,
-        slug: resolvedMembership.organization.slug,
-        role: resolvedMembership.role,
-        status: resolvedMembership.organization.status,
+        id: orgMembership.organization.id,
+        slug: orgMembership.organization.slug,
+        role: orgMembership.role,
+        status: orgMembership.organization.status,
       };
       return actor;
     }
 
-    const canImpersonateOrganization =
-      user.platformRole === PlatformRole.SUPER_ADMIN ||
-      user.platformRole === PlatformRole.PLATFORM_ADMIN ||
-      user.platformRole === PlatformRole.SALES ||
-      user.platformRole === PlatformRole.SUPPORT;
-
+    // Platform operators may act on any tenant via the org header, even when they
+    // also have a personal membership elsewhere.
     if (canImpersonateOrganization && (scope.organizationId || scope.organizationSlug)) {
       const organization = await this.prisma.organization.findFirst({
         where: scope.organizationId
@@ -305,6 +305,25 @@ export class AuthService {
         slug: organization.slug,
         role: OrganizationRole.ORG_ADMIN,
         status: organization.status,
+      };
+      return actor;
+    }
+
+    // Heal stale/missing client org scope for normal members so API calls do not
+    // fail with "Missing active organization context".
+    const fallbackMembership = user.memberships[0];
+    if (fallbackMembership) {
+      if (scope.organizationId || scope.organizationSlug) {
+        this.logger.warn(
+          `Organization scope missed for userId=${user.id} requestedId=${scope.organizationId ?? 'n/a'} ` +
+            `requestedSlug=${scope.organizationSlug ?? 'n/a'}; falling back to membership org=${fallbackMembership.organizationId}`,
+        );
+      }
+      actor.organization = {
+        id: fallbackMembership.organization.id,
+        slug: fallbackMembership.organization.slug,
+        role: fallbackMembership.role,
+        status: fallbackMembership.organization.status,
       };
     }
 

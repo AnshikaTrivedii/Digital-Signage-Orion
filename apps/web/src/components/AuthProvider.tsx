@@ -98,20 +98,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const hasHydrated = useRef(false);
 
     const applySession = useCallback(async (nextToken: string, requestedOrganizationId?: string | null) => {
-        const session = await apiRequest<AuthUser>("/api/auth/me", {
+        let session = await apiRequest<AuthUser>("/api/auth/me", {
             headers: buildAuthHeaders(nextToken, requestedOrganizationId),
         });
 
+        const activeMemberships = session.memberships.filter((membership) => membership.status === "ACTIVE");
         const matchingMembership = requestedOrganizationId
-            ? session.memberships.find((membership) => membership.organization.id === requestedOrganizationId)
+            ? activeMemberships.find((membership) => membership.organization.id === requestedOrganizationId)
             : undefined;
-        const fallbackMembership = session.memberships[0];
-        const resolvedOrganizationId =
-            requestedOrganizationId ??
+
+        // Never keep a stale localStorage org id that the server could not resolve.
+        // Prefer the org the API attached to the actor, then a matching membership, then first active.
+        let resolvedOrganizationId =
             session.activeOrganization?.id ??
             matchingMembership?.organization.id ??
-            fallbackMembership?.organization.id ??
+            activeMemberships[0]?.organization.id ??
             null;
+
+        // If the requested id was stale/invalid, re-hydrate /me with the healed org so
+        // activeOrganization + permissions match what subsequent API calls will use.
+        if (
+            resolvedOrganizationId &&
+            requestedOrganizationId &&
+            resolvedOrganizationId !== requestedOrganizationId
+        ) {
+            session = await apiRequest<AuthUser>("/api/auth/me", {
+                headers: buildAuthHeaders(nextToken, resolvedOrganizationId),
+            });
+            resolvedOrganizationId = session.activeOrganization?.id ?? resolvedOrganizationId;
+        }
 
         setToken(nextToken);
         setUser(session);
