@@ -34,6 +34,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [isDesktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
     const [allOrganizations, setAllOrganizations] = useState<Array<{ id: string; name: string; slug: string; status: string }>>([]);
+    const [authError, setAuthError] = useState<{ endpoint: string; message: string } | null>(null);
 
     const memberships = user?.memberships ?? [];
     const activeOrganization = memberships.find((membership) => membership.organization.id === activeOrganizationId) ?? memberships[0] ?? null;
@@ -73,6 +74,18 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
         if (activeOrganizationId || allOrganizations.length === 0) return;
         void setActiveOrganization(allOrganizations[0].id);
     }, [activeOrganizationId, allOrganizations, hasElevatedDashboardAccess, portal, setActiveOrganization]);
+
+    useEffect(() => {
+        const onAuthError = (event: Event) => {
+            const detail = (event as CustomEvent<{ endpoint?: string; message?: string }>).detail;
+            setAuthError({
+                endpoint: detail?.endpoint || "unknown endpoint",
+                message: detail?.message || "Invalid token",
+            });
+        };
+        window.addEventListener("orion:auth-error", onAuthError);
+        return () => window.removeEventListener("orion:auth-error", onAuthError);
+    }, []);
 
     useEffect(() => {
         if (isLoading) return;
@@ -227,6 +240,34 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
             {isSidebarOpen && <div className="mobile-overlay" onClick={() => setSidebarOpen(false)} />}
 
             <main className="app-main">
+                {authError && (
+                    <div
+                        role="alert"
+                        style={{
+                            margin: "12px 16px 0",
+                            padding: "12px 16px",
+                            borderRadius: 10,
+                            background: "hsla(var(--status-danger), 0.1)",
+                            border: "1px solid hsla(var(--status-danger), 0.35)",
+                            color: "hsl(var(--status-danger))",
+                            fontSize: "0.85rem",
+                        }}
+                    >
+                        <strong>Session expired.</strong> {authError.endpoint} returned 401 ({authError.message}).
+                        Your data was not deleted — sign in again to continue.
+                        <button
+                            type="button"
+                            className="btn-outline"
+                            style={{ marginLeft: 12 }}
+                            onClick={() => {
+                                logout();
+                                router.push("/login");
+                            }}
+                        >
+                            Sign in
+                        </button>
+                    </div>
+                )}
                 <header className="app-header">
                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
                         <button className="mobile-only btn-icon-soft" onClick={() => setSidebarOpen((current) => !current)}>

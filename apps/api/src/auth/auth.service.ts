@@ -219,7 +219,13 @@ export class AuthService {
       payload = await this.jwtService.verifyAsync<{ sub: string }>(token, {
         secret: getJwtSecret(),
       });
-    } catch {
+    } catch (error) {
+      const name = error instanceof Error ? error.name : '';
+      if (name === 'TokenExpiredError') {
+        throw new UnauthorizedException(
+          'CMS session expired (JWT). Sign in again. Device pairing tokens are separate and were not revoked.',
+        );
+      }
       throw new UnauthorizedException('Invalid token');
     }
 
@@ -317,6 +323,7 @@ export class AuthService {
         expiresIn: '12h',
       },
     );
+    const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
 
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -335,6 +342,7 @@ export class AuthService {
 
     return {
       accessToken,
+      expiresAt,
       user: {
         id: user?.id,
         email: user?.email,

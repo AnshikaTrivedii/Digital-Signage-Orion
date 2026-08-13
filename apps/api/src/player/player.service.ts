@@ -677,6 +677,11 @@ export class PlayerService {
     await this.deviceManagement.touchPresence(device.id);
     const syncContext = this.buildSyncAssetContext(query);
     const effective = await this.resolveEffectiveContent(device);
+    this.logger.log(
+      `[SCHEDULE] deviceId=${device.id} scheduleId=${effective.activeSchedule?.scheduleId ?? 'none'} ` +
+        `playlistId=${effective.playlistId ?? 'none'} start=${effective.activeSchedule?.startDateTime ?? 'n/a'} ` +
+        `end=${effective.activeSchedule?.endDateTime ?? 'n/a'} status=${effective.source}`,
+    );
 
     const payload = effective.layoutId
       ? await this.syncLayout(device, query, syncContext)
@@ -1474,6 +1479,14 @@ export class PlayerService {
     }
 
     const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
+    const effective = await this.resolveEffectiveContent(device);
+    const playbackPlaylistId = effective.playlistId;
+
+    this.logger.log(
+      `[POP] deviceId=${device.id} playlistId=${playbackPlaylistId ?? 'none'} ` +
+        `contentSource=${effective.source} scheduleId=${effective.activeSchedule?.scheduleId ?? 'none'} ` +
+        `batch=${batchSize}`,
+    );
 
     // A playback timestamp ahead of "now" means the device clock is wrong. Such a
     // row is still stored (never drop real playback), but no date filter can ever
@@ -1507,7 +1520,7 @@ export class PlayerService {
         maxSkewMs = Math.max(maxSkewMs, skewMs);
       }
 
-      const playbackContext = contextIndex.resolve(assetName, device.currentPlaylistId);
+      const playbackContext = contextIndex.resolve(assetName, playbackPlaylistId);
       const enriched = enrichPopLogFields(
         {
           assetName,
@@ -1571,6 +1584,11 @@ export class PlayerService {
     const invalid = batchSize - rows.length;
     const duplicates = rows.length - stored;
 
+    this.logger.log(
+      `[POP] deviceId=${device.id} playlistId=${playbackPlaylistId ?? 'none'} ` +
+        `eventCreated=${stored} skipped=${batchSize - stored} duplicates=${duplicates} ` +
+        `serverResponse=accepted`,
+    );
     this.logger.log(
       `Stored ${stored} PoP logs from deviceId=${device.id} (${device.name})` +
         (invalid ? ` (${invalid} invalid)` : '') +

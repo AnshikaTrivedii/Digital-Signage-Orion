@@ -132,9 +132,9 @@ export class ClientDataService {
       this.prisma.playlist.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.ticker.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 4 }),
       this.prisma.schedule.findMany({
-        where: { organizationId, endDateTime: { gt: new Date() } },
-        orderBy: { startDateTime: 'asc' },
-        take: 4,
+        where: { organizationId },
+        orderBy: { startDateTime: 'desc' },
+        take: 8,
       }),
       this.prisma.proofOfPlayLog.findMany({ where: { organizationId }, orderBy: { timestamp: 'desc' }, take: 8 }),
       this.prisma.layout.findMany({
@@ -186,8 +186,9 @@ export class ClientDataService {
         return {
           name: schedule.name,
           time: `${formatPreviewTime(schedule.startDateTime, scheduleTimezone)}-${formatPreviewTime(schedule.endDateTime, scheduleTimezone)}`,
-          color: status === 'active' ? '#4ade80' : status === 'disabled' ? '#94a3b8' : '#38bdf8',
+          color: status === 'active' ? '#4ade80' : status === 'completed' ? '#94a3b8' : status === 'disabled' ? '#94a3b8' : '#38bdf8',
           active: status === 'active',
+          status,
         };
       }),
       recentAssets: assets.map((asset) => ({

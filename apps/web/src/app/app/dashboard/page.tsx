@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 
 type DashboardData = {
@@ -34,7 +34,7 @@ type DashboardData = {
         totalAssets: number;
     };
     recentActivityLog: { id: string; action: string; time: string; type: string }[];
-    schedulePreview: { name: string; time: string; color: string; active: boolean }[];
+    schedulePreview: { name: string; time: string; color: string; active: boolean; status?: string }[];
 };
 
 type ActivityView = {
@@ -113,6 +113,7 @@ export default function ClientDashboardPage() {
     const router = useRouter();
     const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState<string | null>(null);
 
     useEffect(() => {
         if (!activeOrganizationId) return;
@@ -121,11 +122,22 @@ export default function ClientDashboardPage() {
         void (async () => {
             setIsLoading(true);
             try {
-                const response = await apiFetch<DashboardData>("/api/client-data/dashboard", {
+                const response = await apiRequest<DashboardData>("/api/client-data/dashboard", {
                     headers: { "x-organization-id": activeOrganizationId },
                     cache: "no-store",
                 });
-                if (!cancelled) setDashboardData(response);
+                if (!cancelled) {
+                    setDashboardData(response);
+                    setLoadError(null);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    const message =
+                        error instanceof ApiError
+                            ? `${error.status === 401 ? "Session expired. " : ""}${error.message}`
+                            : "Unable to load dashboard";
+                    setLoadError(message);
+                }
             } finally {
                 if (!cancelled) setIsLoading(false);
             }
@@ -191,6 +203,13 @@ export default function ClientDashboardPage() {
                     <span className="dash-eyebrow">Overview</span>
                     <h1>Welcome back</h1>
                     <p>Manage your screens and content from one simple workspace.</p>
+                    {loadError && (
+                        <p role="alert" style={{ color: "hsl(var(--status-danger))", marginTop: 8 }}>
+                            {loadError} {loadError.toLowerCase().includes("token") || loadError.toLowerCase().includes("expired")
+                                ? "This is a CMS login session, not the Android device token. Scheduling did not invalidate it."
+                                : null}
+                        </p>
+                    )}
                 </div>
                 <button className="dash-cta" onClick={() => router.push("/app/playlists")}>
                     <Plus size={17} />
@@ -322,8 +341,8 @@ export default function ClientDashboardPage() {
                 <section className="dash-panel">
                     <div className="dash-panel__head">
                         <div>
-                            <h2>Today&apos;s schedule</h2>
-                            <p>What is planned to play today.</p>
+                            <h2>Schedule</h2>
+                            <p>Upcoming, live, and recently completed windows.</p>
                         </div>
                         <button
                             className="dash-icon-btn"
@@ -356,7 +375,13 @@ export default function ClientDashboardPage() {
                                         </small>
                                     </span>
                                     <span className={`dash-tag${event.active ? " dash-tag--live" : ""}`}>
-                                        {event.active ? "Live" : "Upcoming"}
+                                        {event.status === "completed"
+                                            ? "Completed"
+                                            : event.status === "disabled"
+                                                ? "Disabled"
+                                                : event.active
+                                                    ? "Live"
+                                                    : "Upcoming"}
                                     </span>
                                 </li>
                             ))}

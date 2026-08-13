@@ -31,6 +31,18 @@ function getStoredAuthHeaders(existingHeaders?: HeadersInit) {
     return headers;
 }
 
+export type AuthErrorDetail = {
+    path: string;
+    status: number;
+    message: string;
+    endpoint: string;
+};
+
+function emitAuthError(detail: AuthErrorDetail) {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent<AuthErrorDetail>("orion:auth-error", { detail }));
+}
+
 export async function apiRequest<T>(path: string, options?: RequestInit): Promise<T> {
     const headers = new Headers(getStoredAuthHeaders(options?.headers));
     if (!headers.has("Content-Type") && options?.body) {
@@ -52,6 +64,14 @@ export async function apiRequest<T>(path: string, options?: RequestInit): Promis
             typeof payload === "object" && payload && "message" in payload
                 ? String((payload as { message?: string | string[] }).message)
                 : `API ${res.status}`;
+        if (res.status === 401) {
+            emitAuthError({
+                path,
+                status: 401,
+                message,
+                endpoint: `${options?.method ?? "GET"} ${path}`,
+            });
+        }
         throw new ApiError(message, res.status, payload);
     }
 

@@ -125,7 +125,13 @@ type EditorState = {
     enabled: boolean;
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+};
 
 const DEFAULT_EDITOR = (): EditorState => ({
     name: "",
@@ -173,7 +179,12 @@ export default function SchedulingPage() {
                 });
                 setSchedules(response);
             } catch (error) {
-                setLoadError(describeError(error));
+                const isAuth = error instanceof ApiError && error.status === 401;
+                setLoadError(
+                    isAuth
+                        ? `${describeError(error)} — schedules were not deleted. Sign in again to reload history.`
+                        : describeError(error),
+                );
             } finally {
                 if (!options.silent) setIsLoading(false);
             }

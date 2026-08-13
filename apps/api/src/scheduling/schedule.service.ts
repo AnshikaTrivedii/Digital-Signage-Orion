@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import type { Schedule } from '@prisma/client';
@@ -43,6 +44,8 @@ export type ActiveScheduleSnapshot = {
 
 @Injectable()
 export class ScheduleService {
+  private readonly logger = new Logger(ScheduleService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   // ---------------------------------------------------------------- CRUD
@@ -71,6 +74,18 @@ export class ScheduleService {
 
     const serialized = schedules.map((schedule) =>
       this.serialize(schedule, timezone, now),
+    );
+
+    const counts = serialized.reduce(
+      (acc, schedule) => {
+        acc[schedule.status] += 1;
+        return acc;
+      },
+      { scheduled: 0, active: 0, completed: 0, disabled: 0 },
+    );
+    this.logger.log(
+      `[SCHEDULE] list org=${organizationId} total=${serialized.length} ` +
+        `scheduled=${counts.scheduled} active=${counts.active} completed=${counts.completed} disabled=${counts.disabled}`,
     );
 
     if (!filters.status || filters.status === 'all') return serialized;
@@ -117,6 +132,11 @@ export class ScheduleService {
       },
     });
 
+    this.logger.log(
+      `[SCHEDULE] created id=${created.id} name=${created.name} playlistId=${created.playlistId} ` +
+        `deviceId=${deviceId ?? 'all'} start=${startDateTime.toISOString()} end=${endDateTime.toISOString()} ` +
+        `enabled=${enabled}`,
+    );
     return this.serialize(created, timezone, new Date());
   }
 
@@ -237,6 +257,9 @@ export class ScheduleService {
     this.assertCanEdit(actor);
     const organizationId = this.getOrgId(actor);
     await this.findSchedule(organizationId, scheduleId);
+    this.logger.warn(
+      `[SCHEDULE] explicit user delete id=${scheduleId} org=${organizationId} — historical row removed`,
+    );
     await this.prisma.schedule.delete({ where: { id: scheduleId } });
     return { success: true };
   }
