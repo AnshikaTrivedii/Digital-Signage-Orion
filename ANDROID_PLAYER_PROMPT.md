@@ -265,7 +265,7 @@ Send device health telemetry. Call every ~60 seconds.
 }
 ```
 
-- `syncRequired`: `true` when the server has a newer playlist/layout version the device has not fully cached, or when ticker content changed since the last sync.
+- `syncRequired`: `true` when the server has a newer playlist/layout version the device has not fully cached, when ticker content changed since the last sync, **or when the last ticker was unassigned/deleted** (`tickers` will be `[]`). Compare the full `contentRevision` string (it includes a `:tk…` suffix; `:tk0` means no active ticker).
 - `revisionPollIntervalSeconds`: how often to poll `GET /api/player/sync-revision` (default **5s**).
 - `syncIntervalSeconds`: fallback full manifest poll interval (default **120s**).
 - `initialSyncPending`: `true` for freshly paired devices that have not completed their first successful sync.
@@ -318,7 +318,7 @@ device would fight the server.
 | `nextContentChangeAt` | Next ISO instant when a schedule may start or end for this device (`null` if none). |
 | `scheduleValidUntil` | When a schedule is active, equals `activeSchedule.endDateTime`. |
 | `serverNow` | Server UTC clock at response time — diagnostics only. |
-| `syncRequired` | **Must** be honored. Becomes `true` when a schedule starts or ends, even if `playlistId` is unchanged. |
+| `syncRequired` | **Must** be honored. Becomes `true` when a schedule starts or ends, **and** when a ticker is assigned, edited, unassigned, or deleted — even if `playlistId` / `playlistVersion` is unchanged. |
 
 Server-side priority is **active schedule → manually assigned playlist/layout → nothing**.
 A schedule starting, ending, being edited, disabled or deleted all change `revision`
@@ -381,7 +381,7 @@ Fetch the active playlist assigned to this device. Supports **incremental sync**
 
 Pre-signed S3 download URLs are valid for **7 days** (long enough for offline download windows between syncs).
 
-> **Important:** The `assets[]` manifest is **always returned** when content is assigned, even when `unchanged: true`. Use `unchanged` as a hint that layout/playlist geometry and versions have not changed — not as a signal to skip reading `assets[]`. When local files are missing, send `recoverCache=true` or list IDs in `missingAssetIds` to receive fresh presigned URLs.
+> **Important:** The `assets[]` manifest **and** `tickers[]` are **always returned**, even when `unchanged: true`. Use `unchanged` as a hint that layout/playlist geometry and versions have not changed — not as a signal to skip reading `assets[]` or `tickers[]`. Ticker unassign/delete sets `unchanged: false` and `tickers: []` (field present, never omitted). When local files are missing, send `recoverCache=true` or list IDs in `missingAssetIds` to receive presigned URLs.
 
 **Response (No playlist assigned):**
 ```json
@@ -391,7 +391,8 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
   "playlist": null,
   "assets": [],
   "currentAssetIds": [],
-  "removedAssetIds": ["abc", "def"]
+  "removedAssetIds": ["abc", "def"],
+  "tickers": []
 }
 ```
 
@@ -423,7 +424,8 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
     }
   ],
   "currentAssetIds": ["abc", "def", "ghi"],
-  "removedAssetIds": []
+  "removedAssetIds": [],
+  "tickers": []
 }
 ```
 
@@ -526,7 +528,7 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 }
 ```
 
-> The `tickers` array is returned on **every** `/sync` response (including `unchanged: true`), so the player always has the current ticker state. If empty, render no ticker bar and let playlist content use the full screen.
+> The `tickers` array is returned on **every** `/sync` response (including `unchanged: true`), so the player always has the current ticker state. **Always replace local ticker state with this array.** If `[]`, immediately hide the ticker bar and let playlist content use the full screen — do not keep a previously cached ticker. Unassign and delete both produce `tickers: []` (not a missing field). In layout mode, `zone.ticker == null` must tear down that zone’s ticker the same way.
 
 **Ticker rendering (must match the CMS preview exactly):**
 1. Pick the **highest-`priority`** ticker (`URGENT` > `NORMAL` > `LOW`); the array is already sorted priority-desc.
@@ -592,13 +594,13 @@ Pre-signed S3 download URLs are valid for **7 days** (long enough for offline do
 1. If `layout != null`, use multi-zone mode. `playlist`/`playlistVersion` will be null.
 2. Render each zone as an absolutely-positioned view using percent → pixel conversion.
 3. Run independent content loops per `PLAYLIST` zone. Ticker zones scroll inside their bounds.
-4. When `layout` has ticker zones, `tickers[]` at root is empty — use zone-level `ticker` objects.
-5. When `layout` is null, use legacy full-screen playlist + optional global ticker overlay.
+4. When `layout` has ticker zones, `tickers[]` at root is empty — use zone-level `ticker` objects. If `ticker` is `null`, hide that zone’s ticker immediately.
+5. When `layout` is null, use legacy full-screen playlist + optional global ticker overlay. `tickers: []` means no overlay.
 
 **Offline sync flow:**
 1. Persist `playlistVersion` / `layoutVersion` and per-asset `assetVersion` + `contentHash` after a successful sync.
 2. On each sync poll, send `playlistVersion` or `layoutVersion`, `knownAssetIds`, and `assetVersions`.
-3. If `unchanged: true`, content geometry has not changed — still read `assets[]` to confirm local cache matches `requiresDownload: false` entries.
+3. If `unchanged: true`, playlist/layout geometry has not changed — still read `assets[]` **and `tickers[]`**. Empty `tickers` still means hide the bar. When a ticker is removed the server sets `unchanged: false` so this path is not required for removal, but stale-cache players must still honor `tickers: []` here.
 4. If local files are missing (fresh install, cleared cache, failed download), retry sync with `recoverCache=true` or `missingAssetIds=id1,id2` to receive presigned URLs even when versions match.
 5. If `removedAssetIds` is non-empty, delete those local files **only after** a successful sync response.
 6. Download only assets where `requiresDownload: true` and `available: true`.
@@ -1004,7 +1006,7 @@ data class SyncResponse(
     val layoutVersion: Int? = null,
     val layout: LayoutInfo? = null,
     val assets: List<AssetInfo>,
-    val tickers: List<TickerInfo> = emptyList(),
+    val tickers: List<TickerInfo> = emptyList(), // empty = hide ticker immediately; never keep previous
     val currentAssetIds: List<String>,
     val removedAssetIds: List<String>,
     val syncRequired: Boolean = false,

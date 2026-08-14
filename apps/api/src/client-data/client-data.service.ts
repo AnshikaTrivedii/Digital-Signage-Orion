@@ -187,6 +187,7 @@ export class ClientDataService {
       schedulePreview: schedules.map((schedule) => {
         const status = deriveScheduleStatus(schedule, new Date());
         return {
+          id: schedule.id,
           name: schedule.name,
           time: `${formatPreviewTime(schedule.startDateTime, scheduleTimezone)}-${formatPreviewTime(schedule.endDateTime, scheduleTimezone)}`,
           color: status === 'active' ? '#4ade80' : status === 'completed' ? '#94a3b8' : status === 'disabled' ? '#94a3b8' : '#38bdf8',
@@ -723,6 +724,7 @@ export class ClientDataService {
           currentLayoutId: null,
           lastAckedPlaylistVersion: null,
           lastAckedLayoutVersion: null,
+          lastAckedTickerRevision: null,
           pendingInitialSync: false,
           initialSyncRequestedAt: null,
           status: DeviceStatus.OFFLINE,
@@ -1083,18 +1085,51 @@ export class ClientDataService {
     selectedDeviceIds: string[],
     requestedById?: string,
   ) {
-    let deviceIds: string[];
+    const deviceIds = await this.resolveTickerNotifyDeviceIds(
+      organizationId,
+      broadcastScope,
+      selectedDeviceIds,
+    );
+    await this.notifyDevicesSyncRequired(organizationId, deviceIds, requestedById);
+  }
+
+  /**
+   * FORCE_SYNC both the previous and next ticker audience so a device that
+   * just lost the ticker (unassign, ALL_DEVICES → SELECTED, pause) is poked
+   * the same way a newly assigned device is.
+   */
+  private async notifyTickerAudienceChanged(
+    organizationId: string,
+    previousScope: TickerBroadcastScope,
+    previousDeviceIds: string[],
+    nextScope: TickerBroadcastScope,
+    nextDeviceIds: string[],
+    requestedById?: string,
+  ) {
+    const [previous, next] = await Promise.all([
+      this.resolveTickerNotifyDeviceIds(organizationId, previousScope, previousDeviceIds),
+      this.resolveTickerNotifyDeviceIds(organizationId, nextScope, nextDeviceIds),
+    ]);
+    await this.notifyDevicesSyncRequired(
+      organizationId,
+      [...new Set([...previous, ...next])],
+      requestedById,
+    );
+  }
+
+  private async resolveTickerNotifyDeviceIds(
+    organizationId: string,
+    broadcastScope: TickerBroadcastScope,
+    selectedDeviceIds: string[],
+  ) {
     if (broadcastScope === TickerBroadcastScope.ALL_DEVICES) {
       const devices = await this.prisma.device.findMany({
         where: { organizationId, isPaired: true },
         select: { id: true },
       });
-      deviceIds = devices.map((device) => device.id);
-    } else {
-      deviceIds = selectedDeviceIds;
+      return devices.map((device) => device.id);
     }
-
-    await this.notifyDevicesSyncRequired(organizationId, deviceIds, requestedById);
+    return selectedDeviceIds;
   }
 
   /** @deprecated Use notifyDevicesSyncRequired */
@@ -1517,14 +1552,14 @@ export class ClientDataService {
       });
     });
 
-    if (updated.status === TickerStatus.ACTIVE) {
-      await this.notifyTickerDevicesSyncRequired(
-        organizationId,
-        updated.broadcastScope,
-        updated.deviceTargets.map((target) => target.deviceId),
-        actor.userId,
-      );
-    }
+    await this.notifyTickerAudienceChanged(
+      organizationId,
+      existing.broadcastScope,
+      existing.deviceTargets.map((target) => target.deviceId),
+      updated.broadcastScope,
+      updated.deviceTargets.map((target) => target.deviceId),
+      actor.userId,
+    );
 
     return this.serializeTicker(updated);
   }

@@ -34,7 +34,7 @@ type DashboardData = {
         totalAssets: number;
     };
     recentActivityLog: { id: string; action: string; time: string; type: string }[];
-    schedulePreview: { name: string; time: string; color: string; active: boolean; status?: string }[];
+    schedulePreview: { id?: string; name: string; time: string; color: string; active: boolean; status?: string }[];
 };
 
 type ActivityView = {
@@ -372,8 +372,8 @@ export default function ClientDashboardPage() {
                         </div>
                     ) : (
                         <ul className="dash-schedule">
-                            {schedulePreview.map((event) => (
-                                <li className="dash-slot" key={`${event.name}-${event.time}`}>
+                            {schedulePreview.map((event, index) => (
+                                <li className="dash-slot" key={event.id ?? `${event.name}-${event.time}-${index}`}>
                                     <span className="dash-slot__bar" style={{ background: event.color }} />
                                     <span className="dash-slot__body">
                                         <strong>{event.name}</strong>

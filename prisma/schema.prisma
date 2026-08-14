@@ -393,6 +393,9 @@ model Device {
   /// Schedule id last applied by the device (null = no active schedule).
   /// Required so schedule start/end forces syncRequired even when playlistId is unchanged.
   lastAckedScheduleId      String?
+  /// Ticker revision suffix last applied by the device (`:tk0` = no active ticker).
+  /// Required so ticker unassign/delete forces syncRequired even when playlist version is unchanged.
+  lastAckedTickerRevision  String?
 
   // Initial onboarding sync (first playlist download after pairing)
   pendingInitialSync     Boolean   @default(false)

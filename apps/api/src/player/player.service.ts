@@ -87,11 +87,15 @@ type ManifestEntry = {
   fileSize: number;
 };
 
+/** Suffix when the device has no active ticker. Must stay in the revision string. */
+const EMPTY_TICKER_REVISION = ':tk0';
+
 type ContentRevisionState = {
   revision: string;
   updatedAt: string | null;
   playlistVersion: number | null;
   layoutVersion: number | null;
+  tickerRevision: string;
 };
 
 /**
@@ -803,7 +807,10 @@ export class PlayerService {
     effectivePlaylistId: string | null = device.currentPlaylistId,
     appliedScheduleId: string | null = null,
   ) {
-    const tickers = await this.fetchActiveTickers(device.organizationId, device.id);
+    const [tickers, tickerRevision] = await Promise.all([
+      this.fetchActiveTickers(device.organizationId, device.id),
+      this.getTickerRevisionSuffix(device.organizationId, device.id),
+    ]);
 
     if ((device.lastAckedScheduleId ?? null) !== appliedScheduleId) {
       this.logger.log(
@@ -824,6 +831,7 @@ export class PlayerService {
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
           lastAckedScheduleId: appliedScheduleId,
+          lastAckedTickerRevision: tickerRevision,
         },
       });
       return {
@@ -856,6 +864,7 @@ export class PlayerService {
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
           lastAckedScheduleId: appliedScheduleId,
+          lastAckedTickerRevision: tickerRevision,
         },
       });
       return {
@@ -887,7 +896,7 @@ export class PlayerService {
       clientReportedVersion !== undefined && clientReportedVersion === playlist.syncVersion;
     const clientMissingAssets = currentAssetIds.some((id) => !syncContext.knownAssetIds.includes(id));
     const clientHasPendingDownloads = manifest.some((entry) => entry.requiresDownload);
-    const contentUnchanged =
+    const playlistContentUnchanged =
       playlistVersionMatches &&
       manifestComplete &&
       (orderedAssets.length === 0 || syncContext.knownAssetIds.length > 0) &&
@@ -895,8 +904,10 @@ export class PlayerService {
       !clientHasPendingDownloads &&
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
+    const tickerUnchanged = (device.lastAckedTickerRevision ?? null) === tickerRevision;
+    const contentUnchanged = playlistContentUnchanged && tickerUnchanged;
 
-    const shouldAckPlaylistVersion = contentUnchanged;
+    const shouldAckPlaylistVersion = playlistContentUnchanged;
 
     const assignedDeviceCount = await this.prisma.device.count({
       where: { currentPlaylistId: playlist.id },
@@ -910,6 +921,7 @@ export class PlayerService {
         `previousVersion=${clientReportedVersion ?? 'none'} newVersion=${playlist.syncVersion} ` +
         `updatedAt=${playlist.updatedAt.toISOString()} ` +
         `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged} ` +
+        `tickerRevision=${tickerRevision} tickerUnchanged=${tickerUnchanged} ` +
         `manifestComplete=${manifestComplete} ` +
         `returnedOrder=${formatPlaylistOrderLog(manifest)}`,
     );
@@ -921,6 +933,7 @@ export class PlayerService {
         // Always acknowledge the schedule state the device was told to apply.
         // Playlist version ack still waits until the manifest is fully cached.
         lastAckedScheduleId: appliedScheduleId,
+        lastAckedTickerRevision: tickerRevision,
         ...(shouldAckPlaylistVersion
           ? {
               lastAckedPlaylistVersion: playlist.syncVersion,
@@ -955,7 +968,10 @@ export class PlayerService {
     appliedScheduleId: string | null = null,
   ) {
     const { knownAssetIds } = syncContext;
-    const activeTickers = await this.fetchActiveTickers(device.organizationId, device.id);
+    const [activeTickers, tickerRevision] = await Promise.all([
+      this.fetchActiveTickers(device.organizationId, device.id),
+      this.getTickerRevisionSuffix(device.organizationId, device.id),
+    ]);
     const primaryTicker = activeTickers[0] ?? null;
 
     const layout = await this.prisma.layout.findUnique({
@@ -985,6 +1001,7 @@ export class PlayerService {
           lastSync: new Date().toISOString(),
           lastAckedLayoutVersion: null,
           lastAckedScheduleId: appliedScheduleId,
+          lastAckedTickerRevision: tickerRevision,
         },
       });
       return {
@@ -996,7 +1013,7 @@ export class PlayerService {
         assets: [],
         currentAssetIds: [],
         removedAssetIds: knownAssetIds,
-        tickers: [],
+        tickers: activeTickers,
       };
     }
 
@@ -1095,15 +1112,17 @@ export class PlayerService {
       clientReportedLayoutVersion !== undefined && clientReportedLayoutVersion === layout.syncVersion;
     const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
     const clientHasPendingDownloads = aggregatedAssets.some((entry) => entry.requiresDownload);
-    const contentUnchanged =
+    const layoutContentUnchanged =
       layoutVersionMatches &&
       knownAssetIds.length > 0 &&
       !clientMissingAssets &&
       !clientHasPendingDownloads &&
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
+    const tickerUnchanged = (device.lastAckedTickerRevision ?? null) === tickerRevision;
+    const contentUnchanged = layoutContentUnchanged && tickerUnchanged;
 
-    const shouldAckLayoutVersion = contentUnchanged;
+    const shouldAckLayoutVersion = layoutContentUnchanged;
 
     const assignedDeviceCount = await this.prisma.device.count({
       where: { currentLayoutId: layout.id },
@@ -1113,7 +1132,8 @@ export class PlayerService {
       `Layout sync layoutId=${layout.id} deviceId=${device.id} ` +
         `previousVersion=${clientReportedLayoutVersion ?? 'none'} newVersion=${layout.syncVersion} ` +
         `updatedAt=${layout.updatedAt.toISOString()} assetsReturned=${aggregatedAssets.length} ` +
-        `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged}`,
+        `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged} ` +
+        `tickerRevision=${tickerRevision} tickerUnchanged=${tickerUnchanged}`,
     );
 
     await this.prisma.device.update({
@@ -1121,6 +1141,7 @@ export class PlayerService {
       data: {
         lastSync: new Date().toISOString(),
         lastAckedScheduleId: appliedScheduleId,
+        lastAckedTickerRevision: tickerRevision,
         ...(shouldAckLayoutVersion ? { lastAckedLayoutVersion: layout.syncVersion } : {}),
         ...(shouldAckLayoutVersion ? { lastAckedPlaylistVersion: null, lastAckedPlaylistId: null } : {}),
         ...(shouldAckLayoutVersion && device.pendingInitialSync
@@ -1167,8 +1188,22 @@ export class PlayerService {
       _count: { _all: true },
     });
 
-    if (!aggregate._count._all) return ':tk0';
+    if (!aggregate._count._all) return EMPTY_TICKER_REVISION;
     return `:tk${aggregate._max.updatedAt?.getTime() ?? 0}c${aggregate._count._all}`;
+  }
+
+  private noneContentRevision(tickerRevision: string): ContentRevisionState {
+    return {
+      revision: 'none',
+      updatedAt: null,
+      playlistVersion: null,
+      layoutVersion: null,
+      tickerRevision,
+    };
+  }
+
+  private hasUnackedTickerRevision(device: PairedDevice, content: ContentRevisionState): boolean {
+    return (device.lastAckedTickerRevision ?? null) !== content.tickerRevision;
   }
 
   private async getDeviceContentRevision(
@@ -1189,12 +1224,7 @@ export class PlayerService {
         select: { id: true, syncVersion: true, updatedAt: true },
       });
       if (!layout) {
-        return {
-          revision: 'none',
-          updatedAt: null,
-          playlistVersion: null,
-          layoutVersion: null,
-        };
+        return this.noneContentRevision(tickerSuffix);
       }
 
       return {
@@ -1202,6 +1232,7 @@ export class PlayerService {
         updatedAt: layout.updatedAt.toISOString(),
         playlistVersion: null,
         layoutVersion: layout.syncVersion,
+        tickerRevision: tickerSuffix,
       };
     }
 
@@ -1211,12 +1242,7 @@ export class PlayerService {
         select: { id: true, syncVersion: true, updatedAt: true },
       });
       if (!playlist) {
-        return {
-          revision: 'none',
-          updatedAt: null,
-          playlistVersion: null,
-          layoutVersion: null,
-        };
+        return this.noneContentRevision(tickerSuffix);
       }
 
       return {
@@ -1224,15 +1250,11 @@ export class PlayerService {
         updatedAt: playlist.updatedAt.toISOString(),
         playlistVersion: playlist.syncVersion,
         layoutVersion: null,
+        tickerRevision: tickerSuffix,
       };
     }
 
-    return {
-      revision: 'none',
-      updatedAt: null,
-      playlistVersion: null,
-      layoutVersion: null,
-    };
+    return this.noneContentRevision(tickerSuffix);
   }
 
   private async computeSyncRequired(
@@ -1250,11 +1272,12 @@ export class PlayerService {
     }
 
     if (content.revision === 'none') {
-      // Clear leftover playlist/layout state after schedule expiry with no fallback.
+      // Clear leftover playlist/layout/ticker state after schedule expiry with no fallback.
       return (
         device.lastAckedPlaylistId != null ||
         device.lastAckedLayoutVersion != null ||
-        device.lastAckedScheduleId != null
+        device.lastAckedScheduleId != null ||
+        this.hasUnackedTickerRevision(device, content)
       );
     }
 
@@ -1279,30 +1302,9 @@ export class PlayerService {
       return true;
     }
 
-    const tickerAggregate = await this.prisma.ticker.aggregate({
-      where: {
-        organizationId: device.organizationId,
-        status: TickerStatus.ACTIVE,
-        OR: [
-          { broadcastScope: TickerBroadcastScope.ALL_DEVICES },
-          {
-            broadcastScope: TickerBroadcastScope.SELECTED_DEVICES,
-            deviceTargets: { some: { deviceId: device.id } },
-          },
-        ],
-      },
-      _max: { updatedAt: true },
-      _count: { _all: true },
-    });
-
-    if (!tickerAggregate._count._all) return false;
-
-    const lastSyncAt = device.lastSync ? new Date(device.lastSync) : null;
-    const tickerUpdatedAt = tickerAggregate._max.updatedAt;
-    if (!tickerUpdatedAt) return false;
-    if (!lastSyncAt || tickerUpdatedAt > lastSyncAt) return true;
-
-    return false;
+    // Ticker unassign/delete must force a re-sync even when playlist/layout
+    // versions are unchanged. Do not use Device.lastSync — heartbeat overwrites it.
+    return this.hasUnackedTickerRevision(device, content);
   }
 
   private async fetchActiveTickers(organizationId: string, deviceId: string) {
