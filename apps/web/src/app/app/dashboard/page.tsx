@@ -119,8 +119,8 @@ export default function ClientDashboardPage() {
         if (!activeOrganizationId) return;
 
         let cancelled = false;
-        void (async () => {
-            setIsLoading(true);
+        const load = async (silent: boolean) => {
+            if (!silent) setIsLoading(true);
             try {
                 const response = await apiRequest<DashboardData>("/api/client-data/dashboard", {
                     headers: { "x-organization-id": activeOrganizationId },
@@ -139,12 +139,19 @@ export default function ClientDashboardPage() {
                     setLoadError(message);
                 }
             } finally {
-                if (!cancelled) setIsLoading(false);
+                if (!cancelled && !silent) setIsLoading(false);
             }
-        })();
+        };
+
+        void load(false);
+        const interval = window.setInterval(() => {
+            if (document.visibilityState !== "visible") return;
+            void load(true);
+        }, 10_000);
 
         return () => {
             cancelled = true;
+            window.clearInterval(interval);
         };
     }, [activeOrganizationId]);
 

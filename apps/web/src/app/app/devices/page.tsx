@@ -220,7 +220,7 @@ export default function DevicesPage() {
     }, [loadDevices]);
 
     useEffect(() => {
-        const intervalMs = selectedDevice ? 5000 : 30000;
+        const intervalMs = selectedDevice ? 5000 : 10000;
         const interval = setInterval(() => {
             if (activeOrganizationId) void loadDevices();
         }, intervalMs);

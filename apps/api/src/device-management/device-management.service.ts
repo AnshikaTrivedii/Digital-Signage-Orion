@@ -14,7 +14,13 @@ import {
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-const OFFLINE_THRESHOLD_MS = 5 * 60 * 1000;
+/** Presence lease. Player writes lastSeenAt about every 30s (heartbeat or revision poll). */
+const OFFLINE_THRESHOLD_MS = 90 * 1000;
+
+type DevicePresence = {
+  lastSeenAt?: Date | null;
+  status: DeviceStatus;
+};
 
 /** Window a freshly onboarded device has to complete its first playlist download. */
 export const INITIAL_SYNC_TIMEOUT_SECONDS = 120;
@@ -59,7 +65,7 @@ export class DeviceManagementService {
     return device;
   }
 
-  resolveEffectiveStatus(device: Device): DeviceStatus {
+  resolveEffectiveStatus(device: DevicePresence): DeviceStatus {
     if (device.lastSeenAt) {
       const stale = Date.now() - device.lastSeenAt.getTime() > OFFLINE_THRESHOLD_MS;
       if (stale) return DeviceStatus.OFFLINE;
@@ -475,7 +481,7 @@ export class DeviceManagementService {
 
   /**
    * Mark a device as recently seen from any authenticated player API call.
-   * Online/offline in the CMS is derived from `lastSeenAt` (5-minute threshold).
+   * Online/offline in the CMS is derived from `lastSeenAt` (90-second threshold).
    * Sync and revision polls must refresh presence — content can keep playing from
    * cache even when heartbeats are missing, which previously showed Offline.
    */

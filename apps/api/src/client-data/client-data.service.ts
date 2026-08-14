@@ -148,9 +148,12 @@ export class ClientDataService {
     ]);
     const scheduleTimezone = organization?.timezone || 'Asia/Kolkata';
 
-    const onlineDevices = devices.filter((device) => device.status === DeviceStatus.ONLINE).length;
-    const warningDevices = devices.filter((device) => device.status === DeviceStatus.WARNING).length;
-    const offlineDevices = devices.filter((device) => device.status === DeviceStatus.OFFLINE).length;
+    const effectiveStatuses = devices.map((device) =>
+      this.deviceManagement.resolveEffectiveStatus(device),
+    );
+    const onlineDevices = effectiveStatuses.filter((status) => status === DeviceStatus.ONLINE).length;
+    const warningDevices = effectiveStatuses.filter((status) => status === DeviceStatus.WARNING).length;
+    const offlineDevices = effectiveStatuses.filter((status) => status === DeviceStatus.OFFLINE).length;
 
     const layoutReadiness = layouts.map((layout) => ({
       layout,
@@ -179,7 +182,7 @@ export class ClientDataService {
         name: device.name,
         location: device.location,
         uptime: device.uptime,
-        status: this.toLowerStatus(device.status),
+        status: this.toLowerStatus(this.deviceManagement.resolveEffectiveStatus(device)),
       })),
       schedulePreview: schedules.map((schedule) => {
         const status = deriveScheduleStatus(schedule, new Date());
@@ -491,7 +494,7 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const devices = await this.prisma.device.findMany({
       where: { organizationId, isPaired: true },
-      select: { id: true, name: true, location: true, status: true, currentPlaylistId: true },
+      select: { id: true, name: true, location: true, status: true, lastSeenAt: true, currentPlaylistId: true },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -500,7 +503,7 @@ export class ClientDataService {
         id: device.id,
         name: device.name,
         location: device.location,
-        status: this.toLowerStatus(device.status),
+        status: this.toLowerStatus(this.deviceManagement.resolveEffectiveStatus(device)),
         currentPlaylistId: device.currentPlaylistId,
       })),
     };
@@ -1251,7 +1254,7 @@ export class ClientDataService {
     const effectiveStatus = this.deviceManagement.resolveEffectiveStatus({
       lastSeenAt: device.lastSeenAt ?? null,
       status: device.status,
-    } as import('@prisma/client').Device);
+    });
     const initialSyncState = resolveInitialSyncState({
       pendingInitialSync: device.pendingInitialSync,
       initialSyncRequestedAt: device.initialSyncRequestedAt ?? null,
@@ -1739,7 +1742,7 @@ export class ClientDataService {
           id: matched?.id ?? null,
           name: log.device,
           location: matched?.location ?? 'Unknown',
-          status: matched?.status ?? null,
+          status: matched ? this.deviceManagement.resolveEffectiveStatus(matched) : null,
           impressions: 0,
           verified: 0,
           lastPlay: null as Date | null,
@@ -1877,7 +1880,9 @@ export class ClientDataService {
         avgEngagement,
         playbackFidelity:
           Math.round((verifiedCount / Math.max(totalLogs, 1)) * 10000) / 100,
-        activeNodes: devices.filter((device) => device.status === DeviceStatus.ONLINE).length,
+        activeNodes: devices.filter(
+          (device) => this.deviceManagement.resolveEffectiveStatus(device) === DeviceStatus.ONLINE,
+        ).length,
         totalNodes: devices.length,
         verifiedCount,
         failedCount,
@@ -2791,7 +2796,7 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const devices = await this.prisma.device.findMany({
       where: { organizationId, isPaired: true },
-      select: { id: true, name: true, location: true, status: true, currentLayoutId: true },
+      select: { id: true, name: true, location: true, status: true, lastSeenAt: true, currentLayoutId: true },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -2800,7 +2805,7 @@ export class ClientDataService {
         id: device.id,
         name: device.name,
         location: device.location,
-        status: this.toLowerStatus(device.status),
+        status: this.toLowerStatus(this.deviceManagement.resolveEffectiveStatus(device)),
         currentLayoutId: device.currentLayoutId,
       })),
     };
