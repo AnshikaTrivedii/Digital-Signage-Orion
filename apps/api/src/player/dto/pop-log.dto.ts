@@ -48,6 +48,18 @@ class PopLogEntry {
   @IsString()
   assetId?: string;
 
+  /**
+   * Legacy players may still send these. Ignored — device identity comes from the
+   * Bearer token only. Accepted so the batch is not rejected.
+   */
+  @IsOptional()
+  @IsString()
+  deviceId?: string;
+
+  @IsOptional()
+  @IsString()
+  deviceName?: string;
+
   @IsOptional()
   @IsString()
   campaignName?: string;

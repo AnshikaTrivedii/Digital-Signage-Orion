@@ -62,4 +62,15 @@ export class ReportsQueryDto {
   @IsOptional()
   @IsString()
   timezone?: string;
+
+  /**
+   * Viewer's calendar "today" as `YYYY-MM-DD` in `timezone`.
+   * Anchors today/yesterday/7d/15d so a skewed API server clock cannot hide
+   * the current local day's playback.
+   */
+  @IsOptional()
+  @Matches(REPORT_DATE_PATTERN, {
+    message: 'viewerDate must be YYYY-MM-DD or an ISO datetime',
+  })
+  viewerDate?: string;
 }

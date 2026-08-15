@@ -21,11 +21,14 @@ async function bootstrap() {
   });
 
   app.setGlobalPrefix('api');
+  // whitelist strips unknown fields; do not forbidNonWhitelisted globally —
+  // player clients (older APKs, PoP batches) send optional/telemetry fields and
+  // route-level pipes already opt into lenient validation.
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       transform: true,
-      forbidNonWhitelisted: true,
+      forbidNonWhitelisted: false,
     }),
   );
 

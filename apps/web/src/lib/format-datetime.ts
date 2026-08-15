@@ -10,6 +10,33 @@ export function getUserTimeZone(): string {
     return Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
+/** Calendar `YYYY-MM-DD` for an instant in the viewer's timezone (defaults to now). */
+export function getUserCalendarDate(
+    timeZone = getUserTimeZone(),
+    instant: Date = new Date(),
+): string {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(instant);
+    const pick = (type: Intl.DateTimeFormatPartTypes) =>
+        parts.find((part) => part.type === type)?.value ?? "";
+    return `${pick("year")}-${pick("month")}-${pick("day")}`;
+}
+
+/** Add whole calendar days to a `YYYY-MM-DD` string (UTC date arithmetic). */
+export function shiftCalendarDate(ymd: string, days: number): string {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd.trim());
+    if (!match) return ymd;
+    const utc = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days));
+    const y = utc.getUTCFullYear();
+    const m = String(utc.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(utc.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+}
+
 export type FormatReportDateTimeOptions = {
     timeZone?: string;
     empty?: string;

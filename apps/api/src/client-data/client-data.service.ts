@@ -1625,6 +1625,7 @@ export class ClientDataService {
       page?: number;
       limit?: number;
       timezone?: string;
+      viewerDate?: string;
     } = {},
   ) {
     const organizationId = this.getOrgId(actor);
@@ -1878,6 +1879,7 @@ export class ClientDataService {
       startDate: query.startDate,
       endDate: query.endDate,
       timezone: query.timezone,
+      viewerDate: query.viewerDate,
     });
     const reportingDevices = await this.prisma.proofOfPlayLog.groupBy({
       by: ['device', 'deviceId'],
@@ -1958,6 +1960,7 @@ export class ClientDataService {
       search?: string;
       status?: 'all' | 'verified' | 'failed';
       timezone?: string;
+      viewerDate?: string;
     } = {},
   ) {
     const organizationId = this.getOrgId(actor);
@@ -2065,6 +2068,7 @@ export class ClientDataService {
       search?: string;
       status?: 'all' | 'verified' | 'failed';
       timezone?: string;
+      viewerDate?: string;
     },
   ) {
     const { rangeStart, rangeEnd } = this.resolveReportDateRange(
@@ -2072,6 +2076,7 @@ export class ClientDataService {
       query.startDate,
       query.endDate,
       query.timezone,
+      query.viewerDate,
     );
     const andClauses: Prisma.ProofOfPlayLogWhereInput[] = [{ organizationId }];
 
@@ -2212,17 +2217,21 @@ export class ClientDataService {
   /**
    * Resolve inclusive playback window bounds in UTC from calendar days in `timezone`.
    * Filtering uses ProofOfPlayLog.startTime (playback start).
+   * `viewerDate` (optional YYYY-MM-DD) anchors relative ranges to the analyst's
+   * calendar day so a skewed API host clock cannot hide "today".
    */
   private resolveReportDateRange(
     range: string,
     startDate?: string,
     endDate?: string,
     timezone?: string,
+    viewerDate?: string,
   ) {
     const timeZone = timezone?.trim() || 'UTC';
     const normalized = (range ?? 'today').toLowerCase();
     const now = new Date();
-    const today = getZonedCalendarDate(now, timeZone);
+    const today =
+      parseCalendarDateInput(viewerDate ?? '') ?? getZonedCalendarDate(now, timeZone);
 
     if (normalized === 'custom') {
       if (!startDate?.trim() || !endDate?.trim()) {

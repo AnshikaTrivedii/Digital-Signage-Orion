@@ -6,6 +6,7 @@ import {
   DeviceCacheLocalStatus,
   DeviceStatus,
   DeviceSyncReportStatus,
+  type Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CacheReportDto } from '../player/dto/cache-report.dto';
@@ -22,6 +23,8 @@ export class DeviceCacheService {
 
     const syncStatus = this.parseSyncStatus(report.syncStatus);
     const now = new Date();
+    // Playlist slots can list the same asset twice — cache is per file, not per slot.
+    const assets = this.dedupeCacheAssets(report.assets ?? []);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.device.update({
@@ -34,8 +37,8 @@ export class DeviceCacheService {
           cacheTotalBytes: report.cacheTotalBytes ?? 0,
           cacheUsedBytes: report.cacheUsedBytes ?? 0,
           cacheStorageTotalBytes: report.storageTotalBytes ?? 0,
-          cachedAssetCount: report.cachedAssetCount ?? report.assets?.length ?? 0,
-          expectedAssetCount: report.expectedAssetCount ?? report.assets?.length ?? 0,
+          cachedAssetCount: report.cachedAssetCount ?? assets.length,
+          expectedAssetCount: report.expectedAssetCount ?? assets.length,
           pendingDownloadCount: report.pendingDownloadCount ?? 0,
           cacheLastReportedAt: now,
           lastSeenAt: now,
@@ -55,17 +58,21 @@ export class DeviceCacheService {
         },
       });
 
-      await tx.deviceCachedAsset.deleteMany({ where: { deviceId } });
+      const reportedAssetIds = assets.map((asset) => asset.assetId);
+      await tx.deviceCachedAsset.deleteMany({
+        where: {
+          deviceId,
+          ...(reportedAssetIds.length ? { assetId: { notIn: reportedAssetIds } } : {}),
+        },
+      });
 
-      if (report.assets?.length) {
-        const maxDownloadedAt = report.assets
+      if (assets.length) {
+        const maxDownloadedAt = assets
           .map((a) => (a.downloadedAt ? new Date(a.downloadedAt).getTime() : 0))
           .reduce((max, t) => Math.max(max, t), 0);
 
-        await tx.deviceCachedAsset.createMany({
-          data: report.assets.map((asset) => ({
-            deviceId,
-            assetId: asset.assetId,
+        for (const asset of assets) {
+          const row = {
             assetName: asset.assetName,
             assetType: asset.assetType,
             mimeType: asset.mimeType ?? '',
@@ -77,8 +84,20 @@ export class DeviceCacheService {
             downloadStatus: this.parseDownloadStatus(asset.downloadStatus),
             localCacheStatus: this.parseLocalStatus(asset.localCacheStatus),
             downloadedAt: asset.downloadedAt ? new Date(asset.downloadedAt) : null,
-          })),
-        });
+          };
+
+          await tx.deviceCachedAsset.upsert({
+            where: {
+              deviceId_assetId: { deviceId, assetId: asset.assetId },
+            },
+            create: {
+              deviceId,
+              assetId: asset.assetId,
+              ...row,
+            },
+            update: row,
+          });
+        }
 
         if (maxDownloadedAt > 0) {
           await tx.device.update({
@@ -102,9 +121,88 @@ export class DeviceCacheService {
           },
         });
       }
+
+      // Successful inventory report that matches assigned content clears syncRequired.
+      await this.ackContentRevisionFromCacheReport(tx, device, report);
     });
 
     return { received: true };
+  }
+
+  /**
+   * Collapse duplicate assetIds (same file in multiple playlist slots) to one row.
+   * Later entries win so the newest download/local status is kept.
+   */
+  private dedupeCacheAssets(assets: CacheReportDto['assets']) {
+    const byId = new Map<string, (typeof assets)[number]>();
+    for (const asset of assets) {
+      if (!asset?.assetId) continue;
+      byId.set(asset.assetId, asset);
+    }
+    return [...byId.values()];
+  }
+
+  private async ackContentRevisionFromCacheReport(
+    tx: Prisma.TransactionClient,
+    device: {
+      id: string;
+      currentPlaylistId: string | null;
+      currentLayoutId: string | null;
+      pendingInitialSync: boolean;
+    },
+    report: CacheReportDto,
+  ) {
+    const pendingDownloads = report.pendingDownloadCount ?? 0;
+    if (pendingDownloads > 0) return;
+    if (report.syncStatus && this.parseSyncStatus(report.syncStatus) === DeviceSyncReportStatus.FAILED) {
+      return;
+    }
+
+    if (report.layoutVersion != null) {
+      const layoutId = report.currentLayoutId ?? device.currentLayoutId;
+      if (layoutId) {
+        const layout = await tx.layout.findFirst({
+          where: { id: layoutId },
+          select: { id: true, syncVersion: true },
+        });
+        if (layout && layout.syncVersion === report.layoutVersion) {
+          await tx.device.update({
+            where: { id: device.id },
+            data: {
+              lastAckedLayoutVersion: layout.syncVersion,
+              lastAckedPlaylistVersion: null,
+              lastAckedPlaylistId: null,
+              ...(device.pendingInitialSync
+                ? { pendingInitialSync: false, initialSyncRequestedAt: null }
+                : {}),
+            },
+          });
+          return;
+        }
+      }
+    }
+
+    if (report.playlistVersion == null) return;
+
+    const playlistId = report.currentPlaylistId ?? device.currentPlaylistId;
+    if (!playlistId) return;
+
+    const playlist = await tx.playlist.findFirst({
+      where: { id: playlistId },
+      select: { id: true, syncVersion: true },
+    });
+    if (!playlist || playlist.syncVersion !== report.playlistVersion) return;
+
+    await tx.device.update({
+      where: { id: device.id },
+      data: {
+        lastAckedPlaylistVersion: playlist.syncVersion,
+        lastAckedPlaylistId: playlist.id,
+        ...(device.pendingInitialSync
+          ? { pendingInitialSync: false, initialSyncRequestedAt: null }
+          : {}),
+      },
+    });
   }
 
   async deliverPendingCommand(deviceId: string) {

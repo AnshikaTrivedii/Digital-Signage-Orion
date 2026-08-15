@@ -46,6 +46,15 @@ export class DevicePermissionsDto {
   @IsOptional()
   @IsBoolean()
   kioskMode?: boolean;
+
+  /** Older APKs may report Android launcher / owner state. */
+  @IsOptional()
+  @IsBoolean()
+  defaultHome?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  deviceOwner?: boolean;
 }
 
 export class HeartbeatDto {
@@ -82,6 +91,27 @@ export class HeartbeatDto {
   @IsOptional()
   @IsString()
   playbackStatus?: string;
+
+  /**
+   * Older APKs nested playback telemetry under `playback` (server responses still
+   * use this key for config). Accept and strip — do not 400.
+   */
+  @IsOptional()
+  playback?: unknown;
+
+  @IsOptional()
+  @IsString()
+  popLastError?: string;
+
+  @IsOptional()
+  @IsString()
+  popLastGeneratedAt?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  popPendingCount?: number;
 
   /** Devices run 24/7 — must not use @IsInt() (rejects or truncates large values). */
   @IsOptional()

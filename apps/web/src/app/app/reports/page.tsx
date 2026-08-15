@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ApiError, API_BASE, apiRequest } from "@/lib/api";
-import { formatReportDateTime, getUserTimeZone } from "@/lib/format-datetime";
+import { formatReportDateTime, getUserCalendarDate, getUserTimeZone, shiftCalendarDate } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 import { ACTIVE_ORGANIZATION_STORAGE_KEY, AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
 
@@ -176,10 +176,13 @@ export default function ReportsPage() {
 
     const buildQuery = useCallback((pageNumber: number) => {
         const params = new URLSearchParams();
+        const timeZone = getUserTimeZone();
         params.set("range", dateRange);
         params.set("page", String(pageNumber));
         params.set("limit", "100");
-        params.set("timezone", getUserTimeZone());
+        params.set("timezone", timeZone);
+        // Anchor relative ranges to the browser's calendar day (not the API host clock).
+        params.set("viewerDate", getUserCalendarDate(timeZone));
         if (logSearch.trim()) params.set("search", logSearch.trim());
         if (statusFilter !== "all") params.set("status", statusFilter);
         // Always forward active filters so table and export stay identical.
@@ -507,14 +510,30 @@ export default function ReportsPage() {
                             {reportData?.rangeDiagnostics?.latestMatchingLogAt
                                 ? ` (newest: ${formatReportDateTime(reportData.rangeDiagnostics.latestMatchingLogAt)})`
                                 : ""}
-                            , usually because a device clock is ahead. Correct the device date/time so new playback
-                            is recorded under the right day.
+                            . This usually means the Android player clock is ahead of real time, or the
+                            selected range ends before those plays. Extend the range to see them, and
+                            set the device to automatic date &amp; time so new plays land on the correct day.
                         </p>
                     </div>
+                    <button
+                        className="btn-outline"
+                        onClick={() => {
+                            const tz = getUserTimeZone();
+                            const start = getUserCalendarDate(tz);
+                            const newest = reportData?.rangeDiagnostics?.latestMatchingLogAt
+                                ? getUserCalendarDate(tz, new Date(reportData.rangeDiagnostics.latestMatchingLogAt))
+                                : shiftCalendarDate(start, 1);
+                            setCustomStart(start);
+                            setCustomEnd(newest > start ? newest : shiftCalendarDate(start, 1));
+                            setDateRange("custom");
+                        }}
+                    >
+                        Show those logs
+                    </button>
                 </div>
             )}
 
-            {showStaleLogHint && (
+            {showStaleLogHint && !showClockSkewNotice && (
                 <div className="reports-notice reports-notice--warning">
                     <Clock size={18} style={{ color: "hsl(var(--status-warning))", marginTop: 2 }} />
                     <div style={{ flex: 1 }}>

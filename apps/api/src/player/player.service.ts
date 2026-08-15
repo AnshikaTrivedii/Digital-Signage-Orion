@@ -769,9 +769,12 @@ export class PlayerService {
     const pendingDownloadCount = assets.filter(
       (entry) => (entry as { requiresDownload?: boolean }).requiresDownload,
     ).length;
+    const contentUnchanged = payload.unchanged === true;
+    // Once the player reports the current playlist/layout version, do not keep
+    // syncRequired=true solely because this response still lists download URLs.
     const syncRequired =
       (await this.computeSyncRequired(effectiveDevice, contentRevision, refreshedEffective)) ||
-      pendingDownloadCount > 0;
+      (!contentUnchanged && pendingDownloadCount > 0);
     const nextChange = await this.schedules.nextContentChangeAtForDevice(
       device.organizationId,
       device.id,
@@ -893,20 +896,22 @@ export class PlayerService {
 
     const clientReportedVersion = query.playlistVersion;
     const playlistVersionMatches =
-      clientReportedVersion !== undefined && clientReportedVersion === playlist.syncVersion;
-    const clientMissingAssets = currentAssetIds.some((id) => !syncContext.knownAssetIds.includes(id));
-    const clientHasPendingDownloads = manifest.some((entry) => entry.requiresDownload);
+      (clientReportedVersion !== undefined && clientReportedVersion === playlist.syncVersion) ||
+      (clientReportedVersion === undefined &&
+        device.lastAckedPlaylistId === playlist.id &&
+        device.lastAckedPlaylistVersion === playlist.syncVersion);
+    // Version match is enough for playlist "unchanged" — downloads still flagged
+    // per-asset via requiresDownload. Ticker changes are tracked separately.
     const playlistContentUnchanged =
       playlistVersionMatches &&
-      manifestComplete &&
-      (orderedAssets.length === 0 || syncContext.knownAssetIds.length > 0) &&
-      !clientMissingAssets &&
-      !clientHasPendingDownloads &&
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
     const tickerUnchanged = (device.lastAckedTickerRevision ?? null) === tickerRevision;
     const contentUnchanged = playlistContentUnchanged && tickerUnchanged;
 
+    // Persist applied playlist revision whenever the player reports the live version
+    // so revision polls stop forcing a full sync loop. Cache-report also acks.
+    // Ack playlist independently of ticker so ticker-only changes can still settle.
     const shouldAckPlaylistVersion = playlistContentUnchanged;
 
     const assignedDeviceCount = await this.prisma.device.count({
@@ -918,7 +923,7 @@ export class PlayerService {
         `syncType=${contentUnchanged ? 'stable' : 'update'} ` +
         `playlistVersion=${playlist.syncVersion} assetCount=${manifest.length} ` +
         `sequence=${sequenceSignature} ` +
-        `previousVersion=${clientReportedVersion ?? 'none'} newVersion=${playlist.syncVersion} ` +
+        `previousVersion=${clientReportedVersion ?? device.lastAckedPlaylistVersion ?? 'none'} newVersion=${playlist.syncVersion} ` +
         `updatedAt=${playlist.updatedAt.toISOString()} ` +
         `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged} ` +
         `tickerRevision=${tickerRevision} tickerUnchanged=${tickerUnchanged} ` +
@@ -1109,14 +1114,12 @@ export class PlayerService {
     const hasTickerZone = layout.zones.some((zone) => zone.type === ZoneType.TICKER);
     const clientReportedLayoutVersion = query.layoutVersion;
     const layoutVersionMatches =
-      clientReportedLayoutVersion !== undefined && clientReportedLayoutVersion === layout.syncVersion;
-    const clientMissingAssets = currentAssetIds.some((id) => !knownAssetIds.includes(id));
-    const clientHasPendingDownloads = aggregatedAssets.some((entry) => entry.requiresDownload);
+      (clientReportedLayoutVersion !== undefined &&
+        clientReportedLayoutVersion === layout.syncVersion) ||
+      (clientReportedLayoutVersion === undefined &&
+        device.lastAckedLayoutVersion === layout.syncVersion);
     const layoutContentUnchanged =
       layoutVersionMatches &&
-      knownAssetIds.length > 0 &&
-      !clientMissingAssets &&
-      !clientHasPendingDownloads &&
       !syncContext.recoverCache &&
       syncContext.missingAssetIds.size === 0;
     const tickerUnchanged = (device.lastAckedTickerRevision ?? null) === tickerRevision;
@@ -1130,7 +1133,7 @@ export class PlayerService {
 
     this.logger.log(
       `Layout sync layoutId=${layout.id} deviceId=${device.id} ` +
-        `previousVersion=${clientReportedLayoutVersion ?? 'none'} newVersion=${layout.syncVersion} ` +
+        `previousVersion=${clientReportedLayoutVersion ?? device.lastAckedLayoutVersion ?? 'none'} newVersion=${layout.syncVersion} ` +
         `updatedAt=${layout.updatedAt.toISOString()} assetsReturned=${aggregatedAssets.length} ` +
         `deviceCount=${assignedDeviceCount} unchanged=${contentUnchanged} ` +
         `tickerRevision=${tickerRevision} tickerUnchanged=${tickerUnchanged}`,
