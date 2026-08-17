@@ -1039,20 +1039,28 @@ export class ClientDataService {
    * Notify assigned devices that CMS content changed. Queues FORCE_SYNC for every
    * paired device with active content, and marks never-synced devices for initial
    * onboarding so the player does not wait for the normal polling interval.
+   *
+   * Ticker audience changes pass `requireAssignedContent: false` so a screen
+   * with no playlist/layout still receives the overlay immediately.
    */
   private async notifyDevicesSyncRequired(
     organizationId: string,
     deviceIds: string[],
     requestedById?: string,
+    options?: { requireAssignedContent?: boolean },
   ) {
     if (!deviceIds.length) return;
+
+    const requireAssignedContent = options?.requireAssignedContent !== false;
 
     const targets = await this.prisma.device.findMany({
       where: {
         id: { in: deviceIds },
         organizationId,
         isPaired: true,
-        OR: [{ currentPlaylistId: { not: null } }, { currentLayoutId: { not: null } }],
+        ...(requireAssignedContent
+          ? { OR: [{ currentPlaylistId: { not: null } }, { currentLayoutId: { not: null } }] }
+          : {}),
       },
       select: { id: true, lastSuccessfulSyncAt: true },
     });
@@ -1090,7 +1098,9 @@ export class ClientDataService {
       broadcastScope,
       selectedDeviceIds,
     );
-    await this.notifyDevicesSyncRequired(organizationId, deviceIds, requestedById);
+    await this.notifyDevicesSyncRequired(organizationId, deviceIds, requestedById, {
+      requireAssignedContent: false,
+    });
   }
 
   /**
@@ -1114,6 +1124,7 @@ export class ClientDataService {
       organizationId,
       [...new Set([...previous, ...next])],
       requestedById,
+      { requireAssignedContent: false },
     );
   }
 
@@ -1610,6 +1621,108 @@ export class ClientDataService {
     );
 
     return { success: true };
+  }
+
+  async listDeviceTickers(actor: RequestActor, deviceId: string) {
+    const organizationId = this.getOrgId(actor);
+    await this.assertPairedOrgDevice(organizationId, deviceId);
+
+    const tickers = await this.prisma.ticker.findMany({
+      where: { organizationId },
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        deviceTargets: {
+          include: { device: { select: { id: true, name: true } } },
+        },
+      },
+    });
+
+    const applied = tickers.filter(
+      (ticker) =>
+        ticker.broadcastScope === TickerBroadcastScope.ALL_DEVICES ||
+        ticker.deviceTargets.some((target) => target.deviceId === deviceId),
+    );
+    const assignable = tickers.filter(
+      (ticker) => ticker.broadcastScope === TickerBroadcastScope.SELECTED_DEVICES,
+    );
+    const assignedTickerIds = assignable
+      .filter((ticker) => ticker.deviceTargets.some((target) => target.deviceId === deviceId))
+      .map((ticker) => ticker.id);
+
+    return {
+      applied: applied.map((ticker) => this.serializeTicker(ticker)),
+      assignable: assignable.map((ticker) => this.serializeTicker(ticker)),
+      assignedTickerIds,
+    };
+  }
+
+  async assignDeviceTickers(
+    actor: RequestActor,
+    deviceId: string,
+    body: { tickerIds: string[] },
+  ) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    await this.assertPairedOrgDevice(organizationId, deviceId);
+
+    const desiredIds = Array.from(new Set((body.tickerIds ?? []).filter(Boolean)));
+    const selectedTickers = await this.prisma.ticker.findMany({
+      where: { organizationId, broadcastScope: TickerBroadcastScope.SELECTED_DEVICES },
+      include: { deviceTargets: { select: { deviceId: true } } },
+    });
+
+    if (desiredIds.length > 0) {
+      const validIds = new Set(selectedTickers.map((ticker) => ticker.id));
+      const invalid = desiredIds.filter((id) => !validIds.has(id));
+      if (invalid.length) {
+        throw new BadRequestException(
+          'One or more tickers are not valid targeted broadcasts for this organization',
+        );
+      }
+    }
+
+    const currentlyAssignedIds = selectedTickers
+      .filter((ticker) => ticker.deviceTargets.some((target) => target.deviceId === deviceId))
+      .map((ticker) => ticker.id);
+    const currentSet = new Set(currentlyAssignedIds);
+    const desiredSet = new Set(desiredIds);
+    const toAdd = desiredIds.filter((id) => !currentSet.has(id));
+    const toRemove = currentlyAssignedIds.filter((id) => !desiredSet.has(id));
+
+    if (toAdd.length || toRemove.length) {
+      const affectedIds = [...toAdd, ...toRemove];
+      await this.prisma.$transaction(async (tx) => {
+        if (toAdd.length) {
+          await tx.tickerDevice.createMany({
+            data: toAdd.map((tickerId) => ({ tickerId, deviceId })),
+          });
+        }
+        if (toRemove.length) {
+          await tx.tickerDevice.deleteMany({
+            where: { deviceId, tickerId: { in: toRemove } },
+          });
+        }
+
+        const affected = await tx.ticker.findMany({
+          where: { id: { in: affectedIds } },
+          include: { deviceTargets: { select: { deviceId: true } } },
+        });
+        await Promise.all(
+          affected.map((ticker) =>
+            tx.ticker.update({
+              where: { id: ticker.id },
+              data: { screens: ticker.deviceTargets.length },
+            }),
+          ),
+        );
+      });
+
+      await this.notifyDevicesSyncRequired(organizationId, [deviceId], actor.userId, {
+        requireAssignedContent: false,
+      });
+    }
+
+    return this.listDeviceTickers(actor, deviceId);
   }
 
   async reports(
@@ -2480,6 +2593,15 @@ export class ClientDataService {
       throw new BadRequestException('Missing active organization context');
     }
     return actor.organization.id;
+  }
+
+  private async assertPairedOrgDevice(organizationId: string, deviceId: string) {
+    const device = await this.prisma.device.findFirst({
+      where: { id: deviceId, organizationId, isPaired: true },
+      select: { id: true },
+    });
+    if (!device) throw new NotFoundException('Device not found');
+    return device;
   }
 
   private assertCanEdit(actor: RequestActor) {

@@ -145,6 +145,7 @@ function formatDeviceLastSync(value?: string | null): string {
 
 export default function DevicesPage() {
     const { canEdit, canControl } = useClientFeature("DEVICES");
+    const { canEdit: canEditTickers } = useClientFeature("TICKERS");
     const { activeOrganizationId, refreshSession } = useAuth();
 
     const [devices, setDevices] = useState<Device[]>([]);
@@ -1159,6 +1160,7 @@ export default function DevicesPage() {
                         device={selectedDevice}
                         canEdit={canEdit}
                         canControl={canControl}
+                        canEditTickers={canEditTickers}
                         orgHeaders={orgHeaders}
                         onClose={() => {
                             setSelectedDevice(null);

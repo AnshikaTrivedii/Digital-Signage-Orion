@@ -1421,6 +1421,9 @@ export default function TickersPage() {
                                         </label>
                                     ))}
                                 </div>
+                                <p style={{ marginTop: 8, fontSize: "0.75rem", color: "hsl(var(--text-muted))", lineHeight: 1.45 }}>
+                                    All Devices sends this ticker to every paired screen. Choose Selected Devices to target one or more specific devices.
+                                </p>
                             </div>
 
                             {editorForm.broadcastScope === "Selected Devices" && (
@@ -1481,7 +1484,9 @@ export default function TickersPage() {
                                             </p>
                                         ) : filteredDevices.length === 0 ? (
                                             <p style={{ padding: 12, fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
-                                                {devices.length === 0 ? "No paired devices available." : "No devices match your search."}
+                                                {devices.length === 0
+                                                    ? "No paired devices available. Pair a device first to target a single screen."
+                                                    : "No devices match your search."}
                                             </p>
                                         ) : (
                                             filteredDevices.map((device) => {

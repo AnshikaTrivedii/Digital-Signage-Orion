@@ -24,6 +24,7 @@ import { UpdatePlaylistAssetDurationDto } from './dto/update-playlist-asset-dura
 import { UpdateDeviceDto } from './dto/update-device.dto';
 import { CreateTickerDto } from './dto/create-ticker.dto';
 import { UpdateTickerDto } from './dto/update-ticker.dto';
+import { AssignDeviceTickersDto } from './dto/assign-device-tickers.dto';
 import { ReportsQueryDto } from './dto/reports-query.dto';
 import { AssignLayoutDto } from './dto/assign-layout.dto';
 import { DeviceLogsQueryDto } from '../device-management/dto/device-logs-query.dto';
@@ -258,6 +259,20 @@ export class ClientDataController {
   @Post('devices/:deviceId/cache/redownload')
   redownloadDevicePlaylist(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
     return this.clientDataService.redownloadDevicePlaylist(actor, deviceId);
+  }
+
+  @Get('devices/:deviceId/tickers')
+  listDeviceTickers(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.listDeviceTickers(actor, deviceId);
+  }
+
+  @Patch('devices/:deviceId/tickers')
+  assignDeviceTickers(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Body() body: AssignDeviceTickersDto,
+  ) {
+    return this.clientDataService.assignDeviceTickers(actor, deviceId, body);
   }
 
   @Get('devices/:deviceId/status')

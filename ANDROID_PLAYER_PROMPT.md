@@ -158,6 +158,58 @@ Log.i("Playback", "asset=${asset.name} type=${asset.type} appliedDuration=${reso
 
 ---
 
+## Part 1D: Live playlist content updates (August 2026)
+
+> Hand this to an existing Android player chat. CMS playlist **assignment** already refreshed the screen. CMS playlist **edits** (add/remove/reorder/duration) now bump `playlistVersion` **and** queue `FORCE_SYNC` the same way assignment does. The player must rebuild the playback loop when `playlistId` is unchanged.
+
+---
+**Copy from here:**
+
+**Objective:** Make the Digital-Signage-Orion Android player apply playlist *content* changes live. Today the player updates when a different playlist is assigned. It must also update when the **same** playlist gains/loses assets, is reordered, or has an asset duration changed. Do not wait for the operator to re-assign the playlist.
+
+**Backend (already live — do not change API contracts):**
+- Add / remove / reorder / duration all increment `playlistVersion` and set `syncRequired: true`.
+- Those edits also queue `FORCE_SYNC` on every device that would play that playlist (manual assignment, layout zone, or enabled schedule).
+- `GET /player/sync` returns the full `assets[]` with new `position` and `durationSeconds`. `unchanged` is `false` when the version changed.
+- Commands are delivered on **heartbeat**, **`/sync`**, and **device-report** — **not** on `/sync-revision`.
+
+**Required player behavior:**
+
+1. **Detect same-playlist updates.** Poll `GET /api/player/sync-revision` every `revisionPollIntervalSeconds` (default 5s). Immediately call `GET /api/player/sync` when **any** of these are true — even if `playlistId` / `playlist.name` did not change:
+   - `revision` differs from the last stored revision string
+   - `syncRequired` is `true`
+   - `playlistVersion` differs from the last successfully applied version
+2. **Honor `FORCE_SYNC` immediately.** On heartbeat and `/sync`, if `command` / `cacheCommand.command` is `FORCE_SYNC`, call `/sync` right away. Do not wait for the 120s fallback timer. After executing, ack via `POST /api/player/cache-report` with `completedCommandId`.
+3. **Rebuild the playback timeline from `assets[]`.** Sort by `position`. This is the new loop. Apply:
+   - **Add** — download if `requiresDownload: true`, then insert into the loop
+   - **Remove** — drop slots whose ids are not in `currentAssetIds`; delete files listed in `removedAssetIds` only after a successful sync
+   - **Reorder** — play in the new `position` order even when every file is already cached
+   - **Duration** — re-read `durationSeconds` for every slot
+4. **`requiresDownload: false` still means apply metadata.** Cached files must pick up new duration, position, and presence. Never skip a slot because the file did not change.
+5. **Do not treat `unchanged: true` as “ignore `assets[]`”.** The array is always present. Persist and send `playlistVersion` on the next sync poll.
+6. **Duration resolution (unchanged rules):**
+   - positive `durationSeconds` → playlist override
+   - `null` → device default from `display.playback` (`imageDuration` / `videoDuration` / `documentDuration` / `urlDuration`)
+   - Cache `null` as `null`; never write a resolved number into the stored manifest
+7. **Switch without a CMS re-assign.** After new downloads finish (or immediately if nothing needs download), replace the in-memory loop. If the currently playing asset was removed, skip to the next remaining item. Duration changes take effect on that asset’s next play (or immediately if you restart the current item).
+8. **Layouts:** the same rules apply per `PLAYLIST` zone. A playlist edit bumps `layoutVersion` for layouts that embed it; rebuild that zone’s loop.
+
+**Do not:**
+- Key “content changed” only on `playlistId`
+- Keep looping a stale in-memory queue after a successful `/sync`
+- Wait for the operator to re-assign the playlist, or for the 2-minute fallback sync, to pick up add/remove/reorder/duration
+
+**Tasks:**
+1. Trace the sync/playback path. Find any branch that applies a new manifest only when `playlistId` changed; apply on `playlistVersion` / `revision` / `syncRequired` / `FORCE_SYNC` as well.
+2. After every successful `/sync`, replace the playback queue with `assets[]` (position + duration) before the next item starts.
+3. Confirm heartbeat executes `FORCE_SYNC` immediately.
+4. Log: `playlistId=… previousVersion=… newVersion=… assetCount=… rebuiltLoop=true`.
+
+---
+**End Copy**
+
+---
+
 ## Part 2: Live API Reference (Already Implemented ✅)
 
 > **Base URL:** `http://<YOUR_SERVER>:3001/api`
@@ -265,7 +317,7 @@ Send device health telemetry. Call every ~60 seconds.
 }
 ```
 
-- `syncRequired`: `true` when the server has a newer playlist/layout version the device has not fully cached, when ticker content changed since the last sync, **or when the last ticker was unassigned/deleted** (`tickers` will be `[]`). Compare the full `contentRevision` string (it includes a `:tk…` suffix; `:tk0` means no active ticker).
+- `syncRequired`: `true` when the server has a newer playlist/layout version the device has not fully cached (including add/remove/reorder/duration on the **same** playlist), when ticker content changed since the last sync, **or when the last ticker was unassigned/deleted** (`tickers` will be `[]`). Compare the full `contentRevision` string (it includes a `:tk…` suffix; `:tk0` means no active ticker).
 - `revisionPollIntervalSeconds`: how often to poll `GET /api/player/sync-revision` (default **5s**).
 - `syncIntervalSeconds`: fallback full manifest poll interval (default **120s**).
 - `initialSyncPending`: `true` for freshly paired devices that have not completed their first successful sync.
@@ -318,7 +370,7 @@ device would fight the server.
 | `nextContentChangeAt` | Next ISO instant when a schedule may start or end for this device (`null` if none). |
 | `scheduleValidUntil` | When a schedule is active, equals `activeSchedule.endDateTime`. |
 | `serverNow` | Server UTC clock at response time — diagnostics only. |
-| `syncRequired` | **Must** be honored. Becomes `true` when a schedule starts or ends, **and** when a ticker is assigned, edited, unassigned, or deleted — even if `playlistId` / `playlistVersion` is unchanged. |
+| `syncRequired` | **Must** be honored. Becomes `true` when a schedule starts or ends, when playlist **content** changes (add/remove/reorder/duration) even if `playlistId` is unchanged, **and** when a ticker is assigned, edited, unassigned, or deleted. |
 
 Server-side priority is **active schedule → manually assigned playlist/layout → nothing**.
 A schedule starting, ending, being edited, disabled or deleted all change `revision`

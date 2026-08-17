@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2, Timer,
+    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2, Timer, Type,
 } from "lucide-react";
 import { apiRequest, ApiError } from "@/lib/api";
 
@@ -89,6 +89,23 @@ interface PlaybackForm {
 
 type PlaybackErrors = Partial<Record<keyof PlaybackForm, string>>;
 
+type TickerScope = "All Devices" | "Selected Devices";
+type TickerStatus = "Active" | "Paused" | "Draft";
+
+interface DeviceTicker {
+    id: string;
+    text: string;
+    status: TickerStatus;
+    broadcastScope: TickerScope;
+    screens: number;
+}
+
+interface DeviceTickersResponse {
+    applied: DeviceTicker[];
+    assignable: DeviceTicker[];
+    assignedTickerIds: string[];
+}
+
 const PLAYBACK_FIELDS: { key: keyof PlaybackForm; label: string }[] = [
     { key: "imageDuration", label: "Images" },
     { key: "videoDuration", label: "Videos" },
@@ -100,6 +117,7 @@ interface Props {
     device: Device;
     canEdit: boolean;
     canControl: boolean;
+    canEditTickers?: boolean;
     orgHeaders?: Record<string, string>;
     onClose: () => void;
     onDeviceUpdated: (device: Device) => void;
@@ -160,10 +178,17 @@ function parseDuration(raw: string): number {
     return Number.parseInt(raw.trim(), 10);
 }
 
+function truncateTickerText(text: string, max = 72) {
+    const trimmed = text.trim();
+    if (trimmed.length <= max) return trimmed;
+    return `${trimmed.slice(0, max)}…`;
+}
+
 export function DeviceDetailPanel({
     device,
     canEdit,
     canControl,
+    canEditTickers = false,
     orgHeaders,
     onClose,
     onDeviceUpdated,
@@ -195,6 +220,14 @@ export function DeviceDetailPanel({
     const [playbackLastUpdated, setPlaybackLastUpdated] = useState<string | null>(null);
     const [playbackLoading, setPlaybackLoading] = useState(true);
     const [playbackSaving, setPlaybackSaving] = useState(false);
+    const [appliedTickers, setAppliedTickers] = useState<DeviceTicker[]>([]);
+    const [assignableTickers, setAssignableTickers] = useState<DeviceTicker[]>([]);
+    const [assignedTickerIds, setAssignedTickerIds] = useState<string[]>([]);
+    const [selectedTickerIds, setSelectedTickerIds] = useState<string[]>([]);
+    const [tickersLoading, setTickersLoading] = useState(true);
+    const [tickersSaving, setTickersSaving] = useState(false);
+    const [newTickerText, setNewTickerText] = useState("");
+    const [creatingTicker, setCreatingTicker] = useState(false);
     const canChangeDisplay = canEdit || canControl;
 
     const base = `/api/client-data/devices/${device.id}`;
@@ -229,6 +262,27 @@ export function DeviceDetailPanel({
             setPlaybackLoading(false);
         }
     }, [applyPlaybackResponse, base, orgHeaders]);
+
+    const applyTickersResponse = useCallback((data: DeviceTickersResponse) => {
+        setAppliedTickers(data.applied);
+        setAssignableTickers(data.assignable);
+        setAssignedTickerIds(data.assignedTickerIds);
+        setSelectedTickerIds(data.assignedTickerIds);
+    }, []);
+
+    const loadDeviceTickers = useCallback(async () => {
+        setTickersLoading(true);
+        try {
+            const data = await apiRequest<DeviceTickersResponse>(`${base}/tickers`, {
+                headers: orgHeaders,
+            });
+            applyTickersResponse(data);
+        } catch (error) {
+            toast.error(describeError(error, "Failed to load tickers"));
+        } finally {
+            setTickersLoading(false);
+        }
+    }, [applyTickersResponse, base, orgHeaders]);
 
     const refreshLive = useCallback(async () => {
         try {
@@ -281,6 +335,10 @@ export function DeviceDetailPanel({
     useEffect(() => {
         void loadPlaybackSettings();
     }, [loadPlaybackSettings]);
+
+    useEffect(() => {
+        void loadDeviceTickers();
+    }, [loadDeviceTickers]);
 
     useEffect(() => {
         const tick = setInterval(() => setNowMs(Date.now()), 1000);
@@ -387,6 +445,75 @@ export function DeviceDetailPanel({
         );
     };
 
+    const sameTickerIds = (left: string[], right: string[]) => {
+        if (left.length !== right.length) return false;
+        const rightSet = new Set(right);
+        return left.every((id) => rightSet.has(id));
+    };
+
+    const tickersDirty = !sameTickerIds(selectedTickerIds, assignedTickerIds);
+
+    const toggleTickerSelection = (tickerId: string) => {
+        setSelectedTickerIds((previous) =>
+            previous.includes(tickerId)
+                ? previous.filter((id) => id !== tickerId)
+                : [...previous, tickerId],
+        );
+    };
+
+    const saveDeviceTickers = async () => {
+        if (!canEditTickers) {
+            toast.error("You only have view access to tickers.");
+            return;
+        }
+        setTickersSaving(true);
+        try {
+            const data = await apiRequest<DeviceTickersResponse>(`${base}/tickers`, {
+                method: "PATCH",
+                headers: orgHeaders,
+                body: JSON.stringify({ tickerIds: selectedTickerIds }),
+            });
+            applyTickersResponse(data);
+            toast.success("Ticker assignments updated");
+        } catch (error) {
+            toast.error(describeError(error, "Failed to update ticker assignments"));
+        } finally {
+            setTickersSaving(false);
+        }
+    };
+
+    const createTickerForDevice = async () => {
+        if (!canEditTickers) {
+            toast.error("You only have view access to tickers.");
+            return;
+        }
+        const text = newTickerText.trim();
+        if (!text) {
+            toast.error("Ticker text is required");
+            return;
+        }
+        setCreatingTicker(true);
+        try {
+            await apiRequest("/api/client-data/tickers", {
+                method: "POST",
+                headers: orgHeaders,
+                body: JSON.stringify({
+                    text,
+                    broadcastScope: "Selected Devices",
+                    deviceIds: [device.id],
+                    status: "Active",
+                }),
+            });
+            setNewTickerText("");
+            toast.success("Ticker created for this device");
+            await loadDeviceTickers();
+        } catch (error) {
+            toast.error(describeError(error, "Failed to create ticker"));
+        } finally {
+            setCreatingTicker(false);
+        }
+    };
+
     const effectiveStatus = live?.status ?? device.status;
     const isOnline = effectiveStatus === "online" || effectiveStatus === "warning";
     const playlistLabel = resolvePlaylistLabel(device, live);
@@ -436,6 +563,116 @@ export function DeviceDetailPanel({
                                 {playlistLabel ?? "No Playlist Assigned"}
                             </span>
                         </div>
+                    </section>
+
+                    {/* Tickers */}
+                    <section className="device-detail-card device-detail-card-span">
+                        <div className="device-detail-row-between" style={{ marginBottom: 12 }}>
+                            <div>
+                                <p className="device-detail-label" style={{ marginBottom: 4 }}>Assigned Tickers</p>
+                                <p className="device-detail-hint">
+                                    Network-wide tickers stay on every paired screen. Assign targeted broadcasts here, or create one for this device only.
+                                </p>
+                            </div>
+                            <Type size={18} className="device-detail-value-icon" />
+                        </div>
+
+                        {tickersLoading ? (
+                            <p className="device-detail-hint">Loading tickers…</p>
+                        ) : (
+                            <>
+                                {appliedTickers.length === 0 ? (
+                                    <p className="device-detail-value is-muted" style={{ marginBottom: 12 }}>
+                                        No tickers on this device
+                                    </p>
+                                ) : (
+                                    <ul className="device-ticker-list">
+                                        {appliedTickers.map((ticker) => (
+                                            <li key={ticker.id} className="device-ticker-row">
+                                                <span className="device-ticker-text" title={ticker.text}>
+                                                    {truncateTickerText(ticker.text)}
+                                                </span>
+                                                <span className="device-ticker-meta">
+                                                    {ticker.status}
+                                                    {" · "}
+                                                    {ticker.broadcastScope === "All Devices" ? "All devices" : "Selected devices"}
+                                                </span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+
+                                {appliedTickers.some((ticker) => ticker.broadcastScope === "All Devices") && (
+                                    <p className="device-detail-hint" style={{ marginBottom: 12 }}>
+                                        All-devices tickers are managed in Ticker Management and cannot be removed here.
+                                    </p>
+                                )}
+
+                                {canEditTickers && (
+                                    <>
+                                        <p className="device-detail-label" style={{ marginTop: 4 }}>Targeted tickers</p>
+                                        {assignableTickers.length === 0 ? (
+                                            <p className="device-detail-hint" style={{ marginBottom: 12 }}>
+                                                No targeted tickers yet. Create one below for this screen only.
+                                            </p>
+                                        ) : (
+                                            <div className="device-ticker-picker">
+                                                {assignableTickers.map((ticker) => {
+                                                    const selected = selectedTickerIds.includes(ticker.id);
+                                                    return (
+                                                        <label key={ticker.id} className={`device-ticker-option${selected ? " is-selected" : ""}`}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selected}
+                                                                disabled={tickersSaving || isBusy}
+                                                                onChange={() => toggleTickerSelection(ticker.id)}
+                                                            />
+                                                            <span>
+                                                                <strong>{truncateTickerText(ticker.text, 56)}</strong>
+                                                                <em>{ticker.status} · {ticker.screens} screen{ticker.screens === 1 ? "" : "s"}</em>
+                                                            </span>
+                                                        </label>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                        {assignableTickers.length > 0 && (
+                                            <div className="device-playback-actions" style={{ marginBottom: 16 }}>
+                                                <button
+                                                    type="button"
+                                                    className="btn-primary"
+                                                    disabled={tickersSaving || isBusy || !tickersDirty}
+                                                    onClick={() => void saveDeviceTickers()}
+                                                >
+                                                    {tickersSaving ? "Saving…" : "Save ticker assignments"}
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        <p className="device-detail-label">New ticker for this device</p>
+                                        <textarea
+                                            className="device-ticker-input"
+                                            rows={2}
+                                            maxLength={500}
+                                            placeholder="Enter a message for this screen only…"
+                                            value={newTickerText}
+                                            disabled={creatingTicker || isBusy}
+                                            onChange={(e) => setNewTickerText(e.target.value)}
+                                        />
+                                        <div className="device-playback-actions">
+                                            <button
+                                                type="button"
+                                                className="btn-primary"
+                                                disabled={creatingTicker || isBusy || !newTickerText.trim()}
+                                                onClick={() => void createTickerForDevice()}
+                                            >
+                                                {creatingTicker ? "Creating…" : "Create for this device"}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </>
+                        )}
                     </section>
 
                     {/* Stretch to Fit */}
@@ -863,6 +1100,91 @@ export function DeviceDetailPanel({
                     margin: 10px 0 0;
                     font-size: 0.72rem;
                     color: hsl(var(--text-muted));
+                }
+                .device-ticker-list {
+                    list-style: none;
+                    margin: 0 0 12px;
+                    padding: 0;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 8px;
+                }
+                .device-ticker-row {
+                    display: flex;
+                    flex-wrap: wrap;
+                    align-items: baseline;
+                    justify-content: space-between;
+                    gap: 8px 12px;
+                    padding: 10px 12px;
+                    border-radius: 10px;
+                    background: hsl(var(--bg-base) / 0.7);
+                    border: 1px solid hsl(var(--border-subtle) / 0.7);
+                }
+                .device-ticker-text {
+                    font-size: 0.9rem;
+                    font-weight: 600;
+                    min-width: 0;
+                }
+                .device-ticker-meta {
+                    font-size: 0.72rem;
+                    font-weight: 600;
+                    color: hsl(var(--text-muted));
+                    flex-shrink: 0;
+                }
+                .device-ticker-picker {
+                    max-height: 180px;
+                    overflow-y: auto;
+                    margin-bottom: 12px;
+                    padding: 6px;
+                    border-radius: 10px;
+                    border: 1px solid hsl(var(--border-subtle) / 0.7);
+                    background: hsl(var(--bg-base) / 0.45);
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px;
+                }
+                .device-ticker-option {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 10px;
+                    padding: 8px 10px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                }
+                .device-ticker-option.is-selected {
+                    background: hsl(var(--accent-primary) / 0.12);
+                }
+                .device-ticker-option span {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2px;
+                    min-width: 0;
+                }
+                .device-ticker-option strong {
+                    font-size: 0.86rem;
+                    font-weight: 600;
+                }
+                .device-ticker-option em {
+                    font-style: normal;
+                    font-size: 0.72rem;
+                    color: hsl(var(--text-muted));
+                }
+                .device-ticker-input {
+                    width: 100%;
+                    margin-bottom: 10px;
+                    padding: 10px 12px;
+                    border-radius: 10px;
+                    border: 1px solid hsl(var(--border-subtle) / 0.85);
+                    background: hsl(var(--bg-base) / 0.75);
+                    color: hsl(var(--text-primary));
+                    font-size: 0.9rem;
+                    font-family: inherit;
+                    resize: vertical;
+                    outline: none;
+                }
+                .device-ticker-input:focus {
+                    border-color: hsl(var(--accent-primary) / 0.7);
+                    box-shadow: 0 0 0 3px hsl(var(--accent-primary) / 0.14);
                 }
                 .device-detail-footer {
                     display: flex;
