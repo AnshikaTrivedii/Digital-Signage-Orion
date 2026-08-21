@@ -527,10 +527,20 @@ export class ClientDataService {
       }
     }
 
+    const previouslyAssigned = await this.prisma.device.findMany({
+      where: { organizationId, currentPlaylistId: playlistId, isPaired: true },
+      select: { id: true },
+    });
+    const previousDeviceIds = previouslyAssigned.map((device) => device.id);
+
     await this.prisma.$transaction(async (tx) => {
       await tx.device.updateMany({
         where: { organizationId, currentPlaylistId: playlistId, id: { notIn: deviceIds } },
-        data: { currentPlaylistId: null },
+        data: {
+          currentPlaylistId: null,
+          lastAckedPlaylistVersion: null,
+          lastAckedPlaylistId: null,
+        },
       });
 
       if (deviceIds.length > 0) {
@@ -555,7 +565,10 @@ export class ClientDataService {
       });
     });
 
-    await this.notifyDevicesSyncRequired(organizationId, deviceIds, actor.userId);
+    const notifyIds = [...new Set([...previousDeviceIds, ...deviceIds])];
+    await this.notifyDevicesSyncRequired(organizationId, notifyIds, actor.userId, {
+      requireAssignedContent: false,
+    });
 
     const updated = await this.prisma.playlist.findFirst({
       where: { id: playlistId, organizationId },

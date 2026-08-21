@@ -402,7 +402,7 @@ export class DeviceCacheService {
 
   private commandMessage(command: DeviceCacheCommandType) {
     const messages: Partial<Record<DeviceCacheCommandType, string>> = {
-      [DeviceCacheCommandType.FORCE_SYNC]: 'Force sync queued. The player will sync on its next poll.',
+      [DeviceCacheCommandType.FORCE_SYNC]: 'Force sync queued. The player will sync on its next heartbeat.',
       [DeviceCacheCommandType.CLEAR_CACHE]: 'Clear cache queued. The player will wipe local files on its next poll.',
       [DeviceCacheCommandType.REDOWNLOAD_PLAYLIST]: 'Redownload playlist queued. The player will refresh all assigned assets.',
       [DeviceCacheCommandType.RESTART_PLAYER]: 'Restart player queued. The player app will restart on its next poll.',

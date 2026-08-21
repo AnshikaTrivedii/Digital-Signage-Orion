@@ -48,7 +48,7 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
     *   **Fetch Playlist:** Call `GET /api/player/sync` (authenticated with device token). Returns the active playlist manifest with pre-signed download URLs for each asset.
     *   **Download & Cache Assets:** Do NOT stream continuously. Download all assets to local storage on first sync. Use Android's `DownloadManager` or OkHttp streams to save to internal cache.
     *   **Playback Loop:** Once the manifest and files are cached, play them seamlessly in order based on `durationSeconds` and `position`.
-    *   **Periodic Re-sync:** Poll `GET /api/player/sync-revision` every **5 seconds** (`revisionPollIntervalSeconds`). When `revision` changes or `syncRequired` is true, immediately call `GET /api/player/sync`. Also re-fetch the full manifest on the interval the server provides — heartbeat, sync, and device-report responses include `syncIntervalSeconds` (server-configurable, defaults to 120s / 2 minutes). Use that value only as a **fallback** full-sync timer, not as the primary change-detection path. Download only new/changed assets.
+    *   **Event-driven Re-sync:** Do **not** poll `GET /api/player/sync-revision` when `revisionPollIntervalSeconds` is **0** (the server default). Playlist assign/re-assign, add/remove/reorder/duration, and layout/ticker edits queue `FORCE_SYNC` and set `syncRequired`. Discover those on **heartbeat** (every 60 seconds): if `command` is `FORCE_SYNC`, `syncRequired` is true, or `contentRevision` changed, immediately call `GET /api/player/sync`. Also re-fetch the full manifest on `syncIntervalSeconds` (server-configurable, defaults to **600s / 10 minutes**) as a **fallback** only. On network reconnect, call `/sync` immediately. Arm a local timer at `nextContentChangeAt` so a schedule start/end does not wait for the next heartbeat. Download only new/changed assets.
     *   **Offline Mode:** If the internet disconnects, continue looping cached content indefinitely until connection is restored.
 
 5.  **Proof of Play (PoP) & Device Health:**
@@ -175,11 +175,11 @@ Log.i("Playback", "asset=${asset.name} type=${asset.type} appliedDuration=${reso
 
 **Required player behavior:**
 
-1. **Detect same-playlist updates.** Poll `GET /api/player/sync-revision` every `revisionPollIntervalSeconds` (default 5s). Immediately call `GET /api/player/sync` when **any** of these are true — even if `playlistId` / `playlist.name` did not change:
-   - `revision` differs from the last stored revision string
+1. **Detect same-playlist updates from heartbeat.** Do **not** poll `/sync-revision` when `revisionPollIntervalSeconds` is `0`. On every heartbeat, immediately call `GET /api/player/sync` when **any** of these are true — even if `playlistId` / `playlist.name` did not change:
+   - `command` / `cacheCommand.command` is `FORCE_SYNC`
    - `syncRequired` is `true`
-   - `playlistVersion` differs from the last successfully applied version
-2. **Honor `FORCE_SYNC` immediately.** On heartbeat and `/sync`, if `command` / `cacheCommand.command` is `FORCE_SYNC`, call `/sync` right away. Do not wait for the 120s fallback timer. After executing, ack via `POST /api/player/cache-report` with `completedCommandId`.
+   - `contentRevision` differs from the last stored revision string
+2. **Honor `FORCE_SYNC` immediately.** On heartbeat and `/sync`, if `command` / `cacheCommand.command` is `FORCE_SYNC`, call `/sync` right away. Do not wait for the fallback full-sync timer. After executing, ack via `POST /api/player/cache-report` with `completedCommandId`.
 3. **Rebuild the playback timeline from `assets[]`.** Sort by `position`. This is the new loop. Apply:
    - **Add** — download if `requiresDownload: true`, then insert into the loop
    - **Remove** — drop slots whose ids are not in `currentAssetIds`; delete files listed in `removedAssetIds` only after a successful sync
@@ -197,7 +197,38 @@ Log.i("Playback", "asset=${asset.name} type=${asset.type} appliedDuration=${reso
 **Do not:**
 - Key “content changed” only on `playlistId`
 - Keep looping a stale in-memory queue after a successful `/sync`
-- Wait for the operator to re-assign the playlist, or for the 2-minute fallback sync, to pick up add/remove/reorder/duration
+- Wait for the operator to re-assign the playlist, or for the fallback full-sync timer, to pick up add/remove/reorder/duration
+- Keep polling `/sync-revision` every 5 seconds when the server sends `revisionPollIntervalSeconds: 0`
+
+---
+
+## Part 1E: Heartbeat-driven resync (August 2026)
+
+> Hand this to an existing Android player chat. CMS already queues `FORCE_SYNC` on assign, unassign, add/remove/reorder/duration. Stop the 5-second `/sync-revision` poll to cut API traffic. Heartbeat (~60s) is the delivery path.
+
+---
+**Copy from here:**
+
+**Objective:** Reduce player API requests. The CMS already bumps `playlistVersion` and queues `FORCE_SYNC` when a playlist is assigned, re-assigned, unassigned, or when assets are added, removed, reordered, or have duration changed. The player must **stop** polling `GET /api/player/sync-revision` every 5 seconds. Discover those commands on heartbeat instead.
+
+**Required player behavior:**
+
+1. Honor `revisionPollIntervalSeconds` from heartbeat / sync / device-report. **`0` means do not poll `/sync-revision`.** Treat a missing or `0` value as disabled (do not fall back to 5s).
+2. Send `POST /api/player/heartbeat` every **60 seconds**.
+3. On each heartbeat: if `FORCE_SYNC` is present **or** `syncRequired` is true **or** `contentRevision` changed → call `GET /api/player/sync` immediately and rebuild the playback loop from `assets[]`.
+4. Keep `syncIntervalSeconds` as a **fallback** full sync only (server default **600s**). Do not use it as the primary change detector.
+5. On network reconnect → `GET /player/sync` immediately (do not wait for heartbeat).
+6. When heartbeat/sync includes `nextContentChangeAt`, arm a local timer and call `/sync` at that instant so a schedule start/end does not wait for the next heartbeat.
+7. Pairing-status 5s poll stays **only while unpaired**.
+8. 401 on heartbeat still returns to pairing (detection within ~60s).
+
+**Do not:**
+- Clamp `revisionPollIntervalSeconds` to a minimum of 5
+- Poll `/sync-revision` when the advertised interval is 0
+- Wait for the 10-minute fallback timer to apply playlist edits
+
+---
+**End Copy**
 
 **Tasks:**
 1. Trace the sync/playback path. Find any branch that applies a new manifest only when `playlistId` changed; apply on `playlistVersion` / `revision` / `syncRequired` / `FORCE_SYNC` as well.
@@ -308,8 +339,8 @@ Send device health telemetry. Call every ~60 seconds.
   "status": "ok",
   "contentRevision": "pl:clxyz123:v3:1718712000000:tk1718712100000c1",
   "syncRequired": false,
-  "syncIntervalSeconds": 120,
-  "revisionPollIntervalSeconds": 5,
+  "syncIntervalSeconds": 600,
+  "revisionPollIntervalSeconds": 0,
   "initialSyncPending": false,
   "initialSyncTimeoutSeconds": 120,
   "command": "FORCE_SYNC",
@@ -318,8 +349,8 @@ Send device health telemetry. Call every ~60 seconds.
 ```
 
 - `syncRequired`: `true` when the server has a newer playlist/layout version the device has not fully cached (including add/remove/reorder/duration on the **same** playlist), when ticker content changed since the last sync, **or when the last ticker was unassigned/deleted** (`tickers` will be `[]`). Compare the full `contentRevision` string (it includes a `:tk…` suffix; `:tk0` means no active ticker).
-- `revisionPollIntervalSeconds`: how often to poll `GET /api/player/sync-revision` (default **5s**).
-- `syncIntervalSeconds`: fallback full manifest poll interval (default **120s**).
+- `revisionPollIntervalSeconds`: how often to poll `GET /api/player/sync-revision`. **`0` (default) means do not poll** — heartbeat delivers `FORCE_SYNC` / `syncRequired`.
+- `syncIntervalSeconds`: fallback full manifest poll interval (default **600s / 10 min**). Not the primary change-detection path.
 - `initialSyncPending`: `true` for freshly paired devices that have not completed their first successful sync.
 - `command` / `commandId`: optional cache command (`FORCE_SYNC`, `CLEAR_CACHE`, `REDOWNLOAD_PLAYLIST`). Execute immediately — do not wait for the next periodic sync timer.
 
@@ -327,7 +358,7 @@ Send device health telemetry. Call every ~60 seconds.
 
 #### `GET /api/player/sync-revision`
 
-Lightweight revision check. Poll every `revisionPollIntervalSeconds` (default **5s**). When `revision` differs from the last stored value **or** `syncRequired` is `true`, immediately call `GET /api/player/sync`.
+Optional lightweight revision check. **Do not poll this endpoint when `revisionPollIntervalSeconds` is `0`** (the server default). Heartbeat is the primary change-detection path. If the server advertises a positive interval, poll at that interval and call `GET /api/player/sync` when `revision` differs or `syncRequired` is `true`.
 
 **Response (200):**
 ```json
@@ -349,8 +380,8 @@ Lightweight revision check. Poll every `revisionPollIntervalSeconds` (default **
     "endDateTime": "2026-08-12T07:30:00.000Z"
   },
   "initialSyncPending": false,
-  "revisionPollIntervalSeconds": 5,
-  "syncIntervalSeconds": 120
+  "revisionPollIntervalSeconds": 0,
+  "syncIntervalSeconds": 600
 }
 ```
 
@@ -383,14 +414,13 @@ assignment (or `null` / empty state).
 When `revision` changes **OR** `syncRequired` is true **OR** `activeSchedule` becomes
 `null` while `contentSource` was `"schedule"` **OR** `playlistId` / `contentSource` changes:
 
-1. Immediately call `GET /api/player/sync` (do not wait for the 120s full-sync timer).
+1. Immediately call `GET /api/player/sync` (do not wait for the fallback full-sync timer).
 2. Switch playback to the new `playlistId` / empty state from that response.
 3. Do **NOT** restart the Android app, kill the foreground service, clear cache,
    unpair, or wipe the playlist disk cache.
-4. Optional: schedule a local wake at `nextContentChangeAt` / `scheduleValidUntil` to
-   poll revision immediately at the boundary (still trust the server response, not the
+4. Arm a local wake at `nextContentChangeAt` / `scheduleValidUntil` and call `/sync` at that boundary (still trust the server response, not the
    device clock, for what to play).
-5. After offline reconnect, call `/sync-revision` then `/sync` if needed — never keep
+5. After offline reconnect, call `/sync` — never keep
    playing an expired scheduled playlist from local memory alone.
 
 ```kotlin
@@ -874,11 +904,14 @@ This assigns the device to the user's organization, generates the `deviceToken`,
 │                       PLAYBACK PHASE                                │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  Every revisionPollIntervalSeconds (5s default):                    │
-│  GET /player/sync-revision ─────►  revision + syncRequired          │
-│  If revision changed OR syncRequired → GET /player/sync immediately │
+│  Primary change detection — every 60 seconds:                       │
+│  POST /player/heartbeat ────────►  syncRequired + optional command  │
+│  If FORCE_SYNC OR syncRequired OR contentRevision changed           │
+│    → GET /player/sync immediately                                   │
 │                                                                     │
-│  Fallback every syncIntervalSeconds (120s default):                 │
+│  Do not poll GET /player/sync-revision when interval is 0           │
+│                                                                     │
+│  Fallback every syncIntervalSeconds (600s default):                 │
 │  GET /player/sync?playlistVersion=N&knownAssetIds=...               │
 │                               ──►  Incremental manifest + deltas  │
 │  Download only requiresDownload    (pre-signed S3 URLs, 7d expiry)  │
@@ -887,10 +920,7 @@ This assigns the device to the user's organization, generates the `deviceToken`,
 │                                                                     │
 │  Immediately after pairing + on FORCE_SYNC command:                 │
 │  GET /player/sync (do not wait for periodic timer)                  │
-│                                                                     │
-│  Every 60 seconds:                                                  │
-│  POST /player/heartbeat ────────►  syncRequired + optional command  │
-│  { cpu, ram, temp, currentContent }  Execute command immediately    │
+│  Heartbeat also carries cpu/ram/temp/currentContent telemetry       │
 │                                                                     │
 │  Every 5 minutes:                                                   │
 │  POST /player/pop-logs ─────────►  Submits playback analytics       │
@@ -986,8 +1016,8 @@ data class HeartbeatResponse(
     val status: String,
     val contentRevision: String? = null,
     val syncRequired: Boolean = false,
-    val syncIntervalSeconds: Int = 120,
-    val revisionPollIntervalSeconds: Int = 5,
+    val syncIntervalSeconds: Int = 600,
+    val revisionPollIntervalSeconds: Int = 0,
     val initialSyncPending: Boolean = false,
     val initialSyncTimeoutSeconds: Int = 120,
     val configVersion: Int? = null,
@@ -1039,8 +1069,8 @@ data class SyncRevisionResponse(
     /** Informational only — the server has already applied the schedule to playlistId. */
     val activeSchedule: ActiveSchedule? = null,
     val initialSyncPending: Boolean,
-    val revisionPollIntervalSeconds: Int = 5,
-    val syncIntervalSeconds: Int = 120,
+    val revisionPollIntervalSeconds: Int = 0,
+    val syncIntervalSeconds: Int = 600,
 )
 
 data class ActiveSchedule(
@@ -1065,8 +1095,8 @@ data class SyncResponse(
     val pendingDownloadCount: Int = 0,
     val contentRevision: String? = null,
     val cacheCommand: CacheCommandInfo? = null,
-    val revisionPollIntervalSeconds: Int = 5,
-    val syncIntervalSeconds: Int = 120,
+    val revisionPollIntervalSeconds: Int = 0,
+    val syncIntervalSeconds: Int = 600,
     val initialSyncPending: Boolean = false,
     val configVersion: Int? = null,
     val features: Map<String, Boolean>? = null,
@@ -1214,7 +1244,7 @@ The Android app should handle:
   2. Clear stored `deviceToken` / pairing session from EncryptedSharedPreferences
   3. Navigate to the **Pair Device** screen
   4. Call `POST /api/player/init-pairing` to obtain a **new** pairing code
-- Detection SLA: with the existing `revisionPollIntervalSeconds` (5s) poll of `GET /api/player/sync-revision`, an unregistered or deleted device must return to pairing **within 30 seconds** (typically within one poll cycle). Do not wait for the longer heartbeat interval alone.
+- Detection SLA: with heartbeat every 60 seconds (and `revisionPollIntervalSeconds: 0`), an unregistered or deleted device must return to pairing on the next **401** from heartbeat or `/sync` (typically within one heartbeat). Do not poll `/sync-revision` solely to detect unregister.
 - **CMS Unregister:** the server clears `deviceToken`, `isPaired`, playlist/layout assignment and org membership. The next authenticated call returns **401**. Re-pair with the new code via CMS "Add Device".
 - **CMS Delete:** the device row is removed. Authenticated calls return **401**. `init-pairing` creates a **brand-new** draft device for the same `hardwareId`. Treat it as a first-time pair.
 - **Network errors** → switch to offline mode, queue logs, retry with exponential backoff
