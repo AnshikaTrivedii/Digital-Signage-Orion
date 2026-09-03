@@ -256,10 +256,15 @@ export class PlayerService {
     });
 
     if (existing) {
-      if (Object.keys(registrationMetadata).length > 0) {
+      const metadata = existing.isPaired
+        ? Object.fromEntries(
+            Object.entries(registrationMetadata).filter(([key]) => key !== 'name'),
+          )
+        : registrationMetadata;
+      if (Object.keys(metadata).length > 0) {
         await this.prisma.device.update({
           where: { id: existing.id },
-          data: registrationMetadata,
+          data: metadata,
         });
       }
 

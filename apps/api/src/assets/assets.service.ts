@@ -382,6 +382,13 @@ export class AssetsService {
     }
 
     const data: Record<string, unknown> = {};
+    if (typeof dto.name === 'string') {
+      const name = dto.name.trim();
+      if (!name) {
+        throw new BadRequestException('Asset name cannot be empty');
+      }
+      data.name = name;
+    }
     if (dto.tags !== undefined) {
       data.tags = dto.tags;
     }

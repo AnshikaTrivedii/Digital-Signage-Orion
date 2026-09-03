@@ -300,7 +300,6 @@ export function DeviceDetailPanel({
             const current = deviceRef.current;
             const next: Device = {
                 ...current,
-                name: data.deviceName || current.name,
                 status,
                 orientation: normalizeOrientation(data.orientation),
                 stretchToFit: Boolean(data.stretchToFit),
@@ -312,7 +311,6 @@ export function DeviceDetailPanel({
 
             const changed =
                 next.status !== current.status
-                || next.name !== current.name
                 || next.orientation !== current.orientation
                 || Boolean(next.stretchToFit) !== Boolean(current.stretchToFit)
                 || next.lastSeen !== current.lastSeen

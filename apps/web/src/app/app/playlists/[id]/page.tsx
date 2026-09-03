@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { motion, Reorder, useDragControls } from "framer-motion";
-import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Folder as FolderIcon, ChevronRight, ChevronLeft, Home } from "lucide-react";
+import { ArrowLeft, Clock, Plus, Trash2, GripVertical, Image as ImageIcon, Folder as FolderIcon, ChevronRight, ChevronLeft, Home, Pencil } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { apiRequest, apiDelete, ApiError } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
@@ -213,6 +213,10 @@ export default function PlaylistBuilderPage() {
 
     const [assets, setAssets] = useState<Asset[]>([]);
     const [playlistAssets, setPlaylistAssets] = useState<PlaylistAsset[]>([]);
+    const [playlistName, setPlaylistName] = useState("");
+    const [isRenaming, setIsRenaming] = useState(false);
+    const [renameValue, setRenameValue] = useState("");
+    const [isSavingName, setIsSavingName] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [savingDurationId, setSavingDurationId] = useState<string | null>(null);
     const [isSavingOrder, setIsSavingOrder] = useState(false);
@@ -328,9 +332,16 @@ export default function PlaylistBuilderPage() {
         if (!activeOrganizationId || !playlistId) return;
         setIsLoading(true);
         try {
-            const timelineRes = await apiRequest<PlaylistAsset[]>(`/api/client-data/playlists/${playlistId}/assets`, {
-                headers: { "x-organization-id": activeOrganizationId },
-            });
+            const [timelineRes, playlistsRes] = await Promise.all([
+                apiRequest<PlaylistAsset[]>(`/api/client-data/playlists/${playlistId}/assets`, {
+                    headers: { "x-organization-id": activeOrganizationId },
+                }),
+                apiRequest<{ id: string; name: string }[]>(`/api/client-data/playlists`, {
+                    headers: { "x-organization-id": activeOrganizationId },
+                }),
+            ]);
+            const current = playlistsRes.find((playlist) => playlist.id === playlistId);
+            if (current) setPlaylistName(current.name);
             const ordered = [...timelineRes]
                 .sort((a, b) => a.position - b.position)
                 .map((asset) => ({
@@ -364,6 +375,39 @@ export default function PlaylistBuilderPage() {
         mq.addEventListener("change", update);
         return () => mq.removeEventListener("change", update);
     }, []);
+
+    const savePlaylistName = async () => {
+        if (!canEdit || !activeOrganizationId) return;
+        const name = renameValue.trim();
+        if (!name) {
+            toast.error("Playlist name is required");
+            setRenameValue(playlistName);
+            setIsRenaming(false);
+            return;
+        }
+        if (name === playlistName) {
+            setIsRenaming(false);
+            return;
+        }
+        setIsSavingName(true);
+        try {
+            const updated = await apiRequest<{ id: string; name: string }>(
+                `/api/client-data/playlists/${playlistId}`,
+                {
+                    method: "PATCH",
+                    headers: { "x-organization-id": activeOrganizationId },
+                    body: JSON.stringify({ name }),
+                },
+            );
+            setPlaylistName(updated.name);
+            setIsRenaming(false);
+            toast.success("Playlist renamed");
+        } catch (error) {
+            toast.error(error instanceof ApiError ? error.message : "Failed to rename playlist");
+        } finally {
+            setIsSavingName(false);
+        }
+    };
 
     const handleAddAsset = async (asset: Asset) => {
         if (!canEdit) return toast.error("Read-only mode");
@@ -582,7 +626,50 @@ export default function PlaylistBuilderPage() {
                 <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
                     <button className="btn-icon-soft" onClick={() => router.push("/app/playlists")}><ArrowLeft size={20} /></button>
                     <div>
-                        <h1 style={{ fontSize: "1.5rem", fontWeight: 700 }}>Playlist builder</h1>
+                        {isRenaming ? (
+                            <input
+                                value={renameValue}
+                                autoFocus
+                                disabled={isSavingName}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void savePlaylistName();
+                                    }
+                                    if (e.key === "Escape") {
+                                        setIsRenaming(false);
+                                        setRenameValue(playlistName);
+                                    }
+                                }}
+                                onBlur={() => void savePlaylistName()}
+                                style={{
+                                    fontSize: "1.5rem",
+                                    fontWeight: 700,
+                                    padding: "2px 8px",
+                                    borderRadius: 6,
+                                    border: "1px solid hsla(var(--border-subtle), 1)",
+                                    background: "hsla(var(--bg-base), 0.8)",
+                                    color: "hsl(var(--text-primary))",
+                                }}
+                            />
+                        ) : (
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <h1 style={{ fontSize: "1.5rem", fontWeight: 700 }}>{playlistName || "Playlist builder"}</h1>
+                                {canEdit ? (
+                                    <button
+                                        className="btn-icon-soft"
+                                        title="Rename playlist"
+                                        onClick={() => {
+                                            setRenameValue(playlistName);
+                                            setIsRenaming(true);
+                                        }}
+                                    >
+                                        <Pencil size={16} />
+                                    </button>
+                                ) : null}
+                            </div>
+                        )}
                         <p style={{ color: "hsl(var(--text-secondary))", fontSize: "0.85rem" }}>Assemble the asset sequence for this playlist.</p>
                     </div>
                 </div>

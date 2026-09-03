@@ -543,9 +543,8 @@ export class DeviceManagementService {
     if (report.playerVersion !== undefined) data.playerVersion = report.playerVersion;
     if (report.deviceModel !== undefined) data.deviceModel = report.deviceModel;
     if (report.manufacturer !== undefined) data.manufacturer = report.manufacturer;
-    if (report.deviceName !== undefined && report.deviceName.trim()) {
-      data.name = report.deviceName.trim();
-    }
+    // Display name is CMS-managed (Devices → Edit). Do not overwrite from
+    // heartbeat / device-report telemetry — that is the Android Settings name.
     if (report.lastSyncTime !== undefined) {
       const parsed = new Date(report.lastSyncTime);
       if (!Number.isNaN(parsed.getTime())) {

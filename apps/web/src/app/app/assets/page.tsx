@@ -264,6 +264,7 @@ export default function AssetsPage() {
     const [newFolderName, setNewFolderName] = useState("");
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
     const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+    const [renamingAssetId, setRenamingAssetId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
     const [moveTarget, setMoveTarget] = useState<{ kind: "asset" | "folder"; id: string; name: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -543,6 +544,25 @@ export default function AssetsPage() {
         }
     };
 
+    const handleRenameAsset = async (assetId: string) => {
+        if (!canEdit || !orgId) return;
+        const name = renameValue.trim();
+        if (!name) return toast.error("Asset name cannot be empty");
+        try {
+            const updated = await apiRequest<Asset>(
+                `/api/organizations/${orgId}/assets/${assetId}`,
+                { method: "PATCH", body: JSON.stringify({ name }) },
+            );
+            setAssets(prev => prev.map(a => a.id === assetId ? updated : a));
+            if (selectedAsset?.id === assetId) setSelectedAsset(updated);
+            setRenamingAssetId(null);
+            setRenameValue("");
+            toast.success("Asset renamed");
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Failed to rename asset");
+        }
+    };
+
     const handleRenameFolder = async (folderId: string) => {
         if (!orgId) return;
         const name = renameValue.trim();
@@ -812,11 +832,46 @@ export default function AssetsPage() {
                                                 <span className="asset-icon-chip" style={{ ["--asset-tone" as string]: meta.tone }}>
                                                     <AssetTypeIcon type={asset.type} documentFormat={asset.documentFormat} previewKind={asset.previewKind} size={18} />
                                                 </span>
-                                                <h3 className="asset-name" title={asset.name}>{asset.name}</h3>
+                                                {renamingAssetId === asset.id ? (
+                                                    <input
+                                                        className="asset-name"
+                                                        value={renameValue}
+                                                        autoFocus
+                                                        onChange={e => setRenameValue(e.target.value)}
+                                                        onKeyDown={e => {
+                                                            if (e.key === "Enter") void handleRenameAsset(asset.id);
+                                                            if (e.key === "Escape") { setRenamingAssetId(null); setRenameValue(""); }
+                                                        }}
+                                                        onBlur={() => void handleRenameAsset(asset.id)}
+                                                        style={{
+                                                            flex: 1,
+                                                            minWidth: 0,
+                                                            fontSize: "0.95rem",
+                                                            fontWeight: 700,
+                                                            padding: "2px 6px",
+                                                            borderRadius: 6,
+                                                            border: "1px solid hsla(var(--border-subtle), 1)",
+                                                            background: "hsla(var(--bg-base), 0.8)",
+                                                            color: "hsl(var(--text-primary))",
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <h3 className="asset-name" title={asset.name}>{asset.name}</h3>
+                                                )}
                                                 {canEdit && (
-                                                    <button className="btn-icon-soft" style={{ padding: 4, flexShrink: 0 }} onClick={() => { setEditingTags(asset.id); setTagInput(asset.tags.join(", ")); }} title="Edit tags">
-                                                        <Tag size={14} />
-                                                    </button>
+                                                    <>
+                                                        <button
+                                                            className="btn-icon-soft"
+                                                            style={{ padding: 4, flexShrink: 0 }}
+                                                            onClick={() => { setRenamingFolderId(null); setRenamingAssetId(asset.id); setRenameValue(asset.name); }}
+                                                            title="Rename"
+                                                        >
+                                                            <Pencil size={14} />
+                                                        </button>
+                                                        <button className="btn-icon-soft" style={{ padding: 4, flexShrink: 0 }} onClick={() => { setEditingTags(asset.id); setTagInput(asset.tags.join(", ")); }} title="Edit tags">
+                                                            <Tag size={14} />
+                                                        </button>
+                                                    </>
                                                 )}
                                             </div>
 
@@ -1024,8 +1079,45 @@ export default function AssetsPage() {
                             </div>
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
+                                <div>
+                                    <p style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))", textTransform: "uppercase", fontWeight: 700, marginBottom: 4 }}>Name</p>
+                                    {canEdit && renamingAssetId === selectedAsset.id ? (
+                                        <input
+                                            value={renameValue}
+                                            autoFocus
+                                            onChange={e => setRenameValue(e.target.value)}
+                                            onKeyDown={e => {
+                                                if (e.key === "Enter") void handleRenameAsset(selectedAsset.id);
+                                                if (e.key === "Escape") { setRenamingAssetId(null); setRenameValue(selectedAsset.name); }
+                                            }}
+                                            onBlur={() => void handleRenameAsset(selectedAsset.id)}
+                                            style={{
+                                                width: "100%",
+                                                fontSize: "0.9rem",
+                                                fontWeight: 600,
+                                                padding: "4px 8px",
+                                                borderRadius: 6,
+                                                border: "1px solid hsla(var(--border-subtle), 1)",
+                                                background: "hsla(var(--bg-base), 0.8)",
+                                                color: "hsl(var(--text-primary))",
+                                            }}
+                                        />
+                                    ) : (
+                                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                            <p style={{ fontSize: "0.9rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedAsset.name}</p>
+                                            {canEdit ? (
+                                                <button
+                                                    className="btn-icon-soft"
+                                                    title="Rename asset"
+                                                    onClick={() => { setRenamingFolderId(null); setRenamingAssetId(selectedAsset.id); setRenameValue(selectedAsset.name); }}
+                                                >
+                                                    <Pencil size={14} />
+                                                </button>
+                                            ) : null}
+                                        </div>
+                                    )}
+                                </div>
                                 {[
-                                    { label: "Name", value: selectedAsset.name },
                                     { label: "Type", value: selectedAsset.type },
                                     { label: "Size", value: formatFileSize(selectedAsset.fileSize) },
                                     { label: "Dimensions", value: selectedAsset.width && selectedAsset.height ? `${selectedAsset.width}×${selectedAsset.height}` : "N/A" },

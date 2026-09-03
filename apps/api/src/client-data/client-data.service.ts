@@ -466,6 +466,39 @@ export class ClientDataService {
     return { success: true };
   }
 
+  async updatePlaylist(actor: RequestActor, playlistId: string, body: { name?: string }) {
+    this.assertCanEdit(actor);
+    const organizationId = this.getOrgId(actor);
+    const existing = await this.prisma.playlist.findFirst({
+      where: { id: playlistId, organizationId },
+      include: {
+        items: { orderBy: { position: 'asc' } },
+        playlistAssets: { orderBy: { position: 'asc' } },
+        devices: { select: { id: true, name: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException('Playlist not found');
+
+    if (typeof body.name !== 'string') {
+      return this.serializePlaylist(existing);
+    }
+
+    const name = body.name.trim();
+    if (!name) throw new BadRequestException('Playlist name cannot be empty');
+
+    const playlist = await this.prisma.playlist.update({
+      where: { id: playlistId },
+      data: { name },
+      include: {
+        items: { orderBy: { position: 'asc' } },
+        playlistAssets: { orderBy: { position: 'asc' } },
+        devices: { select: { id: true, name: true } },
+      },
+    });
+
+    return this.serializePlaylist(playlist);
+  }
+
   async reorderPlaylistItems(
     actor: RequestActor,
     playlistId: string,

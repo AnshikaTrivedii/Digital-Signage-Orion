@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    Play, Plus, Search, Trash2, Clock, X,
+    Play, Plus, Search, Trash2, Clock, X, Pencil,
     List, Monitor, LayoutGrid, Image as ImageIcon, Send, Settings2
 } from "lucide-react";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
@@ -53,6 +53,9 @@ export default function PlaylistsPage() {
     const [deviceOptions, setDeviceOptions] = useState<DeviceOption[]>([]);
     const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
     const [isSavingAssignments, setIsSavingAssignments] = useState(false);
+    const [renamingPlaylistId, setRenamingPlaylistId] = useState<string | null>(null);
+    const [renameValue, setRenameValue] = useState("");
+    const [isRenaming, setIsRenaming] = useState(false);
 
     const filtered = useMemo(() => {
         if (!search) return playlists;
@@ -119,6 +122,44 @@ export default function PlaylistsPage() {
             setNewName("");
             toast.success("Playlist created!");
         })();
+    };
+
+    const applyPlaylistUpdate = (updated: Playlist) => {
+        const next = {
+            ...updated,
+            lastPlayed: updated.lastPlayed ? new Date(updated.lastPlayed).toLocaleString() : "Never",
+        };
+        setPlaylists((previous) =>
+            previous.map((playlist) => (playlist.id === next.id ? next : playlist)),
+        );
+        setSelectedPlaylist((current) => (current?.id === next.id ? next : current));
+        return next;
+    };
+
+    const handleRename = async (playlist: Playlist) => {
+        if (!canEdit) return toast.error("You only have view access to playlists.");
+        if (!activeOrganizationId) return toast.error("Select an organization first");
+        const name = renameValue.trim();
+        if (!name) return toast.error("Playlist name is required");
+        if (name === playlist.name) {
+            setRenamingPlaylistId(null);
+            return;
+        }
+        setIsRenaming(true);
+        try {
+            const updated = await apiRequest<Playlist>(`/api/client-data/playlists/${playlist.id}`, {
+                method: "PATCH",
+                headers: { "x-organization-id": activeOrganizationId },
+                body: JSON.stringify({ name }),
+            });
+            applyPlaylistUpdate(updated);
+            setRenamingPlaylistId(null);
+            toast.success("Playlist renamed");
+        } catch (error) {
+            toast.error(error instanceof ApiError ? error.message : "Failed to rename playlist");
+        } finally {
+            setIsRenaming(false);
+        }
     };
 
     const handleDelete = (id: string) => {
@@ -258,14 +299,57 @@ export default function PlaylistsPage() {
                                             <List size={20} style={{ color: p.color }} />
                                         </div>
                                         <div>
-                                            <h3 style={{ fontSize: "1.05rem", fontWeight: 700 }}>{p.name}</h3>
+                                            {renamingPlaylistId === p.id ? (
+                                                <input
+                                                    value={renameValue}
+                                                    autoFocus
+                                                    disabled={isRenaming}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                    onChange={(e) => setRenameValue(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter") {
+                                                            e.preventDefault();
+                                                            void handleRename(p);
+                                                        }
+                                                        if (e.key === "Escape") setRenamingPlaylistId(null);
+                                                    }}
+                                                    onBlur={() => void handleRename(p)}
+                                                    style={{
+                                                        width: "100%",
+                                                        fontSize: "1.05rem",
+                                                        fontWeight: 700,
+                                                        padding: "2px 6px",
+                                                        borderRadius: 6,
+                                                        border: "1px solid hsla(var(--border-subtle), 1)",
+                                                        background: "hsla(var(--bg-base), 0.8)",
+                                                        color: "hsl(var(--text-primary))",
+                                                    }}
+                                                />
+                                            ) : (
+                                                <h3 style={{ fontSize: "1.05rem", fontWeight: 700 }}>{p.name}</h3>
+                                            )}
                                             <span style={{
                                                 fontSize: "0.65rem", fontWeight: 700, padding: "2px 8px", borderRadius: 20,
                                                 background: `hsla(${statusColor(p.status)}, 0.1)`, color: `hsl(${statusColor(p.status)})`,
                                             }}>{p.status}</span>
                                         </div>
                                     </div>
-                                    <button className="btn-icon-soft" disabled={!canEdit} onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}><Trash2 size={16} /></button>
+                                    <div style={{ display: "flex", gap: 4 }}>
+                                        <button
+                                            className="btn-icon-soft"
+                                            disabled={!canEdit}
+                                            title="Rename"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setRenamingPlaylistId(p.id);
+                                                setRenameValue(p.name);
+                                            }}
+                                            style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}
+                                        >
+                                            <Pencil size={16} />
+                                        </button>
+                                        <button className="btn-icon-soft" disabled={!canEdit} onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} style={{ opacity: canEdit ? 1 : 0.45, cursor: canEdit ? "pointer" : "not-allowed" }}><Trash2 size={16} /></button>
+                                    </div>
                                 </div>
                                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
                                     <div style={{ textAlign: "center", padding: 8, borderRadius: 8, background: "hsla(var(--bg-base), 0.4)" }}>
@@ -303,9 +387,50 @@ export default function PlaylistsPage() {
                         <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
                             className="glass-panel" style={{ width: "100%", maxWidth: 520, maxHeight: "85vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
                             <div style={{ padding: "24px 32px", borderBottom: "1px solid hsla(var(--border-subtle), 0.3)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
                                     <div style={{ width: 10, height: 10, borderRadius: "50%", background: selectedPlaylist.color }} />
-                                    <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedPlaylist.name}</h2>
+                                    {renamingPlaylistId === selectedPlaylist.id ? (
+                                        <input
+                                            value={renameValue}
+                                            autoFocus
+                                            disabled={isRenaming}
+                                            onChange={(e) => setRenameValue(e.target.value)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                    e.preventDefault();
+                                                    void handleRename(selectedPlaylist);
+                                                }
+                                                if (e.key === "Escape") setRenamingPlaylistId(null);
+                                            }}
+                                            onBlur={() => void handleRename(selectedPlaylist)}
+                                            style={{
+                                                flex: 1,
+                                                fontSize: "1.25rem",
+                                                fontWeight: 700,
+                                                padding: "4px 8px",
+                                                borderRadius: 6,
+                                                border: "1px solid hsla(var(--border-subtle), 1)",
+                                                background: "hsla(var(--bg-base), 0.8)",
+                                                color: "hsl(var(--text-primary))",
+                                            }}
+                                        />
+                                    ) : (
+                                        <>
+                                            <h2 style={{ fontSize: "1.25rem", fontWeight: 700 }}>{selectedPlaylist.name}</h2>
+                                            {canEdit ? (
+                                                <button
+                                                    className="btn-icon-soft"
+                                                    title="Rename playlist"
+                                                    onClick={() => {
+                                                        setRenamingPlaylistId(selectedPlaylist.id);
+                                                        setRenameValue(selectedPlaylist.name);
+                                                    }}
+                                                >
+                                                    <Pencil size={16} />
+                                                </button>
+                                            ) : null}
+                                        </>
+                                    )}
                                 </div>
                                 <button className="btn-icon-soft" onClick={closePlaylist}><X size={24} /></button>
                             </div>

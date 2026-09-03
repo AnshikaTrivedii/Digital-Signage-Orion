@@ -34,6 +34,7 @@ import { UpdateDevicePlaybackSettingsDto } from '../device-management/dto/update
 import { CreateLayoutDto } from './dto/create-layout.dto';
 import { SaveLayoutZonesDto } from './dto/save-layout-zones.dto';
 import { UpdateLayoutDto } from './dto/update-layout.dto';
+import { UpdatePlaylistDto } from './dto/update-playlist.dto';
 
 @Controller('client-data')
 @UseGuards(JwtAuthGuard)
@@ -58,6 +59,15 @@ export class ClientDataController {
   @Delete('playlists/:playlistId')
   deletePlaylist(@CurrentActor() actor: RequestActor, @Param('playlistId') playlistId: string) {
     return this.clientDataService.deletePlaylist(actor, playlistId);
+  }
+
+  @Patch('playlists/:playlistId')
+  updatePlaylist(
+    @CurrentActor() actor: RequestActor,
+    @Param('playlistId') playlistId: string,
+    @Body() body: UpdatePlaylistDto,
+  ) {
+    return this.clientDataService.updatePlaylist(actor, playlistId, body);
   }
 
   @Patch('playlists/:playlistId/reorder')
