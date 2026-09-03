@@ -14,8 +14,8 @@ import {
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Presence lease. Player writes lastSeenAt about every 30s (heartbeat or revision poll). */
-const OFFLINE_THRESHOLD_MS = 90 * 1000;
+/** Presence lease. Player writes lastSeenAt on heartbeat (~60s); 3x that window. */
+const OFFLINE_THRESHOLD_MS = 180 * 1000;
 
 type DevicePresence = {
   lastSeenAt?: Date | null;
@@ -25,8 +25,11 @@ type DevicePresence = {
 /** Window a freshly onboarded device has to complete its first playlist download. */
 export const INITIAL_SYNC_TIMEOUT_SECONDS = 120;
 
-/** Lightweight revision poll interval the player should use to detect CMS changes quickly. */
-export const REVISION_POLL_INTERVAL_SECONDS = 5;
+/**
+ * Lightweight revision poll interval advertised to the player.
+ * `0` means do not poll `/player/sync-revision` — heartbeat delivers FORCE_SYNC.
+ */
+export const DEFAULT_REVISION_POLL_INTERVAL_SECONDS = 0;
 
 export type InitialSyncState = 'none' | 'pending' | 'timed_out';
 
@@ -406,12 +409,13 @@ export class DeviceManagementService {
   }
 
   /**
-   * Sync polling interval (seconds) that the player should use between manifest
-   * re-fetches. Server-configurable via PLAYER_SYNC_INTERVAL_SECONDS, defaults
-   * to 120s (2 minutes). Clamped to a sane 30s–3600s range.
+   * Fallback full-manifest poll interval (seconds). Heartbeat delivers FORCE_SYNC
+   * when CMS content changes; this timer is only a safety net.
+   * Server-configurable via PLAYER_SYNC_INTERVAL_SECONDS, defaults to 600s (10 min).
+   * Clamped to 30s–3600s.
    */
   getSyncIntervalSeconds(): number {
-    const DEFAULT_SYNC_INTERVAL_SECONDS = 120;
+    const DEFAULT_SYNC_INTERVAL_SECONDS = 600;
     const MIN_SYNC_INTERVAL_SECONDS = 30;
     const MAX_SYNC_INTERVAL_SECONDS = 3600;
     const raw = process.env.PLAYER_SYNC_INTERVAL_SECONDS;
@@ -419,6 +423,20 @@ export class DeviceManagementService {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SYNC_INTERVAL_SECONDS;
     return Math.min(MAX_SYNC_INTERVAL_SECONDS, Math.max(MIN_SYNC_INTERVAL_SECONDS, Math.floor(parsed)));
+  }
+
+  /**
+   * How often the player should poll GET /player/sync-revision.
+   * `0` (default) disables the poll — content changes arrive on heartbeat FORCE_SYNC.
+   * Server-configurable via PLAYER_REVISION_POLL_INTERVAL_SECONDS. Clamped to 0–3600s.
+   */
+  getRevisionPollIntervalSeconds(): number {
+    const MAX_REVISION_POLL_INTERVAL_SECONDS = 3600;
+    const raw = process.env.PLAYER_REVISION_POLL_INTERVAL_SECONDS;
+    if (raw === undefined || raw.trim() === '') return DEFAULT_REVISION_POLL_INTERVAL_SECONDS;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_REVISION_POLL_INTERVAL_SECONDS;
+    return Math.min(MAX_REVISION_POLL_INTERVAL_SECONDS, Math.floor(parsed));
   }
 
   getPlayerConfig(device: Device) {
@@ -439,7 +457,7 @@ export class DeviceManagementService {
       configVersion: device.configVersion,
       popLogsExpected: device.featureProofOfPlay,
       syncIntervalSeconds: this.getSyncIntervalSeconds(),
-      revisionPollIntervalSeconds: REVISION_POLL_INTERVAL_SECONDS,
+      revisionPollIntervalSeconds: this.getRevisionPollIntervalSeconds(),
       initialSyncPending: resolveInitialSyncState(device) === 'pending',
       initialSyncTimeoutSeconds: INITIAL_SYNC_TIMEOUT_SECONDS,
       // Top-level fields for the Android player (and nested display for CMS UI).
@@ -481,9 +499,9 @@ export class DeviceManagementService {
 
   /**
    * Mark a device as recently seen from any authenticated player API call.
-   * Online/offline in the CMS is derived from `lastSeenAt` (90-second threshold).
-   * Sync and revision polls must refresh presence — content can keep playing from
-   * cache even when heartbeats are missing, which previously showed Offline.
+   * Online/offline in the CMS is derived from `lastSeenAt` (3-minute threshold).
+   * Heartbeat is the primary presence source; sync still refreshes it so a
+   * device that is downloading content stays Online.
    */
   async touchPresence(deviceId: string) {
     const now = new Date();
@@ -491,7 +509,7 @@ export class DeviceManagementService {
       where: { id: deviceId },
       select: { lastSeenAt: true, status: true },
     });
-    // Skip frequent writes from the 5s revision poll when already online.
+    // Skip frequent presence writes when already online (legacy revision polls).
     if (
       existing?.lastSeenAt
       && now.getTime() - existing.lastSeenAt.getTime() < 30_000

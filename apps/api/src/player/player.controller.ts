@@ -80,7 +80,8 @@ export class PlayerController {
   }
 
   /**
-   * Lightweight content revision polled by Android for near-real-time update detection.
+   * Optional lightweight revision check. Disabled by default (`revisionPollIntervalSeconds: 0`);
+   * heartbeat delivers FORCE_SYNC / syncRequired when CMS content changes.
    */
   @Get('sync-revision')
   getSyncRevision(@Headers('authorization') authHeader: string | undefined) {

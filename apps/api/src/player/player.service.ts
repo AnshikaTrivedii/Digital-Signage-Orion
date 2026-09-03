@@ -682,13 +682,11 @@ export class PlayerService {
   }
 
   /**
-   * Lightweight revision check polled by Android every ~5 seconds.
-   * Changes whenever the assigned playlist or layout manifest is bumped.
+   * Lightweight revision check. Players honor `revisionPollIntervalSeconds` from
+   * heartbeat/config; `0` means this endpoint is not polled.
    */
   async getSyncRevision(authHeader: string | undefined) {
     const device = await this.resolveDeviceByToken(authHeader);
-    // Revision polls every ~5s — treat them as live presence so CMS status
-    // stays Online while the player is actively talking to the API.
     await this.deviceManagement.touchPresence(device.id);
     const now = new Date();
     const effective = await this.resolveEffectiveContent(device, now);
