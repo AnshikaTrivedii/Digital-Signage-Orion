@@ -23,7 +23,13 @@ function getPortalHomePath(portal: "platform" | "client") {
 }
 
 function getPortalTitle(portal: "platform" | "client") {
-    return portal === "platform" ? "Platform Portal" : "Client Portal";
+    return portal === "platform" ? "Platform" : "Workspace";
+}
+
+function getPageTitle(pathname: string, portal: "platform" | "client", navItems: PortalNavItem[]) {
+    const homePath = getPortalHomePath(portal);
+    const match = navItems.find((item) => pathname === item.path || (item.path !== homePath && pathname.startsWith(`${item.path}/`)));
+    return match?.name ?? getPortalTitle(portal);
 }
 
 export function PortalShell({ children, portal, navItems }: PortalShellProps) {
@@ -139,6 +145,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     }, [hasElevatedDashboardAccess, portal, user]);
     const canSwitchToPlatform = portal === "client" && hasPlatformAccess;
     const canSwitchToClient = portal === "platform" && hasClientAccess;
+    const pageTitle = getPageTitle(pathname, portal, visibleNavItems);
 
     if (isLoading || !user || (portal === "platform" && !hasPlatformAccess) || (portal === "client" && !hasClientAccess)) {
         return (
@@ -215,11 +222,11 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                                 href={canSwitchToPlatform ? "/platform" : "/app"}
                                 onClick={() => setSidebarOpen(false)}
                                 className="sidebar-portal-switch"
-                                title={canSwitchToPlatform ? "Switch to Platform Portal" : "Switch to Client Portal"}
+                                title={canSwitchToPlatform ? "Switch to Platform" : "Switch to Workspace"}
                             >
                                 <ArrowRightLeft size={14} />
                                 {!isDesktopSidebarCollapsed && (
-                                    <span>{canSwitchToPlatform ? "Platform Portal" : "Client Portal"}</span>
+                                    <span>{canSwitchToPlatform ? "Platform" : "Workspace"}</span>
                                 )}
                             </Link>
                         )}
@@ -290,11 +297,13 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                             <Menu size={22} />
                         </button>
                         <div>
-                            <div style={{ fontSize: "0.74rem", fontWeight: 800, color: "hsl(var(--accent-primary))", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                                {getPortalTitle(portal)}
+                            <div style={{ fontSize: "1.05rem", fontWeight: 700, letterSpacing: "-0.02em", fontFamily: "Outfit, sans-serif" }}>
+                                {pageTitle}
                             </div>
-                            <div style={{ fontSize: "0.85rem", color: "hsl(var(--text-muted))" }}>
-                                {portal === "platform" ? "Internal client operations and governance" : selectedOrganizationName ?? "Client workspace"}
+                            <div style={{ fontSize: "0.78rem", color: "hsl(var(--text-muted))" }}>
+                                {portal === "platform"
+                                    ? "Client operations and governance"
+                                    : selectedOrganizationName ?? "Workspace"}
                             </div>
                         </div>
                     </div>
