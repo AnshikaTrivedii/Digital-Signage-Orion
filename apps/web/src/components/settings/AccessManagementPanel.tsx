@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import { Building2, CheckCircle2, Copy, Link2, Plus, RefreshCw, Shield, Trash2, UserPlus, Users2 } from "lucide-react";
+import { Building2, CheckCircle2, Copy, Link2, Monitor, Plus, RefreshCw, Shield, Trash2, UserPlus, Users2 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { useAuth } from "@/components/AuthProvider";
 import { ApiError, apiRequest } from "@/lib/api";
@@ -54,6 +54,7 @@ type OrganizationSummary = {
     status: "DRAFT" | "ACTIVE" | "SUSPENDED";
     primaryContactName?: string | null;
     primaryContactEmail?: string | null;
+    deviceLimit: number | null;
     memberships: Array<{
         id: string;
         role: "ORG_ADMIN" | "MANAGER" | "CONTENT_EDITOR" | "ANALYST_VIEWER";
@@ -64,6 +65,7 @@ type OrganizationSummary = {
             accessLevel: FeatureAccessLevel;
         }>;
     }>;
+    _count?: { devices: number };
 };
 
 type FeatureKey =
@@ -136,7 +138,10 @@ export function AccessManagementPanel() {
         primaryContactName: "",
         primaryContactEmail: "",
         salesNotes: "",
+        deviceLimit: "",
     });
+    const [deviceLimitDrafts, setDeviceLimitDrafts] = useState<Record<string, string>>({});
+    const [savingDeviceLimitId, setSavingDeviceLimitId] = useState<string | null>(null);
     const [memberDraft, setMemberDraft] = useState({
         fullName: "",
         email: "",
@@ -224,11 +229,24 @@ export function AccessManagementPanel() {
     };
 
     const createOrganization = async () => {
+        const { deviceLimit, ...profile } = organizationDraft;
+        const trimmedDeviceLimit = deviceLimit.trim();
+        if (trimmedDeviceLimit && !Number.isInteger(Number(trimmedDeviceLimit))) {
+            toast.error("Device limit must be a whole number");
+            return;
+        }
+        if (trimmedDeviceLimit && Number(trimmedDeviceLimit) < 1) {
+            toast.error("Device limit must be at least 1");
+            return;
+        }
+
         setSavingOrganization(true);
         try {
             const created = await apiRequest<OrganizationSummary>("/api/organizations", {
                 method: "POST",
-                body: JSON.stringify(organizationDraft),
+                body: JSON.stringify(
+                    trimmedDeviceLimit ? { ...profile, deviceLimit: Number(trimmedDeviceLimit) } : profile,
+                ),
             });
             toast.success("Organization created");
             setOrganizationDraft({
@@ -237,6 +255,7 @@ export function AccessManagementPanel() {
                 primaryContactName: "",
                 primaryContactEmail: "",
                 salesNotes: "",
+                deviceLimit: "",
             });
             setSelectedOrganizationId(created.id);
             await loadData();
@@ -244,6 +263,33 @@ export function AccessManagementPanel() {
             toast.error(error instanceof ApiError ? error.message : "Unable to create organization");
         } finally {
             setSavingOrganization(false);
+        }
+    };
+
+    const saveDeviceLimit = async (organizationId: string) => {
+        const raw = (deviceLimitDrafts[organizationId] ?? "").trim();
+        if (raw && (!Number.isInteger(Number(raw)) || Number(raw) < 1)) {
+            toast.error("Device limit must be a whole number of 1 or more");
+            return;
+        }
+
+        setSavingDeviceLimitId(organizationId);
+        try {
+            await apiRequest(`/api/organizations/${organizationId}`, {
+                method: "PATCH",
+                body: JSON.stringify({ deviceLimit: raw ? Number(raw) : null }),
+            });
+            toast.success(raw ? `Device limit set to ${Number(raw)}` : "Device limit removed");
+            setDeviceLimitDrafts((current) => {
+                const next = { ...current };
+                delete next[organizationId];
+                return next;
+            });
+            await loadData();
+        } catch (error) {
+            toast.error(error instanceof ApiError ? error.message : "Unable to update device limit");
+        } finally {
+            setSavingDeviceLimitId(null);
         }
     };
 
@@ -409,6 +455,7 @@ export function AccessManagementPanel() {
                         <input value={organizationDraft.slug} onChange={(event) => setOrganizationDraft((current) => ({ ...current, slug: event.target.value.toLowerCase() }))} placeholder="Slug" style={inputStyle} />
                         <input value={organizationDraft.primaryContactName} onChange={(event) => setOrganizationDraft((current) => ({ ...current, primaryContactName: event.target.value }))} placeholder="Primary contact" style={inputStyle} />
                         <input value={organizationDraft.primaryContactEmail} onChange={(event) => setOrganizationDraft((current) => ({ ...current, primaryContactEmail: event.target.value }))} placeholder="Contact email" style={inputStyle} />
+                        <input value={organizationDraft.deviceLimit} onChange={(event) => setOrganizationDraft((current) => ({ ...current, deviceLimit: event.target.value.replace(/[^0-9]/g, "") }))} inputMode="numeric" placeholder="Device limit (blank = unlimited)" style={inputStyle} />
                         <button className="btn-primary" onClick={() => void createOrganization()} disabled={savingOrganization} style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", minHeight: 44 }}>
                             <Building2 size={16} /> Create Organization
                         </button>
@@ -425,6 +472,9 @@ export function AccessManagementPanel() {
                     <div style={{ display: "grid", gap: 12 }}>
                         {organizations.map((organization) => {
                             const isSelected = effectiveOrganizationId === organization.id;
+                            const deviceCount = organization._count?.devices ?? 0;
+                            const limitDraft = deviceLimitDrafts[organization.id];
+                            const isEditingLimit = limitDraft !== undefined;
                             return (
                                 <div key={organization.id} style={{ ...rowStyle, borderColor: isSelected ? "hsla(var(--accent-primary), 0.35)" : rowStyle.border as string }}>
                                     <div>
@@ -438,6 +488,70 @@ export function AccessManagementPanel() {
                                         <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
                                             {organization.memberships.length} membership{organization.memberships.length === 1 ? "" : "s"}
                                         </span>
+                                        {canManageTenantMembers ? (
+                                            isEditingLimit ? (
+                                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                    <Monitor size={14} style={{ color: "hsl(var(--text-muted))" }} />
+                                                    <input
+                                                        value={limitDraft}
+                                                        onChange={(event) =>
+                                                            setDeviceLimitDrafts((current) => ({
+                                                                ...current,
+                                                                [organization.id]: event.target.value.replace(/[^0-9]/g, ""),
+                                                            }))
+                                                        }
+                                                        inputMode="numeric"
+                                                        placeholder="Unlimited"
+                                                        autoFocus
+                                                        style={{ ...inputStyle, width: 96, padding: "6px 8px", fontSize: "0.75rem" }}
+                                                    />
+                                                    <button
+                                                        className="btn-primary"
+                                                        onClick={() => void saveDeviceLimit(organization.id)}
+                                                        disabled={savingDeviceLimitId === organization.id}
+                                                        style={{ fontSize: "0.72rem", padding: "6px 10px" }}
+                                                    >
+                                                        Save
+                                                    </button>
+                                                    <button
+                                                        className="btn-outline"
+                                                        onClick={() =>
+                                                            setDeviceLimitDrafts((current) => {
+                                                                const next = { ...current };
+                                                                delete next[organization.id];
+                                                                return next;
+                                                            })
+                                                        }
+                                                        style={{ fontSize: "0.72rem", padding: "6px 10px" }}
+                                                    >
+                                                        Cancel
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    className="btn-outline"
+                                                    onClick={() =>
+                                                        setDeviceLimitDrafts((current) => ({
+                                                            ...current,
+                                                            [organization.id]: organization.deviceLimit === null ? "" : String(organization.deviceLimit),
+                                                        }))
+                                                    }
+                                                    title="Change the device limit for this organization"
+                                                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.75rem" }}
+                                                >
+                                                    <Monitor size={14} />
+                                                    {organization.deviceLimit === null
+                                                        ? `${deviceCount} devices • unlimited`
+                                                        : `${deviceCount} / ${organization.deviceLimit} devices`}
+                                                </button>
+                                            )
+                                        ) : (
+                                            <span style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>
+                                                {organization.deviceLimit === null
+                                                    ? `${deviceCount} devices • unlimited`
+                                                    : `${deviceCount} / ${organization.deviceLimit} devices`}
+                                            </span>
+                                        )}
                                         <button
                                             className="btn-outline"
                                             onClick={() => {

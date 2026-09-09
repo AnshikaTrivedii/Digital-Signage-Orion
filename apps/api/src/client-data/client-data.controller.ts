@@ -197,6 +197,11 @@ export class ClientDataController {
     return this.clientDataService.listDevices(actor);
   }
 
+  @Get('devices/quota')
+  getDeviceQuota(@CurrentActor() actor: RequestActor) {
+    return this.clientDataService.getDeviceQuota(actor);
+  }
+
   @Post('devices')
   createDevice(@CurrentActor() actor: RequestActor, @Body() body: CreateDeviceDto) {
     return this.clientDataService.createDevice(actor, body);

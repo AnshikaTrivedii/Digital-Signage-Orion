@@ -103,6 +103,13 @@ interface CachedAssetRow {
     downloadedAt: string | null;
 }
 
+/** A null `limit`/`remaining` means the organization may add unlimited devices. */
+interface DeviceQuota {
+    limit: number | null;
+    used: number;
+    remaining: number | null;
+}
+
 type StatusFilter = "all" | "online" | "offline" | "warning";
 
 interface DeviceFormState {
@@ -149,6 +156,7 @@ export default function DevicesPage() {
     const { activeOrganizationId, refreshSession } = useAuth();
 
     const [devices, setDevices] = useState<Device[]>([]);
+    const [deviceQuota, setDeviceQuota] = useState<DeviceQuota | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -191,10 +199,13 @@ export default function DevicesPage() {
         setIsLoading(true);
         setLoadError(null);
         try {
-            const response = await apiRequest<Device[]>("/api/client-data/devices", {
-                headers: { "x-organization-id": activeOrganizationId },
-            });
+            const headers = { "x-organization-id": activeOrganizationId };
+            const [response, quota] = await Promise.all([
+                apiRequest<Device[]>("/api/client-data/devices", { headers }),
+                apiRequest<DeviceQuota>("/api/client-data/devices/quota", { headers }),
+            ]);
             setDevices(response);
+            setDeviceQuota(quota);
             setSelectedDevice((current) => {
                 if (!current) return current;
                 return response.find((d) => d.id === current.id) ?? current;
@@ -331,6 +342,12 @@ export default function DevicesPage() {
 
     const openPairing = () => {
         if (!canControl) return;
+        if (deviceQuota?.remaining === 0) {
+            toast.error(
+                `Device limit reached (${deviceQuota.used}/${deviceQuota.limit}). Remove a device or contact Orion to raise your limit.`,
+            );
+            return;
+        }
         setPairingCode("");
         setPairingName("");
         setShowManualRegister(false);
@@ -606,6 +623,12 @@ export default function DevicesPage() {
 
     const isBusy = (deviceId: string) => pendingDeviceId === deviceId && pendingAction !== null;
 
+    const isAtDeviceLimit = deviceQuota?.remaining === 0;
+    const canAddDevice = canControl && !isAtDeviceLimit;
+    const deviceLimitMessage = deviceQuota?.limit
+        ? `Device limit reached (${deviceQuota.used}/${deviceQuota.limit}). Remove a device or contact Orion to raise your limit.`
+        : "Device limit reached.";
+
     return (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
             {!canControl && (
@@ -617,6 +640,17 @@ export default function DevicesPage() {
                     <h1 style={{ fontSize: "1.875rem", fontWeight: 700, marginBottom: 4 }}>Device Management</h1>
                     <p style={{ color: "hsl(var(--text-secondary))" }}>
                         Monitor and manage all connected signage players.
+                        {deviceQuota?.limit ? (
+                            <span
+                                style={{
+                                    marginLeft: 8,
+                                    fontWeight: 600,
+                                    color: isAtDeviceLimit ? "hsl(var(--status-warning))" : "hsl(var(--text-secondary))",
+                                }}
+                            >
+                                Using {deviceQuota.used} of {deviceQuota.limit} devices.
+                            </span>
+                        ) : null}
                     </p>
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
@@ -632,13 +666,14 @@ export default function DevicesPage() {
                     </button>
                     <button
                         className="btn-primary"
-                        disabled={!canControl}
+                        disabled={!canAddDevice}
+                        title={isAtDeviceLimit ? deviceLimitMessage : undefined}
                         style={{
                             display: "flex",
                             alignItems: "center",
                             gap: 8,
-                            opacity: canControl ? 1 : 0.55,
-                            cursor: canControl ? "pointer" : "not-allowed",
+                            opacity: canAddDevice ? 1 : 0.55,
+                            cursor: canAddDevice ? "pointer" : "not-allowed",
                         }}
                         onClick={openPairing}
                     >
@@ -803,7 +838,16 @@ export default function DevicesPage() {
                         <button
                             className="btn-primary"
                             onClick={openPairing}
-                            style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}
+                            disabled={!canAddDevice}
+                            title={isAtDeviceLimit ? deviceLimitMessage : undefined}
+                            style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                marginTop: 8,
+                                opacity: canAddDevice ? 1 : 0.55,
+                                cursor: canAddDevice ? "pointer" : "not-allowed",
+                            }}
                         >
                             <Plus size={16} /> Add Device
                         </button>

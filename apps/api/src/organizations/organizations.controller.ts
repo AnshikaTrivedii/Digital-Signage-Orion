@@ -11,6 +11,7 @@ import { InviteFirstAdminDto } from './dto/invite-first-admin.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateMemberPermissionsDto } from './dto/update-member-permissions.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { OrganizationsService } from './organizations.service';
 
 @Controller('organizations')
@@ -44,6 +45,17 @@ export class OrganizationsController {
     @Body() dto: ActivateOrganizationDto,
   ) {
     return this.organizationsService.activateOrganization(actor, organizationId, dto);
+  }
+
+  @Patch(':organizationId')
+  @UseGuards(PlatformRolesGuard)
+  @PlatformRoles('SUPER_ADMIN', 'PLATFORM_ADMIN')
+  updateOrganization(
+    @CurrentActor() actor: RequestActor,
+    @Param('organizationId') organizationId: string,
+    @Body() dto: UpdateOrganizationDto,
+  ) {
+    return this.organizationsService.updateOrganization(actor, organizationId, dto);
   }
 
   @Post(':organizationId/first-admin-invitations')

@@ -635,6 +635,25 @@ export class ClientDataService {
     return devices.map((device) => this.serializeDevice(device));
   }
 
+  /** Device allowance for the active org. A null limit/remaining means unlimited. */
+  async getDeviceQuota(actor: RequestActor) {
+    const organizationId = this.getOrgId(actor);
+    const [organization, used] = await Promise.all([
+      this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { deviceLimit: true },
+      }),
+      this.prisma.device.count({ where: { organizationId } }),
+    ]);
+
+    const limit = organization?.deviceLimit ?? null;
+    return {
+      limit,
+      used,
+      remaining: limit === null ? null : Math.max(0, limit - used),
+    };
+  }
+
   async createDevice(
     actor: RequestActor,
     body: { name: string; location: string; resolution?: string; os?: string; ip?: string },
@@ -645,6 +664,8 @@ export class ClientDataService {
     const location = body.location?.trim();
     if (!name) throw new BadRequestException('Device name is required');
     if (!location) throw new BadRequestException('Device location is required');
+
+    await this.assertDeviceLimit(organizationId);
 
     const existing = await this.prisma.device.findFirst({
       where: { organizationId, name },
@@ -1238,6 +1259,8 @@ export class ClientDataService {
       throw new BadRequestException('Device name is required');
     }
 
+    await this.assertDeviceLimit(organizationId);
+
     // Find the draft device by pairing code
     const device = await this.prisma.device.findUnique({
       where: { pairingCode: code },
@@ -1262,18 +1285,23 @@ export class ClientDataService {
     // Generate a secure device token
     const deviceToken = randomBytes(32).toString('hex');
 
-    // Atomic pair — prevents double-pair race
-    const updateResult = await this.prisma.device.updateMany({
-      where: { id: device.id, isPaired: false },
-      data: {
-        organizationId,
-        name,
-        isPaired: true,
-        deviceToken,
-        pairingCode: null,
-        status: DeviceStatus.ONLINE,
-        lastSync: new Date().toISOString(),
-      },
+    // Atomic pair — prevents double-pair race, and re-checks the device limit so
+    // two concurrent pairings cannot both slip past the allowance.
+    const updateResult = await this.prisma.$transaction(async (tx) => {
+      await this.assertDeviceLimit(organizationId, tx);
+
+      return tx.device.updateMany({
+        where: { id: device.id, isPaired: false },
+        data: {
+          organizationId,
+          name,
+          isPaired: true,
+          deviceToken,
+          pairingCode: null,
+          status: DeviceStatus.ONLINE,
+          lastSync: new Date().toISOString(),
+        },
+      });
     });
 
     if (updateResult.count === 0) {
@@ -2653,6 +2681,25 @@ export class ClientDataService {
   private assertCanEdit(actor: RequestActor) {
     if (!actor.organization) throw new ForbiddenException('Missing organization context');
     if (actor.organization.role === 'ANALYST_VIEWER') throw new ForbiddenException('Read-only access');
+  }
+
+  /** Devices already assigned to the org, paired or not, count against the allowance. */
+  private async assertDeviceLimit(
+    organizationId: string,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const organization = await tx.organization.findUnique({
+      where: { id: organizationId },
+      select: { deviceLimit: true },
+    });
+    if (!organization?.deviceLimit) return;
+
+    const used = await tx.device.count({ where: { organizationId } });
+    if (used >= organization.deviceLimit) {
+      throw new ForbiddenException(
+        `Device limit reached (${used}/${organization.deviceLimit}). Remove a device or contact Orion to raise your limit.`,
+      );
+    }
   }
 
   private toLowerStatus(value: string) {

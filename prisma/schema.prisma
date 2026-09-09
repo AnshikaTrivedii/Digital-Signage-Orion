@@ -230,6 +230,8 @@ model Organization {
   salesNotes          String?
   /// IANA zone used to interpret and render schedule wall-clock times.
   timezone            String                   @default("Asia/Kolkata")
+  /// Max devices this organization may have. Null means unlimited.
+  deviceLimit         Int?
   memberships         OrganizationMembership[]
   invitations         Invitation[]
   assets              Asset[]

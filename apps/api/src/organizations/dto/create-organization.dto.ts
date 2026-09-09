@@ -1,4 +1,4 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, Matches } from 'class-validator';
+import { IsEmail, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Min } from 'class-validator';
 
 export class CreateOrganizationDto {
   @IsString()
@@ -20,4 +20,10 @@ export class CreateOrganizationDto {
   @IsOptional()
   @IsString()
   salesNotes?: string;
+
+  /** Max devices the organization may have. Omit for unlimited. */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  deviceLimit?: number;
 }

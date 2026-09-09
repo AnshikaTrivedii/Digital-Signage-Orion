@@ -18,6 +18,7 @@ import { InviteFirstAdminDto } from './dto/invite-first-admin.dto';
 import { InviteMemberDto } from './dto/invite-member.dto';
 import { UpdateMemberPermissionsDto } from './dto/update-member-permissions.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { UpdateOrganizationDto } from './dto/update-organization.dto';
 
 @Injectable()
 export class OrganizationsService {
@@ -41,6 +42,7 @@ export class OrganizationsService {
         primaryContactName: dto.primaryContactName,
         primaryContactEmail: dto.primaryContactEmail?.toLowerCase(),
         salesNotes: dto.salesNotes,
+        deviceLimit: dto.deviceLimit ?? null,
         status: OrganizationStatus.DRAFT,
       },
     });
@@ -52,7 +54,7 @@ export class OrganizationsService {
       targetType: 'organization',
       targetId: organization.id,
       summary: `${actor.email} created draft organization ${organization.name}`,
-      metadata: { slug: organization.slug, byRole: actor.platformRole },
+      metadata: { slug: organization.slug, byRole: actor.platformRole, deviceLimit: organization.deviceLimit },
     });
 
     return organization;
@@ -81,6 +83,7 @@ export class OrganizationsService {
             },
           },
         },
+        _count: { select: { devices: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -142,6 +145,68 @@ export class OrganizationsService {
       targetId: organizationId,
       summary: `${actor.email} activated organization ${organization.name}`,
       metadata: { activationNote: dto.activationNote ?? null },
+    });
+
+    return updated;
+  }
+
+  async updateOrganization(actor: RequestActor, organizationId: string, dto: UpdateOrganizationDto) {
+    const organization = await this.prisma.organization.findUnique({ where: { id: organizationId } });
+    if (!organization) {
+      throw new NotFoundException('Organization not found');
+    }
+
+    const data: {
+      name?: string;
+      primaryContactName?: string;
+      primaryContactEmail?: string;
+      salesNotes?: string;
+      deviceLimit?: number | null;
+    } = {};
+
+    if (typeof dto.name === 'string') {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException('Organization name cannot be empty');
+      data.name = name;
+    }
+    if (typeof dto.primaryContactName === 'string') data.primaryContactName = dto.primaryContactName.trim();
+    if (typeof dto.primaryContactEmail === 'string') data.primaryContactEmail = dto.primaryContactEmail.toLowerCase();
+    if (typeof dto.salesNotes === 'string') data.salesNotes = dto.salesNotes;
+
+    if ('deviceLimit' in dto) {
+      const nextLimit = dto.deviceLimit ?? null;
+      if (nextLimit !== null) {
+        const deviceCount = await this.prisma.device.count({ where: { organizationId } });
+        if (nextLimit < deviceCount) {
+          throw new BadRequestException(
+            `Device limit cannot be lower than the ${deviceCount} device${deviceCount === 1 ? '' : 's'} already registered`,
+          );
+        }
+      }
+      data.deviceLimit = nextLimit;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return organization;
+    }
+
+    const updated = await this.prisma.organization.update({
+      where: { id: organizationId },
+      data,
+    });
+
+    await this.auditService.log({
+      actorUserId: actor.userId,
+      organizationId,
+      action: 'organization.updated',
+      targetType: 'organization',
+      targetId: organizationId,
+      summary: `${actor.email} updated organization ${organization.name}`,
+      metadata: {
+        fields: Object.keys(data),
+        previousDeviceLimit: organization.deviceLimit,
+        deviceLimit: updated.deviceLimit,
+      },
     });
 
     return updated;
