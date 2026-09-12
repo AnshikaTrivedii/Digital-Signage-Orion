@@ -72,7 +72,7 @@
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   min-width: 0;
   overflow: hidden;
   padding: 32px 40px 36px;
@@ -86,27 +86,32 @@
   gap: 14px;
 }
 
-.logoWrap {
+.logoWrap,
+.cardLogo {
   display: block;
-  mix-blend-mode: screen;
-  filter: saturate(1.08);
+  overflow: hidden;
+  border-radius: 22px;
+  background: #b3b3b3;
+  box-shadow: 0 16px 40px hsl(0 0% 0% / 0.28);
 }
 
-.brandMeta {
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: hsl(var(--text-muted));
-  max-width: 11rem;
-  line-height: 1.5;
+.logoWrap img,
+.cardLogo img {
+  display: block;
+}
+
+.cardLogo {
+  width: fit-content;
+  margin: 0 auto 18px;
+  border-radius: 18px;
 }
 
 .wallStage {
   position: relative;
   z-index: 1;
   min-height: 0;
-  margin: 12px 0 4px;
+  height: 100%;
+  margin: 0 0 4px;
 }
 
 .heroCopy {
@@ -912,7 +917,7 @@
   }
 
   .hero {
-    grid-template-rows: auto minmax(150px, 230px) auto;
+    grid-template-rows: minmax(150px, 230px) auto;
     padding: 20px 22px 18px;
   }
 
@@ -946,7 +951,7 @@
 
 @media (max-width: 560px) {
   .hero {
-    grid-template-rows: auto minmax(88px, 130px) auto;
+    grid-template-rows: minmax(88px, 130px) auto;
     padding: 16px 16px 12px;
   }
 
@@ -956,8 +961,7 @@
   }
 
   .heroKicker,
-  .heroSubtitle,
-  .brandMeta {
+  .heroSubtitle {
     display: none;
   }
 

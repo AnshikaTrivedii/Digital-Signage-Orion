@@ -148,12 +148,6 @@ export default function LoginPage() {
             </a>
 
             <section className={styles.hero} aria-label="Orion digital signage" data-testid="login-hero">
-                <div className={styles.heroBrand}>
-                    <span className={styles.logoWrap}>
-                        <OrionLogo height={58} priority />
-                    </span>
-                    <span className={styles.brandMeta}>Digital Signage Platform</span>
-                </div>
                 <div className={styles.wallStage}>
                     <SignageHero />
                 </div>
@@ -187,6 +181,9 @@ export default function LoginPage() {
             <section className={styles.panel}>
                 <div className={styles.panelGlow} aria-hidden="true" />
                 <div className={styles.card} id="login-form" data-testid="login-card">
+                    <span className={styles.cardLogo}>
+                        <OrionLogo height={88} priority />
+                    </span>
                     <p className={styles.cardKicker}>Secure access</p>
                     <h2 className={styles.heading}>Welcome back</h2>
                     <p className={styles.support}>Sign in to manage your digital signage network.</p>

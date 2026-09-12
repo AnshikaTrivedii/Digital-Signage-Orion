@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ArrowRightLeft, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, User, LogOut } from "lucide-react";
+import { ArrowRightLeft, Menu, Moon, PanelLeftClose, PanelLeftOpen, Search, Sun, LogOut } from "lucide-react";
 import { OrionLogo } from "@/components/shared/OrionLogo";
 import { useEffect, useMemo, useState } from "react";
 import { Toaster } from "react-hot-toast";
@@ -32,6 +32,28 @@ function getPageTitle(pathname: string, portal: "platform" | "client", navItems:
     return match?.name ?? getPortalTitle(portal);
 }
 
+function getInitials(name: string) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return "U";
+    return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("");
+}
+
+function groupNavItems(items: PortalNavItem[]) {
+    const order: string[] = [];
+    const grouped = new Map<string, PortalNavItem[]>();
+
+    for (const item of items) {
+        const section = item.section ?? "Menu";
+        if (!grouped.has(section)) {
+            grouped.set(section, []);
+            order.push(section);
+        }
+        grouped.get(section)!.push(item);
+    }
+
+    return order.map((label) => ({ label, items: grouped.get(label) ?? [] }));
+}
+
 export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     const pathname = usePathname();
     const router = useRouter();
@@ -39,6 +61,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     const { user, isLoading, logout, activeOrganizationId, setActiveOrganization, hasClientFeatureAccess } = useAuth();
     const [isSidebarOpen, setSidebarOpen] = useState(false);
     const [isDesktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
+    const [navQuery, setNavQuery] = useState("");
     const [allOrganizations, setAllOrganizations] = useState<Array<{ id: string; name: string; slug: string; status: string }>>([]);
     const [authError, setAuthError] = useState<{ endpoint: string; message: string } | null>(null);
 
@@ -55,6 +78,12 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
     const visibleNavItems = portal === "client"
         ? navItems.filter((item) => !item.featureKey || hasClientFeatureAccess(item.featureKey, item.requiredAccess))
         : navItems;
+    const filteredNavItems = useMemo(() => {
+        const query = navQuery.trim().toLowerCase();
+        if (!query) return visibleNavItems;
+        return visibleNavItems.filter((item) => item.name.toLowerCase().includes(query));
+    }, [navQuery, visibleNavItems]);
+    const navGroups = useMemo(() => groupNavItems(filteredNavItems), [filteredNavItems]);
 
     useEffect(() => {
         if (portal !== "client" || !hasElevatedDashboardAccess) return;
@@ -74,6 +103,16 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
             cancelled = true;
         };
     }, [hasElevatedDashboardAccess, portal]);
+
+    useEffect(() => {
+        try {
+            if (window.localStorage.getItem("orion.sidebarCollapsed") === "1") {
+                setDesktopSidebarCollapsed(true);
+            }
+        } catch {
+            // Ignore storage access issues in private contexts.
+        }
+    }, []);
 
     useEffect(() => {
         if (portal !== "client" || activeOrganizationId) return;
@@ -166,25 +205,37 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
             <aside className={`app-sidebar ${isSidebarOpen ? "open" : ""} ${isDesktopSidebarCollapsed ? "collapsed" : ""}`}>
                 <div className="app-sidebar-inner">
                     <div className="sidebar-brand-row">
-                        <Link href={homePath} className="sidebar-brand" title="Orion">
+                        <Link href={homePath} className="sidebar-brand" title="Orion CMS">
                             <span className="sidebar-brand-logo">
-                                <OrionLogo height={isDesktopSidebarCollapsed ? 34 : 52} priority />
+                                <OrionLogo height={isDesktopSidebarCollapsed ? 40 : 80} priority />
                             </span>
                             {!isDesktopSidebarCollapsed && (
-                                <span className="sidebar-brand-label">{getPortalTitle(portal)}</span>
+                                <span className="sidebar-brand-copy">
+                                    <small>{getPortalTitle(portal)}</small>
+                                </span>
                             )}
                         </Link>
                         <button
                             type="button"
-                            className="desktop-only btn-icon-soft sidebar-collapse-btn"
-                            onClick={() => setDesktopSidebarCollapsed((current) => !current)}
+                            className="desktop-only sidebar-collapse-btn"
+                            onClick={() => {
+                                setDesktopSidebarCollapsed((current) => {
+                                    const next = !current;
+                                    try {
+                                        window.localStorage.setItem("orion.sidebarCollapsed", next ? "1" : "0");
+                                    } catch {
+                                        // Ignore storage access issues in private contexts.
+                                    }
+                                    return next;
+                                });
+                            }}
                             aria-label={isDesktopSidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                         >
-                            {isDesktopSidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+                            {isDesktopSidebarCollapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
                         </button>
                         <button
                             type="button"
-                            className="mobile-only btn-icon-soft sidebar-collapse-btn"
+                            className="mobile-only sidebar-collapse-btn"
                             onClick={() => setSidebarOpen(false)}
                             aria-label="Close menu"
                         >
@@ -192,28 +243,51 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                         </button>
                     </div>
 
+                    {!isDesktopSidebarCollapsed && (
+                        <label className="sidebar-search">
+                            <Search size={15} />
+                            <input
+                                type="search"
+                                value={navQuery}
+                                onChange={(event) => setNavQuery(event.target.value)}
+                                placeholder="Search menu"
+                                aria-label="Search menu"
+                            />
+                        </label>
+                    )}
+
                     <div className="sidebar-nav-section">
-                        {!isDesktopSidebarCollapsed && <div className="sidebar-section-label">Navigation</div>}
-                        <nav className="sidebar-nav" aria-label="Main navigation">
-                            {visibleNavItems.map((item) => {
-                                const isActive = pathname === item.path || (item.path !== homePath && pathname.startsWith(`${item.path}/`));
-                                const Icon = item.icon;
-                                return (
-                                    <Link
-                                        key={item.path}
-                                        href={item.path}
-                                        onClick={() => setSidebarOpen(false)}
-                                        className={`sidebar-nav-item${isActive ? " active" : ""}`}
-                                        title={item.name}
-                                    >
-                                        <span className="sidebar-nav-icon">
-                                            <Icon size={15} strokeWidth={isActive ? 2.4 : 2} />
-                                        </span>
-                                        {!isDesktopSidebarCollapsed && <span>{item.name}</span>}
-                                    </Link>
-                                );
-                            })}
-                        </nav>
+                        {navGroups.length === 0 ? (
+                            <p className="sidebar-empty">No matching pages</p>
+                        ) : (
+                            navGroups.map((group) => (
+                                <div key={group.label} className="sidebar-nav-group">
+                                    {!isDesktopSidebarCollapsed && (
+                                        <div className="sidebar-section-label">{group.label}</div>
+                                    )}
+                                    <nav className="sidebar-nav" aria-label={group.label}>
+                                        {group.items.map((item) => {
+                                            const isActive = pathname === item.path || (item.path !== homePath && pathname.startsWith(`${item.path}/`));
+                                            const Icon = item.icon;
+                                            return (
+                                                <Link
+                                                    key={item.path}
+                                                    href={item.path}
+                                                    onClick={() => setSidebarOpen(false)}
+                                                    className={`sidebar-nav-item${isActive ? " active" : ""}`}
+                                                    title={isDesktopSidebarCollapsed ? item.name : undefined}
+                                                >
+                                                    <span className="sidebar-nav-icon">
+                                                        <Icon size={18} strokeWidth={isActive ? 2.35 : 1.9} />
+                                                    </span>
+                                                    {!isDesktopSidebarCollapsed && <span>{item.name}</span>}
+                                                </Link>
+                                            );
+                                        })}
+                                    </nav>
+                                </div>
+                            ))
+                        )}
                     </div>
 
                     <div className="sidebar-footer">
@@ -234,7 +308,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                         <div className="sidebar-user-card">
                             <div className="sidebar-user-meta">
                                 <div className="sidebar-user-avatar" aria-hidden>
-                                    <User size={14} />
+                                    {getInitials(user.fullName)}
                                 </div>
                                 {!isDesktopSidebarCollapsed && (
                                     <div className="sidebar-user-text">
@@ -253,7 +327,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
                                     router.push("/login");
                                 }}
                             >
-                                <LogOut size={14} />
+                                <LogOut size={15} />
                             </button>
                         </div>
                     </div>

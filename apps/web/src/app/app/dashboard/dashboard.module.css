@@ -298,6 +298,235 @@
   font-weight: 700;
 }
 
+.metricRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.spark {
+  width: 72px;
+  height: 24px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.span2 {
+  grid-column: 1 / -1;
+}
+
+.chartCard {
+  position: relative;
+}
+
+.trendSvg {
+  display: block;
+  width: 100%;
+  height: 220px;
+}
+
+.gridLine {
+  stroke: hsl(var(--border-subtle) / 0.55);
+  stroke-width: 1;
+}
+
+.trendBar {
+  fill: hsl(var(--accent-primary) / 0.16);
+}
+
+.axisLabel {
+  fill: hsl(var(--text-muted));
+  font-size: 11px;
+  font-family: Inter, sans-serif;
+}
+
+.chartEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: hsl(var(--text-muted));
+  font-size: 0.8rem;
+  pointer-events: none;
+}
+
+.chartSkeleton {
+  height: 180px;
+  border-radius: 14px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--bg-base) / 0.35),
+    hsl(var(--bg-surface-elevated) / 0.7),
+    hsl(var(--bg-base) / 0.35)
+  );
+  background-size: 180% 100%;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.donutWrap {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 8px 4px 6px;
+}
+
+.donut {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px hsl(var(--surface-contrast) / 0.04),
+    0 12px 28px hsl(var(--overlay-base) / 0.16);
+}
+
+.donutHole {
+  width: 84px;
+  height: 84px;
+  margin: 24px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border-radius: 50%;
+  background: hsl(var(--bg-surface));
+}
+
+.donutHole strong {
+  font-family: "Outfit", sans-serif;
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.donutHole span {
+  margin-top: 2px;
+  color: hsl(var(--text-muted));
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.legend li {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  color: hsl(var(--text-secondary));
+  font-size: 0.78rem;
+}
+
+.legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+}
+
+.legend strong {
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--text-primary));
+  font-size: 0.8rem;
+}
+
+.legend small {
+  width: 2.4rem;
+  color: hsl(var(--text-muted));
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bars {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 2px;
+  display: grid;
+  gap: 12px;
+}
+
+.barMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.barName {
+  overflow: hidden;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.barMeta strong {
+  color: hsl(var(--text-secondary));
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.barTrack {
+  height: 8px;
+  overflow: hidden;
+  background: hsl(var(--bg-base) / 0.45);
+  border-radius: 99px;
+}
+
+.barFill {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, hsl(var(--accent-primary)), hsl(var(--accent-secondary)));
+}
+
+.barOnline {
+  background: linear-gradient(90deg, hsl(var(--status-success)), hsl(var(--accent-secondary)));
+}
+
+.barWarning {
+  background: linear-gradient(90deg, hsl(var(--status-warning)), hsl(var(--accent-tertiary)));
+}
+
+.barOffline {
+  background: linear-gradient(90deg, hsl(var(--status-danger) / 0.75), hsl(var(--status-warning)));
+}
+
+.mix {
+  display: grid;
+  gap: 16px;
+  padding: 8px 2px 4px;
+}
+
+.stack {
+  display: flex;
+  overflow: hidden;
+  height: 14px;
+  border-radius: 99px;
+  background: hsl(var(--bg-base) / 0.4);
+}
+
+.stack span {
+  display: block;
+  height: 100%;
+}
+
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.85fr);
@@ -552,8 +781,14 @@
     width: 100%;
   }
 
-  .grid {
+  .charts,
+  .grid,
+  .donutWrap {
     grid-template-columns: 1fr;
+  }
+
+  .span2 {
+    grid-column: auto;
   }
 }
 

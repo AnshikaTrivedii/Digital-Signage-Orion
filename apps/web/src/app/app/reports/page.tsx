@@ -5,13 +5,21 @@ import {
     Activity, Eye, Download, Search, FileText,
     RefreshCw, AlertTriangle, CheckCircle, XCircle, TrendingUp, Clock,
     ChevronLeft, ChevronRight, CalendarRange,
-    Folder,
+    Folder, Monitor,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { ApiError, API_BASE, apiRequest } from "@/lib/api";
 import { formatReportDateTime, getUserCalendarDate, getUserTimeZone, shiftCalendarDate } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 import { ACTIVE_ORGANIZATION_STORAGE_KEY, AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
+import {
+    DurationGauge,
+    FidelityDonut,
+    ImpressionsTrendChart,
+    MiniSpark,
+    NodeRing,
+    TopContentBars,
+} from "./ReportsCharts";
 
 type Range = "today" | "yesterday" | "7d" | "15d" | "custom";
 
@@ -362,6 +370,8 @@ export default function ReportsPage() {
     const tableColumnCount = 7;
     const tableHeaders = ["Device", "Playlist", "Asset", "Start Time", "End Time", "Duration", "Status"];
 
+    const impressionSpark = chartData.map((point) => point.impressions);
+    const engagementSpark = chartData.map((point) => point.engagement);
     const kpiCards = useMemo(() => [
         {
             title: "Billed Impressions",
@@ -369,6 +379,8 @@ export default function ReportsPage() {
             subtitle: `${(reportData?.kpis.verifiedCount ?? 0).toLocaleString()} Verified • ${(reportData?.kpis.failedCount ?? 0).toLocaleString()} Failed`,
             icon: Eye,
             tone: "var(--accent-primary)",
+            spark: true,
+            ring: false,
         },
         {
             title: "Avg. Duration",
@@ -376,6 +388,9 @@ export default function ReportsPage() {
             subtitle: "Average verified playback length",
             icon: Activity,
             tone: "var(--accent-secondary)",
+            spark: false,
+            ring: false,
+            gauge: true,
         },
         {
             title: "Playback Fidelity",
@@ -383,6 +398,18 @@ export default function ReportsPage() {
             subtitle: "Verified / Total Impressions",
             icon: TrendingUp,
             tone: "var(--status-success)",
+            spark: false,
+            ring: false,
+            fidelity: true,
+        },
+        {
+            title: "Active Screens",
+            value: `${reportData?.kpis.activeNodes ?? 0}`,
+            subtitle: `of ${reportData?.kpis.totalNodes ?? 0} reporting in this window`,
+            icon: Monitor,
+            tone: "var(--accent-secondary)",
+            spark: false,
+            ring: true,
         },
     ], [reportData]);
 
@@ -565,39 +592,31 @@ export default function ReportsPage() {
                                 </div>
                                 <p className="reports-kpi__title">{kpi.title}</p>
                             </div>
-                            <p className="reports-kpi__value">{kpi.value}</p>
+                            <div className="reports-kpi__value-row">
+                                <p className="reports-kpi__value">{kpi.value}</p>
+                                {kpi.spark ? <MiniSpark data={impressionSpark} tone={kpi.tone} /> : null}
+                                {kpi.fidelity ? <MiniSpark data={engagementSpark} tone={kpi.tone} /> : null}
+                                {kpi.gauge ? <DurationGauge seconds={reportData?.kpis.avgEngagement ?? 0} /> : null}
+                                {kpi.ring ? (
+                                    <NodeRing
+                                        active={reportData?.kpis.activeNodes ?? 0}
+                                        total={reportData?.kpis.totalNodes ?? 0}
+                                    />
+                                ) : null}
+                            </div>
                             <p className="reports-kpi__subtitle">{kpi.subtitle}</p>
                         </motion.div>
                     );
                 })}
             </div>
 
-            <div className="grid-main" style={{ marginBottom: 32 }}>
+            <div className="grid-main" style={{ marginBottom: 24 }}>
                 <div className="glass-panel" style={{ padding: 24 }}>
                     <div className="reports-panel-head">
-                        <h2>Impressions & Engagement</h2>
+                        <h2>Impressions histogram</h2>
                         {maxImpressions > 1 && <span className="reports-chip">peak {maxImpressions.toLocaleString()}</span>}
                     </div>
-                    {chartData.every((bucket) => bucket.impressions === 0) ? (
-                        <p className="reports-empty">No playback logged in this window.</p>
-                    ) : (
-                        <div className="reports-chart">
-                            {chartData.map((d, i) => (
-                                <div key={i} className="reports-chart__col" title={`${d.day}: ${d.impressions.toLocaleString()} impressions • ${d.engagement}% verified`}>
-                                    <div className="reports-chart__track">
-                                        <motion.div
-                                            className="reports-chart__bar"
-                                            initial={{ height: 0 }}
-                                            animate={{ height: `${(d.impressions / maxImpressions) * 100}%` }}
-                                            transition={{ duration: 0.45, delay: i * 0.02 }}
-                                            style={{ minHeight: d.impressions > 0 ? 4 : 0 }}
-                                        />
-                                    </div>
-                                    <span className="reports-chart__label">{d.day}</span>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                    <ImpressionsTrendChart data={chartData} />
                 </div>
                 <div className="glass-panel" style={{ padding: 24 }}>
                     <div className="reports-panel-head">
@@ -666,6 +685,23 @@ export default function ReportsPage() {
                         ))
                     )}
                 </div>
+            </div>
+
+            <div className="glass-panel" style={{ padding: 24, marginBottom: 24 }}>
+                <div className="reports-panel-head">
+                    <h2>Verified vs failed</h2>
+                </div>
+                <FidelityDonut
+                    verified={reportData?.kpis.verifiedCount ?? 0}
+                    failed={reportData?.kpis.failedCount ?? 0}
+                />
+            </div>
+
+            <div className="glass-panel" style={{ padding: 24, marginBottom: 32 }}>
+                <div className="reports-panel-head">
+                    <h2>Top content histogram</h2>
+                </div>
+                <TopContentBars items={reportData?.topContent ?? []} />
             </div>
 
             <div className="glass-panel" style={{ padding: 24 }}>
@@ -954,7 +990,7 @@ export default function ReportsPage() {
 
                 .reports-kpi-row {
                     display: grid;
-                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                    grid-template-columns: repeat(4, minmax(0, 1fr));
                     gap: 16px;
                     margin-bottom: 28px;
                     align-items: stretch;
@@ -1001,6 +1037,12 @@ export default function ReportsPage() {
                     text-transform: uppercase;
                     color: hsl(var(--text-muted));
                 }
+                .reports-kpi__value-row {
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: space-between;
+                    gap: 10px;
+                }
                 .reports-kpi__value {
                     margin: 0;
                     font-size: 2.15rem;
@@ -1016,20 +1058,14 @@ export default function ReportsPage() {
                     line-height: 1.35;
                     color: hsl(var(--text-muted));
                 }
-                @media (max-width: 960px) {
+                @media (max-width: 1100px) {
                     .reports-kpi-row {
                         grid-template-columns: repeat(2, minmax(0, 1fr));
-                    }
-                    .reports-kpi:last-child {
-                        grid-column: 1 / -1;
                     }
                 }
                 @media (max-width: 560px) {
                     .reports-kpi-row {
                         grid-template-columns: 1fr;
-                    }
-                    .reports-kpi:last-child {
-                        grid-column: auto;
                     }
                     .reports-kpi {
                         min-height: 132px;
@@ -1138,7 +1174,7 @@ export default function ReportsPage() {
                     font-variant-numeric: tabular-nums;
                 }
                 .reports-breakdown__track {
-                    height: 5px;
+                    height: 8px;
                     border-radius: 999px;
                     background: hsla(var(--border-subtle), 0.25);
                     overflow: hidden;
@@ -1146,7 +1182,7 @@ export default function ReportsPage() {
                 .reports-breakdown__fill {
                     height: 100%;
                     border-radius: 999px;
-                    background: hsla(var(--accent-primary), 0.75);
+                    background: linear-gradient(90deg, hsl(var(--accent-primary)), hsl(var(--accent-secondary)));
                     transition: width 0.35s ease;
                 }
                 .reports-breakdown__hint {

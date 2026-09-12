@@ -3,15 +3,15 @@ import type { PortalNavItem } from "@/lib/navigation/platform-nav";
 import { LAYOUT_DESIGNER_ENABLED } from "@/lib/feature-flags";
 
 const allClientNavItems: PortalNavItem[] = [
-    { name: "Dashboard", path: "/app/dashboard", icon: LayoutDashboard, featureKey: "DASHBOARD", requiredAccess: "VIEW" },
-    { name: "Devices", path: "/app/devices", icon: MonitorPlay, featureKey: "DEVICES", requiredAccess: "VIEW" },
-    { name: "Layouts", path: "/app/designer", icon: Layout, featureKey: "PLAYLISTS", requiredAccess: "EDIT" },
-    { name: "Playlists", path: "/app/playlists", icon: ListVideo, featureKey: "PLAYLISTS", requiredAccess: "VIEW" },
-    { name: "Assets", path: "/app/assets", icon: ImageIcon, featureKey: "ASSETS", requiredAccess: "VIEW" },
-    { name: "Tickers", path: "/app/tickers", icon: Type, featureKey: "TICKERS", requiredAccess: "VIEW" },
-    { name: "Scheduling", path: "/app/schedule", icon: CalendarClock, featureKey: "SCHEDULE", requiredAccess: "VIEW" },
-    { name: "Analytics", path: "/app/reports", icon: Activity, featureKey: "REPORTS", requiredAccess: "VIEW" },
-    { name: "Settings", path: "/app/settings", icon: Settings, featureKey: "SETTINGS", requiredAccess: "VIEW" },
+    { name: "Overview", path: "/app/dashboard", icon: LayoutDashboard, section: "Menu", featureKey: "DASHBOARD", requiredAccess: "VIEW" },
+    { name: "Screens", path: "/app/devices", icon: MonitorPlay, section: "Menu", featureKey: "DEVICES", requiredAccess: "VIEW" },
+    { name: "Canvas", path: "/app/designer", icon: Layout, section: "Menu", featureKey: "PLAYLISTS", requiredAccess: "EDIT" },
+    { name: "Playlists", path: "/app/playlists", icon: ListVideo, section: "Menu", featureKey: "PLAYLISTS", requiredAccess: "VIEW" },
+    { name: "Library", path: "/app/assets", icon: ImageIcon, section: "Menu", featureKey: "ASSETS", requiredAccess: "VIEW" },
+    { name: "Banners", path: "/app/tickers", icon: Type, section: "Menu", featureKey: "TICKERS", requiredAccess: "VIEW" },
+    { name: "Calendar", path: "/app/schedule", icon: CalendarClock, section: "Menu", featureKey: "SCHEDULE", requiredAccess: "VIEW" },
+    { name: "Insights", path: "/app/reports", icon: Activity, section: "Insights", featureKey: "REPORTS", requiredAccess: "VIEW" },
+    { name: "Settings", path: "/app/settings", icon: Settings, section: "Account", featureKey: "SETTINGS", requiredAccess: "VIEW" },
 ];
 
 export const clientNavItems: PortalNavItem[] = LAYOUT_DESIGNER_ENABLED

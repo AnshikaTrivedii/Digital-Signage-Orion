@@ -6,17 +6,18 @@ export type PortalNavItem = {
     name: string;
     path: string;
     icon: LucideIcon;
+    section?: string;
     featureKey?: ClientFeatureKey;
     requiredAccess?: ClientAccessLevel;
 };
 
 export const platformNavItems: PortalNavItem[] = [
-    { name: "Overview", path: "/platform", icon: LayoutDashboard },
-    { name: "Organizations", path: "/platform/organizations", icon: Building2 },
-    { name: "Team", path: "/platform/team", icon: Users },
-    { name: "Reminders", path: "/platform/reminders", icon: BellRing },
-    { name: "Billing", path: "/platform/billing", icon: CreditCard },
-    { name: "Support", path: "/platform/support", icon: LifeBuoy },
-    { name: "Reports", path: "/platform/reports", icon: ShieldCheck },
-    { name: "Settings", path: "/platform/settings", icon: Settings },
+    { name: "Overview", path: "/platform", icon: LayoutDashboard, section: "Menu" },
+    { name: "Workspaces", path: "/platform/organizations", icon: Building2, section: "Menu" },
+    { name: "Team", path: "/platform/team", icon: Users, section: "Menu" },
+    { name: "Alerts", path: "/platform/reminders", icon: BellRing, section: "Operations" },
+    { name: "Billing", path: "/platform/billing", icon: CreditCard, section: "Operations" },
+    { name: "Support", path: "/platform/support", icon: LifeBuoy, section: "Operations" },
+    { name: "Reports", path: "/platform/reports", icon: ShieldCheck, section: "Insights" },
+    { name: "Settings", path: "/platform/settings", icon: Settings, section: "Account" },
 ];

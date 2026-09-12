@@ -21,6 +21,16 @@ import type { LucideIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+import {
+    AssetMixChart,
+    FleetDonut,
+    MiniSpark,
+    PlaybackTrendChart,
+    ScreenBars,
+    type MixSlice,
+    type ScreenBar,
+    type TrendPoint,
+} from "./DashCharts";
 import styles from "./dashboard.module.css";
 
 type DashboardData = {
@@ -30,7 +40,14 @@ type DashboardData = {
         warningDevices: number;
         offlineDevices: number;
         totalAssets: number;
+        totalPlaylists?: number;
+        activePlaylists?: number;
+        playsToday?: number;
+        plays7d?: number;
     };
+    playbackTrend?: TrendPoint[];
+    assetMix?: MixSlice[];
+    topScreens?: ScreenBar[];
     recentActivityLog: { id: string; action: string; time: string; type: string }[];
     schedulePreview: { id?: string; name: string; time: string; color: string; active: boolean; status?: string }[];
 };
@@ -164,7 +181,14 @@ export default function ClientDashboardPage() {
     const needsAttention =
         (dashboardData?.stats.offlineDevices ?? 0) + (dashboardData?.stats.warningDevices ?? 0);
     const online = dashboardData?.stats.onlineDevices ?? 0;
+    const warning = dashboardData?.stats.warningDevices ?? 0;
+    const offline = dashboardData?.stats.offlineDevices ?? 0;
     const totalAssets = dashboardData?.stats.totalAssets ?? 0;
+    const playlists = dashboardData?.stats.totalPlaylists ?? dashboardData?.stats.activePlaylists ?? 0;
+    const playsToday = dashboardData?.stats.playsToday ?? 0;
+    const plays7d = dashboardData?.stats.plays7d ?? 0;
+    const trend = dashboardData?.playbackTrend ?? [];
+    const sparkData = trend.length > 0 ? trend.map((point) => point.plays) : [0, 0];
 
     const nextStep = useMemo(() => {
         if (!dashboardData) return null;
@@ -178,7 +202,7 @@ export default function ClientDashboardPage() {
         }
         if (needsAttention > 0) {
             return {
-                title: `${needsAttention} screen${needsAttention === 1 ? "" : "s"} need attention`,
+                title: `${needsAttention} screen${needsAttention === 1 ? "" : "s"} ${needsAttention === 1 ? "needs" : "need"} attention`,
                 detail: "Review offline or warning devices.",
                 cta: "Open devices",
                 path: "/app/devices",
@@ -216,10 +240,11 @@ export default function ClientDashboardPage() {
         {
             label: "Devices",
             value: totalDevices,
-            helper: totalDevices === 0 ? "None paired" : "In this workspace",
+            helper: totalDevices === 0 ? "None paired" : `${onlinePct}% online`,
             icon: Monitor,
             color: "var(--accent-primary)",
             path: "/app/devices",
+            spark: false,
         },
         {
             label: "Online",
@@ -228,22 +253,25 @@ export default function ClientDashboardPage() {
             icon: Wifi,
             color: "var(--status-success)",
             path: "/app/devices",
+            spark: false,
         },
         {
-            label: "Attention",
-            value: needsAttention,
-            helper: needsAttention === 0 ? "All clear" : "Offline or warning",
-            icon: needsAttention === 0 ? CheckCircle2 : AlertTriangle,
-            color: needsAttention === 0 ? "var(--status-success)" : "var(--status-warning)",
-            path: "/app/devices",
-        },
-        {
-            label: "Assets",
-            value: totalAssets,
-            helper: "In your library",
-            icon: HardDrive,
+            label: "Plays today",
+            value: playsToday,
+            helper: `${plays7d.toLocaleString()} this week`,
+            icon: PlayCircle,
             color: "var(--accent-secondary)",
+            path: "/app/reports",
+            spark: true,
+        },
+        {
+            label: "Library",
+            value: totalAssets,
+            helper: playlists > 0 ? `${playlists} playlist${playlists === 1 ? "" : "s"}` : "In your library",
+            icon: HardDrive,
+            color: "var(--accent-tertiary)",
             path: "/app/assets",
+            spark: false,
         },
     ];
 
@@ -316,7 +344,10 @@ export default function ClientDashboardPage() {
                                     <Icon size={13} />
                                     {metric.label}
                                 </span>
-                                <strong className={styles.metricValue}>{metric.value.toLocaleString()}</strong>
+                                <span className={styles.metricRow}>
+                                    <strong className={styles.metricValue}>{metric.value.toLocaleString()}</strong>
+                                    {metric.spark ? <MiniSpark data={sparkData} tone={metric.color} /> : null}
+                                </span>
                                 <span className={styles.metricHelp}>{metric.helper}</span>
                             </motion.button>
                         );
@@ -336,6 +367,61 @@ export default function ClientDashboardPage() {
                     </span>
                 </button>
             ) : null}
+
+            <div className={styles.charts}>
+                <section className={styles.panel}>
+                    <div className={styles.panelHead}>
+                        <div>
+                            <h2>Playback</h2>
+                            <p>Proof of play across the last 7 days.</p>
+                        </div>
+                        <button className={styles.link} onClick={() => router.push("/app/reports")}>
+                            Open analytics <ChevronRight size={14} />
+                        </button>
+                    </div>
+                    {isLoading ? <div className={styles.chartSkeleton} /> : <PlaybackTrendChart data={trend} />}
+                </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.panelHead}>
+                        <div>
+                            <h2>Fleet</h2>
+                            <p>Live device health mix.</p>
+                        </div>
+                    </div>
+                    <FleetDonut online={online} warning={warning} offline={offline} total={totalDevices} />
+                </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.panelHead}>
+                        <div>
+                            <h2>Top screens</h2>
+                            <p>Most plays this week.</p>
+                        </div>
+                        <button className={styles.link} onClick={() => router.push("/app/devices")}>
+                            Devices <ChevronRight size={14} />
+                        </button>
+                    </div>
+                    {isLoading ? <div className={styles.chartSkeleton} /> : <ScreenBars screens={dashboardData?.topScreens ?? []} />}
+                </section>
+
+                <section className={styles.panel}>
+                    <div className={styles.panelHead}>
+                        <div>
+                            <h2>Library mix</h2>
+                            <p>Assets by media type.</p>
+                        </div>
+                        <button className={styles.link} onClick={() => router.push("/app/assets")}>
+                            Assets <ChevronRight size={14} />
+                        </button>
+                    </div>
+                    {isLoading ? (
+                        <div className={styles.chartSkeleton} />
+                    ) : (
+                        <AssetMixChart mix={dashboardData?.assetMix ?? []} total={totalAssets} />
+                    )}
+                </section>
+            </div>
 
             <div className={styles.grid}>
                 <section className={styles.panel}>

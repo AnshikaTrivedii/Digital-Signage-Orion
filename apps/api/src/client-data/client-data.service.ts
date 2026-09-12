@@ -147,6 +147,37 @@ export class ClientDataService {
       }),
     ]);
     const scheduleTimezone = organization?.timezone || 'Asia/Kolkata';
+    const today = getZonedCalendarDate(new Date(), scheduleTimezone);
+    const trendDays = Array.from({ length: 7 }, (_, index) => addCalendarDays(today, index - 6));
+    const trendStart = startOfZonedDay(trendDays[0], scheduleTimezone);
+
+    const [assetCount, playlistCount, assetMixRows, playbackByDevice, dailyCounts] = await Promise.all([
+      this.prisma.asset.count({ where: { organizationId } }),
+      this.prisma.playlist.count({ where: { organizationId } }),
+      this.prisma.asset.groupBy({
+        by: ['type'],
+        where: { organizationId },
+        _count: { _all: true },
+      }),
+      this.prisma.proofOfPlayLog.groupBy({
+        by: ['device'],
+        where: { organizationId, startTime: { gte: trendStart } },
+        _count: { _all: true },
+      }),
+      Promise.all(
+        trendDays.map((day) =>
+          this.prisma.proofOfPlayLog.count({
+            where: {
+              organizationId,
+              startTime: {
+                gte: startOfZonedDay(day, scheduleTimezone),
+                lte: endOfZonedDay(day, scheduleTimezone),
+              },
+            },
+          }),
+        ),
+      ),
+    ]);
 
     const effectiveStatuses = devices.map((device) =>
       this.deviceManagement.resolveEffectiveStatus(device),
@@ -160,6 +191,24 @@ export class ClientDataService {
       ...this.computeLayoutReadiness(layout),
     }));
     const layoutsWithIssues = layoutReadiness.filter((entry) => !entry.isPlaybackReady).length;
+    const weekdayFmt = new Intl.DateTimeFormat('en-GB', {
+      timeZone: scheduleTimezone,
+      weekday: 'short',
+      day: 'numeric',
+    });
+    const playbackTrend = trendDays.map((day, index) => ({
+      day: `${day.year}-${String(day.month).padStart(2, '0')}-${String(day.day).padStart(2, '0')}`,
+      label: weekdayFmt.format(startOfZonedDay(day, scheduleTimezone)),
+      plays: dailyCounts[index] ?? 0,
+    }));
+    const playsToday = dailyCounts[dailyCounts.length - 1] ?? 0;
+    const plays7d = dailyCounts.reduce((sum, count) => sum + count, 0);
+    const statusByName = new Map(
+      devices.map((device) => [
+        device.name,
+        this.toLowerStatus(this.deviceManagement.resolveEffectiveStatus(device)),
+      ]),
+    );
 
     return {
       stats: {
@@ -167,11 +216,26 @@ export class ClientDataService {
         onlineDevices,
         warningDevices,
         offlineDevices,
-        totalAssets: assets.length,
+        totalAssets: assetCount,
+        totalPlaylists: playlistCount,
         activePlaylists: playlists.filter((playlist) => playlist.status === PlaylistStatus.ACTIVE).length,
         activeTickers: tickers.filter((ticker) => ticker.status === TickerStatus.ACTIVE).length,
         layoutsWithIssues,
+        playsToday,
+        plays7d,
       },
+      playbackTrend,
+      assetMix: assetMixRows
+        .map((row) => ({ type: row.type, count: row._count._all }))
+        .sort((a, b) => b.count - a.count),
+      topScreens: playbackByDevice
+        .map((row) => ({
+          name: row.device,
+          plays: row._count._all,
+          status: statusByName.get(row.device) ?? 'unknown',
+        }))
+        .sort((a, b) => b.plays - a.plays)
+        .slice(0, 6),
       recentActivityLog: logs.map((log) => ({
         id: log.id,
         action: `${log.device} played ${log.assetName || log.content}`,
