@@ -8,8 +8,8 @@ const allClientNavItems: PortalNavItem[] = [
     { name: "Canvas", path: "/app/designer", icon: Layout, section: "Menu", featureKey: "PLAYLISTS", requiredAccess: "EDIT" },
     { name: "Playlists", path: "/app/playlists", icon: ListVideo, section: "Menu", featureKey: "PLAYLISTS", requiredAccess: "VIEW" },
     { name: "Library", path: "/app/assets", icon: ImageIcon, section: "Menu", featureKey: "ASSETS", requiredAccess: "VIEW" },
-    { name: "Banners", path: "/app/tickers", icon: Type, section: "Menu", featureKey: "TICKERS", requiredAccess: "VIEW" },
-    { name: "Calendar", path: "/app/schedule", icon: CalendarClock, section: "Menu", featureKey: "SCHEDULE", requiredAccess: "VIEW" },
+    { name: "Tickers", path: "/app/tickers", icon: Type, section: "Menu", featureKey: "TICKERS", requiredAccess: "VIEW" },
+    { name: "Scheduling", path: "/app/schedule", icon: CalendarClock, section: "Menu", featureKey: "SCHEDULE", requiredAccess: "VIEW" },
     { name: "Insights", path: "/app/reports", icon: Activity, section: "Insights", featureKey: "REPORTS", requiredAccess: "VIEW" },
     { name: "Settings", path: "/app/settings", icon: Settings, section: "Account", featureKey: "SETTINGS", requiredAccess: "VIEW" },
 ];
