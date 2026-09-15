@@ -19,8 +19,9 @@ async function bootstrap() {
   const corsOrigins = configuredCorsOrigins();
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.enableCors({
-    origin: corsOrigins,
-    credentials: true,
+    origin: true,
+    credentials: false,
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-organization-id'],
   });
   const uploadDirectory = process.env.ASSET_UPLOAD_DIR ?? 'tmp/uploads';
   app.useStaticAssets(resolve(uploadDirectory), {

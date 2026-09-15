@@ -225,6 +225,17 @@ export class OrionEnvironmentStack extends Stack {
           protocol: elbv2.ApplicationProtocol.HTTP,
         });
 
+    const apiCorsPolicy = new cloudfront.ResponseHeadersPolicy(this, 'ApiCorsPolicy', {
+      comment: `${prefix} API CORS for Amplify dashboard`,
+      corsBehavior: {
+        accessControlAllowCredentials: false,
+        accessControlAllowHeaders: ['Authorization', 'Content-Type', 'x-organization-id'],
+        accessControlAllowMethods: ['GET', 'HEAD', 'OPTIONS', 'PUT', 'POST', 'PATCH', 'DELETE'],
+        accessControlAllowOrigins: ['*'],
+        originOverride: true,
+        accessControlMaxAge: Duration.hours(1),
+      },
+    });
     const apiCdn = hasCustomApiDomain
       ? undefined
       : new cloudfront.Distribution(this, 'ApiDistribution', {
@@ -238,6 +249,7 @@ export class OrionEnvironmentStack extends Stack {
             viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
             cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
             originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+            responseHeadersPolicy: apiCorsPolicy,
             allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           },
         });
