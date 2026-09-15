@@ -1,0 +1,122 @@
+name: Deploy Orion production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: orion-aws-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run build:api
+      - run: npm run build:worker
+      - run: STATIC_EXPORT=true npm run build:web
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install CDK
+        working-directory: infra/aws/cdk
+        run: npm install
+
+      - name: Deploy production infrastructure
+        working-directory: infra/aws/cdk
+        env:
+          ROOT_DOMAIN: ${{ vars.ROOT_DOMAIN }}
+          API_CERTIFICATE_ARN: ${{ vars.API_CERTIFICATE_ARN }}
+          MEDIA_CERTIFICATE_ARN: ${{ vars.MEDIA_CERTIFICATE_ARN }}
+          CLOUDFRONT_PUBLIC_KEY: ${{ secrets.CLOUDFRONT_PUBLIC_KEY }}
+        run: |
+          CONTEXT_ARGS=()
+          if [[ -n "${ROOT_DOMAIN:-}" ]]; then
+            CONTEXT_ARGS+=(-c "rootDomain=$ROOT_DOMAIN")
+          fi
+          if [[ -n "${API_CERTIFICATE_ARN:-}" ]]; then
+            CONTEXT_ARGS+=(-c "apiCertificateArn=$API_CERTIFICATE_ARN")
+          fi
+          if [[ -n "${MEDIA_CERTIFICATE_ARN:-}" ]]; then
+            CONTEXT_ARGS+=(-c "mediaCertificateArn=$MEDIA_CERTIFICATE_ARN")
+          fi
+          npx cdk deploy Orion --require-approval never \
+            "${CONTEXT_ARGS[@]}" \
+            --parameters CloudFrontPublicKey="$CLOUDFRONT_PUBLIC_KEY"
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v3
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Resolve stack outputs
+        id: stack
+        run: |
+          output() {
+            aws cloudformation describe-stacks --stack-name Orion \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          echo "api_repo=$(output ApiRepositoryUri)" >> "$GITHUB_OUTPUT"
+          echo "worker_repo=$(output WorkerRepositoryUri)" >> "$GITHUB_OUTPUT"
+          echo "migration_project=$(output MigrationProjectName)" >> "$GITHUB_OUTPUT"
+          echo "api_asg=$(output ApiAutoScalingGroupName)" >> "$GITHUB_OUTPUT"
+          echo "worker_asg=$(output WorkerAutoScalingGroupName)" >> "$GITHUB_OUTPUT"
+          echo "api_parameter=$(output ApiImageParameterName)" >> "$GITHUB_OUTPUT"
+          echo "worker_parameter=$(output WorkerImageParameterName)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ARM64 API and worker images
+        env:
+          API_URI: ${{ steps.stack.outputs.api_repo }}
+          WORKER_URI: ${{ steps.stack.outputs.worker_repo }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker buildx build --platform linux/arm64 -f infra/aws/docker/Dockerfile.api \
+            -t "$API_URI:$IMAGE_TAG" --push .
+          docker buildx build --platform linux/arm64 -f infra/aws/docker/Dockerfile.worker \
+            -t "$WORKER_URI:$IMAGE_TAG" --push .
+
+      - name: Run database migrations before rollout
+        env:
+          PROJECT: ${{ steps.stack.outputs.migration_project }}
+          IMAGE_URI: ${{ steps.stack.outputs.api_repo }}:${{ github.sha }}
+        run: |
+          BUILD_ID=$(aws codebuild start-build --project-name "$PROJECT" \
+            --environment-variables-override name=IMAGE_URI,value="$IMAGE_URI",type=PLAINTEXT \
+            --query 'build.id' --output text)
+          aws codebuild wait build-succeeded --ids "$BUILD_ID"
+
+      - name: Promote immutable images and refresh instances
+        env:
+          API_URI: ${{ steps.stack.outputs.api_repo }}:${{ github.sha }}
+          WORKER_URI: ${{ steps.stack.outputs.worker_repo }}:${{ github.sha }}
+          API_PARAMETER: ${{ steps.stack.outputs.api_parameter }}
+          WORKER_PARAMETER: ${{ steps.stack.outputs.worker_parameter }}
+          API_ASG: ${{ steps.stack.outputs.api_asg }}
+          WORKER_ASG: ${{ steps.stack.outputs.worker_asg }}
+        run: |
+          aws ssm put-parameter --name "$API_PARAMETER" --type String --overwrite --value "$API_URI"
+          aws ssm put-parameter --name "$WORKER_PARAMETER" --type String --overwrite --value "$WORKER_URI"
+          aws autoscaling start-instance-refresh --auto-scaling-group-name "$API_ASG" \
+            --preferences MinHealthyPercentage=50,InstanceWarmup=300
+          aws autoscaling start-instance-refresh --auto-scaling-group-name "$WORKER_ASG" \
+            --preferences MinHealthyPercentage=50,InstanceWarmup=180

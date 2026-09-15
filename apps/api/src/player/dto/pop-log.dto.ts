@@ -39,7 +39,7 @@ class PopLogEntry {
   @IsString()
   playlistName?: string;
 
-  /** Playlist that was playing when the asset started (preferred over server "now"). */
+  /** Playlist that was playing when the asset started. Required for queued ingest. */
   @IsOptional()
   @IsString()
   playlistId?: string;

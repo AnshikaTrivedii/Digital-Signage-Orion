@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
 
 datasource db {
@@ -543,7 +544,9 @@ model TickerDevice {
 }
 
 model ProofOfPlayLog {
-  id              String            @id @default(cuid())
+  // Partitioned by startTime (daily) in PostgreSQL. The composite primary key
+  // is required so unique indexes can include the partition column.
+  id              String            @default(cuid())
   organizationId  String
   deviceId        String?
   device          String
@@ -561,6 +564,7 @@ model ProofOfPlayLog {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   deviceRef    Device?      @relation(fields: [deviceId], references: [id], onDelete: SetNull)
 
+  @@id([id, startTime])
   // A device plays one asset at a time, so (device, asset, playback start) is the
   // natural key of a playback event. Enforcing it in the database makes ingest
   // idempotent: a device retrying a flush can never store the same play twice.
@@ -569,6 +573,26 @@ model ProofOfPlayLog {
   @@index([organizationId, startTime])
   @@index([organizationId, deviceId, startTime])
   @@index([organizationId, startTime(sort: Desc), id(sort: Desc)], map: "ProofOfPlayLog_org_startTime_id_idx")
+}
+
+/// Hourly rollups for dashboard KPIs/charts. Raw ProofOfPlayLog rows are not scanned for summaries.
+model ProofOfPlayHourlyAggregate {
+  organizationId  String
+  hourStart       DateTime
+  deviceId        String
+  deviceName      String
+  assetName       String
+  playlistName    String   @default("")
+  campaignName    String   @default("")
+  verifiedCount   Int      @default(0)
+  failedCount     Int      @default(0)
+  durationSeconds Int      @default(0)
+  lastPlay        DateTime
+  updatedAt       DateTime @updatedAt
+
+  @@id([organizationId, hourStart, deviceId, assetName, playlistName, campaignName])
+  @@index([organizationId, hourStart])
+  @@index([organizationId, deviceId, hourStart])
 }
 
 model OrganizationMembership {

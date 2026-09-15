@@ -6,10 +6,11 @@ import { S3Module } from '../s3/s3.module';
 import { SchedulingModule } from '../scheduling/scheduling.module';
 import { PlayerController } from './player.controller';
 import { PlayerService } from './player.service';
+import { PopLogQueueService } from './pop-log-queue.service';
 
 @Module({
   imports: [PrismaModule, S3Module, DeviceCacheModule, DeviceManagementModule, SchedulingModule],
   controllers: [PlayerController],
-  providers: [PlayerService],
+  providers: [PlayerService, PopLogQueueService],
 })
 export class PlayerModule {}

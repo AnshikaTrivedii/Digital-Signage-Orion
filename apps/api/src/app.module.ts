@@ -5,6 +5,7 @@ import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { ClientDataModule } from './client-data/client-data.module';
 import { HealthController } from './health.controller';
+import { ObservabilityModule } from './observability/observability.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { PlayerModule } from './player/player.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -14,7 +15,20 @@ import { SyncModule } from './sync/sync.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
-  imports: [PrismaModule, S3Module, SyncModule, AuditModule, AuthModule, UsersModule, OrganizationsModule, AssetsModule, ClientDataModule, SchedulingModule, PlayerModule],
+  imports: [
+    PrismaModule,
+    ObservabilityModule,
+    S3Module,
+    SyncModule,
+    AuditModule,
+    AuthModule,
+    UsersModule,
+    OrganizationsModule,
+    AssetsModule,
+    ClientDataModule,
+    SchedulingModule,
+    PlayerModule,
+  ],
   controllers: [HealthController],
   providers: [AppService],
 })

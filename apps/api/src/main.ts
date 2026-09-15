@@ -6,16 +6,27 @@ import { resolve } from 'path';
 import { AppModule } from './app.module';
 import { getJwtSecret } from './common/config/jwt-secret';
 
+function configuredCorsOrigins(): string[] {
+  const configured = (process.env.CORS_ORIGINS ?? 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return configured.length ? configured : ['http://localhost:3000'];
+}
+
 async function bootstrap() {
   getJwtSecret();
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    cors: true,
+  const corsOrigins = configuredCorsOrigins();
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.enableCors({
+    origin: corsOrigins,
+    credentials: true,
   });
   const uploadDirectory = process.env.ASSET_UPLOAD_DIR ?? 'tmp/uploads';
   app.useStaticAssets(resolve(uploadDirectory), {
     prefix: '/uploads/',
     setHeaders: (res) => {
-      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Origin', corsOrigins[0] ?? 'http://localhost:3000');
       res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     },
   });

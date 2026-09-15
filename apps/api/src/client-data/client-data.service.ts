@@ -1888,22 +1888,11 @@ export class ClientDataService {
       query,
     );
 
-    const verifiedWhere: Prisma.ProofOfPlayLogWhereInput = {
-      ...where,
-      status: ProofOfPlayStatus.VERIFIED,
-    };
-    const failedWhere: Prisma.ProofOfPlayLogWhereInput = {
-      ...where,
-      status: ProofOfPlayStatus.FAILED,
-    };
-
     const [
       devices,
       campaigns,
       organization,
       totalLogs,
-      verifiedCount,
-      failedCount,
       logs,
       latestLog,
     ] = await Promise.all([
@@ -1915,8 +1904,6 @@ export class ClientDataService {
       }),
       this.prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
       this.prisma.proofOfPlayLog.count({ where }),
-      this.prisma.proofOfPlayLog.count({ where: verifiedWhere }),
-      this.prisma.proofOfPlayLog.count({ where: failedWhere }),
       this.prisma.proofOfPlayLog.findMany({
         where,
         select: POP_LOG_SCAN_SELECT,
@@ -1982,92 +1969,29 @@ export class ClientDataService {
 
     const enrichedLogs = logs.map(enrich);
     const buckets = this.buildReportChartBuckets(range, rangeStart, rangeEnd, query.timezone);
-    const deviceById = new Map(devices.map((device) => [device.id, device]));
-    const deviceByName = new Map(devices.map((device) => [device.name, device]));
-    const deviceAgg = new Map<string, {
-      id: string | null;
-      name: string;
-      location: string;
-      status: DeviceStatus | null;
-      impressions: number;
-      verified: number;
-      lastPlay: Date | null;
-    }>();
-    const campaignAgg = new Map<string, {
-      id: string | null;
-      name: string;
-      impressions: number;
-      verified: number;
-    }>();
-    const contentAgg = new Map<string, { content: string; impressions: number; verified: number }>();
-    let durationTotal = 0;
-    let durationSamples = 0;
-    let scannedLogs = 0;
-
-    // Single full pass over every row matching the filter — same `where` as the
-    // count above and as the export, so all three can never disagree.
-    for await (const batch of this.scanPopLogs(where)) {
-      for (const raw of batch) {
-        const log = enrich(raw);
-        scannedLogs += 1;
-        const isVerified = log.status === ProofOfPlayStatus.VERIFIED;
-
-        const bucket = this.findChartBucket(buckets, log.startTime);
-        if (bucket) {
-          bucket.impressions += 1;
-          if (isVerified) bucket.verified += 1;
-        }
-
-        if (isVerified && log.durationSeconds && log.durationSeconds > 0) {
-          durationTotal += log.durationSeconds;
-          durationSamples += 1;
-        }
-
-        const matched = log.deviceId ? deviceById.get(log.deviceId) : deviceByName.get(log.device);
-        const deviceKey = matched?.id ?? log.device;
-        const deviceEntry = deviceAgg.get(deviceKey) ?? {
-          id: matched?.id ?? null,
-          name: log.device,
-          location: matched?.location ?? 'Unknown',
-          status: matched ? this.deviceManagement.resolveEffectiveStatus(matched) : null,
-          impressions: 0,
-          verified: 0,
-          lastPlay: null as Date | null,
-        };
-        deviceEntry.impressions += 1;
-        if (isVerified) deviceEntry.verified += 1;
-        if (!deviceEntry.lastPlay || log.startTime > deviceEntry.lastPlay) {
-          deviceEntry.lastPlay = log.startTime;
-        }
-        deviceAgg.set(deviceKey, deviceEntry);
-
-        const campaignKey = log.campaignId ?? `name:${log.campaignName ?? '__uncategorized__'}`;
-        const campaignEntry = campaignAgg.get(campaignKey) ?? {
-          id: log.campaignId ?? null,
-          name: log.campaignName ?? 'Uncategorized',
-          impressions: 0,
-          verified: 0,
-        };
-        campaignEntry.impressions += 1;
-        if (isVerified) campaignEntry.verified += 1;
-        campaignAgg.set(campaignKey, campaignEntry);
-
-        const contentEntry = contentAgg.get(log.assetName) ?? {
-          content: log.assetName,
-          impressions: 0,
-          verified: 0,
-        };
-        contentEntry.impressions += 1;
-        if (isVerified) contentEntry.verified += 1;
-        contentAgg.set(log.assetName, contentEntry);
-      }
-    }
-
-    if (scannedLogs !== totalLogs) {
-      this.logger.warn(
-        `PoP report scan mismatch org=${organizationId} range=${range} counted=${totalLogs} scanned=${scannedLogs}`,
-      );
-    }
+    const summary = await this.summarizePopLogDashboard(
+      organizationId,
+      query,
+      rangeStart,
+      rangeEnd,
+      devices,
+      buckets,
+      totalLogs,
+      where,
+    );
+    const {
+      deviceAgg,
+      campaignAgg,
+      contentAgg,
+      durationTotal,
+      durationSamples,
+      billedImpressions,
+      verifiedCount: summaryVerified,
+      failedCount: summaryFailed,
+    } = summary;
+    const verifiedCountForKpi = summaryVerified;
+    const failedCountForKpi = summaryFailed;
+    const totalLogsForKpi = billedImpressions;
 
     const chartData = buckets.map((bucket) => ({
       day: bucket.label,
@@ -2164,16 +2088,16 @@ export class ClientDataService {
       devices: reportDeviceOptions,
       campaigns,
       kpis: {
-        billedImpressions: totalLogs,
+        billedImpressions: totalLogsForKpi,
         avgEngagement,
         playbackFidelity:
-          Math.round((verifiedCount / Math.max(totalLogs, 1)) * 10000) / 100,
+          Math.round((verifiedCountForKpi / Math.max(totalLogsForKpi, 1)) * 10000) / 100,
         activeNodes: devices.filter(
           (device) => this.deviceManagement.resolveEffectiveStatus(device) === DeviceStatus.ONLINE,
         ).length,
         totalNodes: devices.length,
-        verifiedCount,
-        failedCount,
+        verifiedCount: verifiedCountForKpi,
+        failedCount: failedCountForKpi,
       },
       chartData,
       deviceBreakdown,
@@ -2227,6 +2151,12 @@ export class ClientDataService {
         select: { id: true, name: true, currentPlaylistId: true },
       }),
     ]);
+
+    if (expectedRows > 100_000) {
+      throw new BadRequestException(
+        'Excel export is limited to 100,000 raw events. Narrow the date range or filters, or use the dashboard aggregates.',
+      );
+    }
 
     this.logger.log(
       `PoP export org=${organizationId} range=${query.range ?? 'today'} ` +
@@ -2528,6 +2458,248 @@ export class ClientDataService {
   }
 
   /**
+   * Dashboard KPIs/charts read hourly aggregates instead of scanning raw PoP rows.
+   * Falls back to a raw scan only when aggregates have not been backfilled yet.
+   */
+  private async summarizePopLogDashboard(
+    organizationId: string,
+    query: {
+      range?: string;
+      startDate?: string;
+      endDate?: string;
+      deviceId?: string;
+      folderId?: string;
+      search?: string;
+      status?: 'all' | 'verified' | 'failed';
+      timezone?: string;
+      viewerDate?: string;
+    },
+    rangeStart: Date | null,
+    rangeEnd: Date | null,
+    devices: { id: string; name: string; location: string; status: DeviceStatus; lastSeenAt: Date | null }[],
+    buckets: ReportChartBucket[],
+    rawTotalLogs: number,
+    where: Prisma.ProofOfPlayLogWhereInput,
+  ) {
+    const deviceById = new Map(devices.map((device) => [device.id, device]));
+    const deviceByName = new Map(devices.map((device) => [device.name, device]));
+    const empty = () => ({
+      deviceAgg: new Map<string, {
+        id: string | null;
+        name: string;
+        location: string;
+        status: DeviceStatus | null;
+        impressions: number;
+        verified: number;
+        lastPlay: Date | null;
+      }>(),
+      campaignAgg: new Map<string, {
+        id: string | null;
+        name: string;
+        impressions: number;
+        verified: number;
+      }>(),
+      contentAgg: new Map<string, { content: string; impressions: number; verified: number }>(),
+      durationTotal: 0,
+      durationSamples: 0,
+      billedImpressions: 0,
+      verifiedCount: 0,
+      failedCount: 0,
+    });
+
+    const aggregateWhere: Prisma.ProofOfPlayHourlyAggregateWhereInput = {
+      organizationId,
+      ...(rangeStart || rangeEnd
+        ? {
+            hourStart: {
+              ...(rangeStart ? { gte: new Date(Date.UTC(
+                rangeStart.getUTCFullYear(),
+                rangeStart.getUTCMonth(),
+                rangeStart.getUTCDate(),
+                rangeStart.getUTCHours(),
+              )) } : {}),
+              ...(rangeEnd ? { lte: rangeEnd } : {}),
+            },
+          }
+        : {}),
+    };
+    if (query.deviceId && !query.deviceId.startsWith('historical:')) {
+      aggregateWhere.deviceId = query.deviceId;
+    } else if (query.deviceId?.startsWith('historical:')) {
+      aggregateWhere.deviceName = query.deviceId.slice('historical:'.length);
+    }
+    if (query.search?.trim()) {
+      const term = query.search.trim();
+      aggregateWhere.OR = [
+        { deviceName: { contains: term, mode: 'insensitive' } },
+        { assetName: { contains: term, mode: 'insensitive' } },
+        { playlistName: { contains: term, mode: 'insensitive' } },
+        { campaignName: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    const aggregates = await this.prisma.proofOfPlayHourlyAggregate.findMany({
+      where: aggregateWhere,
+    });
+
+    if (!aggregates.length && rawTotalLogs > 0) {
+      return this.summarizePopLogsFromRawScan(buckets, devices, where);
+    }
+
+    const result = empty();
+    for (const row of aggregates) {
+      const verified = query.status === 'failed' ? 0 : row.verifiedCount;
+      const failed = query.status === 'verified' ? 0 : row.failedCount;
+      const impressions = verified + failed;
+      if (impressions <= 0) continue;
+
+      result.billedImpressions += impressions;
+      result.verifiedCount += verified;
+      result.failedCount += failed;
+      result.durationTotal += row.durationSeconds;
+      if (row.durationSeconds > 0) result.durationSamples += verified || impressions;
+
+      const bucket = this.findChartBucket(buckets, row.hourStart);
+      if (bucket) {
+        bucket.impressions += impressions;
+        bucket.verified += verified;
+      }
+
+      const matched = deviceById.get(row.deviceId) ?? deviceByName.get(row.deviceName);
+      const deviceKey = matched?.id ?? row.deviceId ?? row.deviceName;
+      const deviceEntry = result.deviceAgg.get(deviceKey) ?? {
+        id: matched?.id ?? row.deviceId ?? null,
+        name: row.deviceName,
+        location: matched?.location ?? 'Unknown',
+        status: matched ? this.deviceManagement.resolveEffectiveStatus(matched) : null,
+        impressions: 0,
+        verified: 0,
+        lastPlay: null as Date | null,
+      };
+      deviceEntry.impressions += impressions;
+      deviceEntry.verified += verified;
+      if (!deviceEntry.lastPlay || row.lastPlay > deviceEntry.lastPlay) {
+        deviceEntry.lastPlay = row.lastPlay;
+      }
+      result.deviceAgg.set(deviceKey, deviceEntry);
+
+      const campaignKey = row.campaignName || '__uncategorized__';
+      const campaignEntry = result.campaignAgg.get(campaignKey) ?? {
+        id: null,
+        name: row.campaignName || 'Uncategorized',
+        impressions: 0,
+        verified: 0,
+      };
+      campaignEntry.impressions += impressions;
+      campaignEntry.verified += verified;
+      result.campaignAgg.set(campaignKey, campaignEntry);
+
+      const contentEntry = result.contentAgg.get(row.assetName) ?? {
+        content: row.assetName,
+        impressions: 0,
+        verified: 0,
+      };
+      contentEntry.impressions += impressions;
+      contentEntry.verified += verified;
+      result.contentAgg.set(row.assetName, contentEntry);
+    }
+
+    return result;
+  }
+
+  private async summarizePopLogsFromRawScan(
+    buckets: ReportChartBucket[],
+    devices: { id: string; name: string; location: string; status: DeviceStatus; lastSeenAt: Date | null }[],
+    where: Prisma.ProofOfPlayLogWhereInput,
+  ) {
+    const deviceById = new Map(devices.map((device) => [device.id, device]));
+    const deviceByName = new Map(devices.map((device) => [device.name, device]));
+    const result = {
+      deviceAgg: new Map<string, {
+        id: string | null;
+        name: string;
+        location: string;
+        status: DeviceStatus | null;
+        impressions: number;
+        verified: number;
+        lastPlay: Date | null;
+      }>(),
+      campaignAgg: new Map<string, {
+        id: string | null;
+        name: string;
+        impressions: number;
+        verified: number;
+      }>(),
+      contentAgg: new Map<string, { content: string; impressions: number; verified: number }>(),
+      durationTotal: 0,
+      durationSamples: 0,
+      billedImpressions: 0,
+      verifiedCount: 0,
+      failedCount: 0,
+    };
+
+    for await (const batch of this.scanPopLogs(where)) {
+      for (const log of batch) {
+        const isVerified = log.status === ProofOfPlayStatus.VERIFIED;
+        result.billedImpressions += 1;
+        if (isVerified) result.verifiedCount += 1;
+        else result.failedCount += 1;
+
+        const bucket = this.findChartBucket(buckets, log.startTime);
+        if (bucket) {
+          bucket.impressions += 1;
+          if (isVerified) bucket.verified += 1;
+        }
+        if (isVerified && log.durationSeconds && log.durationSeconds > 0) {
+          result.durationTotal += log.durationSeconds;
+          result.durationSamples += 1;
+        }
+
+        const matched = log.deviceId ? deviceById.get(log.deviceId) : deviceByName.get(log.device);
+        const deviceKey = matched?.id ?? log.device;
+        const deviceEntry = result.deviceAgg.get(deviceKey) ?? {
+          id: matched?.id ?? null,
+          name: log.device,
+          location: matched?.location ?? 'Unknown',
+          status: matched ? this.deviceManagement.resolveEffectiveStatus(matched) : null,
+          impressions: 0,
+          verified: 0,
+          lastPlay: null as Date | null,
+        };
+        deviceEntry.impressions += 1;
+        if (isVerified) deviceEntry.verified += 1;
+        if (!deviceEntry.lastPlay || log.startTime > deviceEntry.lastPlay) {
+          deviceEntry.lastPlay = log.startTime;
+        }
+        result.deviceAgg.set(deviceKey, deviceEntry);
+
+        const campaignKey = log.campaignName ?? '__uncategorized__';
+        const campaignEntry = result.campaignAgg.get(campaignKey) ?? {
+          id: null,
+          name: log.campaignName ?? 'Uncategorized',
+          impressions: 0,
+          verified: 0,
+        };
+        campaignEntry.impressions += 1;
+        if (isVerified) campaignEntry.verified += 1;
+        result.campaignAgg.set(campaignKey, campaignEntry);
+
+        const assetName = log.assetName || log.content;
+        const contentEntry = result.contentAgg.get(assetName) ?? {
+          content: assetName,
+          impressions: 0,
+          verified: 0,
+        };
+        contentEntry.impressions += 1;
+        if (isVerified) contentEntry.verified += 1;
+        result.contentAgg.set(assetName, contentEntry);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Read every log matching `where` in stable order, in bounded batches.
    *
    * Keyset (cursor) paging rather than LIMIT/OFFSET: the window never shifts
@@ -2537,7 +2709,7 @@ export class ClientDataService {
   private async *scanPopLogs(
     where: Prisma.ProofOfPlayLogWhereInput,
   ): AsyncGenerator<PopLogScanRow[]> {
-    let cursor: { id: string } | undefined;
+    let cursor: { id_startTime: { id: string; startTime: Date } } | undefined;
 
     for (;;) {
       const batch = await this.prisma.proofOfPlayLog.findMany({
@@ -2551,7 +2723,8 @@ export class ClientDataService {
       if (!batch.length) return;
       yield batch;
       if (batch.length < POP_LOG_SCAN_BATCH) return;
-      cursor = { id: batch[batch.length - 1].id };
+      const last = batch[batch.length - 1];
+      cursor = { id_startTime: { id: last.id, startTime: last.startTime } };
     }
   }
 

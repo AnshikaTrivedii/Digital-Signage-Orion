@@ -204,10 +204,20 @@ function PlaylistAssetRow({
     );
 }
 
+function resolvePlaylistId(params: ReturnType<typeof useParams>): string {
+    const fromParams = typeof params.id === "string" ? params.id : "";
+    if (fromParams && fromParams !== "__id__") return fromParams;
+    if (typeof window === "undefined") return fromParams;
+    const parts = window.location.pathname.split("/").filter(Boolean);
+    const playlistsIndex = parts.lastIndexOf("playlists");
+    const fromPath = playlistsIndex >= 0 ? parts[playlistsIndex + 1] ?? "" : "";
+    return fromPath && fromPath !== "__id__" ? fromPath : fromParams;
+}
+
 export default function PlaylistBuilderPage() {
     const params = useParams();
     const router = useRouter();
-    const playlistId = params.id as string;
+    const playlistId = resolvePlaylistId(params);
     const { activeOrganizationId } = useAuth();
     const { canEdit } = useClientFeature("PLAYLISTS");
 

@@ -6,7 +6,9 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
+import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
+import { readFileSync } from 'fs';
 import { mkdir, stat, unlink, writeFile } from 'fs/promises';
 import { dirname, join, resolve } from 'path';
 
@@ -39,6 +41,7 @@ export class S3Service {
         secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
       };
     }
+    // Otherwise the AWS SDK uses the default provider chain (EC2 instance profile).
 
     this.client = new S3Client(config);
 
@@ -50,9 +53,22 @@ export class S3Service {
   get useLocalStorage(): boolean {
     if (process.env.S3_USE_LOCAL_STORAGE === 'true') return true;
     if (process.env.S3_USE_LOCAL_STORAGE === 'false') return false;
+    return process.env.NODE_ENV !== 'production';
+  }
 
-    const accessKey = process.env.S3_ACCESS_KEY_ID ?? '';
-    return !accessKey || accessKey === 'your-access-key-id';
+  private get cloudFrontSigningConfigured(): boolean {
+    return Boolean(
+      process.env.CLOUDFRONT_MEDIA_DOMAIN &&
+        process.env.CLOUDFRONT_KEY_PAIR_ID &&
+        (process.env.CLOUDFRONT_PRIVATE_KEY || process.env.CLOUDFRONT_PRIVATE_KEY_FILE),
+    );
+  }
+
+  private cloudFrontPrivateKey(): string {
+    if (process.env.CLOUDFRONT_PRIVATE_KEY_FILE) {
+      return readFileSync(process.env.CLOUDFRONT_PRIVATE_KEY_FILE, 'utf8');
+    }
+    return process.env.CLOUDFRONT_PRIVATE_KEY ?? '';
   }
 
   /** Build the org-scoped S3 key for an asset file */
@@ -97,20 +113,39 @@ export class S3Service {
       Key: key,
       ContentType: contentType,
     });
-    return getSignedUrl(this.client, command, { expiresIn });
+    return getS3SignedUrl(this.client, command, { expiresIn });
   }
 
-  /** Generate a presigned GET URL for downloading/previewing */
+  /** Generate a signed GET URL for downloading/previewing (CloudFront in AWS, S3 presign otherwise). */
   async generateDownloadUrl(key: string, expiresIn = 3600): Promise<string> {
     if (this.useLocalStorage) {
       return this.buildLocalDownloadUrl(key);
+    }
+
+    if (this.cloudFrontSigningConfigured) {
+      return this.generateCloudFrontDownloadUrl(key, expiresIn);
     }
 
     const command = new GetObjectCommand({
       Bucket: this.bucket,
       Key: key,
     });
-    return getSignedUrl(this.client, command, { expiresIn });
+    return getS3SignedUrl(this.client, command, { expiresIn });
+  }
+
+  private generateCloudFrontDownloadUrl(key: string, expiresIn: number): string {
+    const domain = (process.env.CLOUDFRONT_MEDIA_DOMAIN ?? '').replace(/\/$/, '');
+    const encodedKey = key
+      .split('/')
+      .map((part) => encodeURIComponent(part))
+      .join('/');
+    const url = `${domain}/${encodedKey}`;
+    return getCloudFrontSignedUrl({
+      url,
+      keyPairId: process.env.CLOUDFRONT_KEY_PAIR_ID ?? '',
+      privateKey: this.cloudFrontPrivateKey(),
+      dateLessThan: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    });
   }
 
   /** Check if a file exists in S3 and return its metadata */

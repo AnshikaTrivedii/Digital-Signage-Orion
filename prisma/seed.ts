@@ -156,6 +156,11 @@ async function seedDemoData() {
 }
 
 async function main() {
+  if (process.env.NODE_ENV === 'production' && process.env.ORION_BOOTSTRAP_ADMIN !== 'true') {
+    console.log('Seed skipped in production. Create the first admin with POST /api/auth/bootstrap/super-admin.');
+    return;
+  }
+
   console.log('🌱 Seeding Orion Platform...\n');
 
   await ensureSuperAdmin();

@@ -20,7 +20,6 @@ import { randomBytes } from 'crypto';
 import {
   enrichPopLogFields,
   PopLogContextIndex,
-  popLogNaturalKey,
 } from '../common/pop-log-enrichment';
 import {
   buildManifestSequenceSignature,
@@ -36,12 +35,16 @@ import type { ActiveScheduleSnapshot } from '../scheduling/schedule.service';
 import { ScheduleService } from '../scheduling/schedule.service';
 import type { CacheReportDto } from './dto/cache-report.dto';
 import type { SyncQueryDto } from './dto/sync-query.dto';
+import { MetricsService } from '../observability/metrics.service';
+import { popLogDedupeKey, type QueuedPopLog } from './pop-log-batch';
+import { PopLogQueueService } from './pop-log-queue.service';
 
 /** Device resolved from a valid paired token — organizationId is guaranteed. */
 type PairedDevice = Device & { organizationId: string };
 
-/** Presigned URL lifetime for player sync downloads (7 days). */
+/** Signed media URL lifetime for player sync downloads (7 days). */
 const SYNC_DOWNLOAD_URL_TTL_SECONDS = 86400 * 7;
+const POP_LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
 type SyncAssetContext = {
   knownAssetIds: string[];
@@ -124,6 +127,8 @@ export class PlayerService {
     private readonly deviceCache: DeviceCacheService,
     private readonly deviceManagement: DeviceManagementService,
     private readonly schedules: ScheduleService,
+    private readonly popLogQueue: PopLogQueueService,
+    private readonly metrics: MetricsService,
   ) {}
 
   /**
@@ -527,6 +532,7 @@ export class PlayerService {
       );
     }
     await this.deviceManagement.ingestTelemetry(device.id, data);
+    this.metrics.increment('HeartbeatSuccess');
     const now = new Date();
     const effective = await this.resolveEffectiveContent(device, now, { log: false });
     const contentRevision = await this.getDeviceContentRevision(device, effective);
@@ -1554,6 +1560,8 @@ export class PlayerService {
 
   /**
    * Accept proof-of-play logs from a device.
+   * Successful responses mean the batch was authenticated, validated, deduplicated,
+   * and queued (or locally persisted when SQS is not configured).
    */
   async submitPopLogs(
     authHeader: string | undefined,
@@ -1574,16 +1582,7 @@ export class PlayerService {
     const device = await this.resolveDeviceByToken(authHeader);
     const batchSize = logs?.length ?? 0;
 
-    if (process.env.PLAYER_POP_LOG !== 'false') {
-      this.logger.log(
-        `PoP submit deviceId=${device.id} name=${device.name} batch=${batchSize} featureEnabled=${device.featureProofOfPlay}`,
-      );
-    }
-
     if (!device.featureProofOfPlay) {
-      this.logger.warn(
-        `PoP logs ignored for deviceId=${device.id} (${device.name}): featureProofOfPlay is disabled`,
-      );
       return this.buildPopLogSubmitResponse(device, {
         received: 0,
         skipped: batchSize,
@@ -1596,79 +1595,114 @@ export class PlayerService {
       return this.buildPopLogSubmitResponse(device, { received: 0, skipped: 0, accepted: true });
     }
 
-    const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
-    const effectiveNow = await this.resolveEffectiveContent(device, new Date(), { log: false });
-
-    this.logger.log(
-      `[POP] deviceId=${device.id} playlistId=${effectiveNow.playlistId ?? 'none'} ` +
-        `contentSource=${effectiveNow.source} scheduleId=${effectiveNow.activeSchedule?.scheduleId ?? 'none'} ` +
-        `batch=${batchSize} (per-event playlist resolved at playback startTime)`,
-    );
-
-    // A playback timestamp ahead of "now" means the device clock is wrong. Such a
-    // row is still stored (never drop real playback), but no date filter can ever
-    // reach past the end of today, so it must be reported back loudly.
+    const cutoff = Date.now() - POP_LOG_RETENTION_MS;
     const clockSkewToleranceMs = 5 * 60 * 1000;
     let clockSkewed = 0;
     let maxSkewMs = 0;
-
-    const rows: {
-      organizationId: string;
-      deviceId: string;
-      device: string;
-      content: string;
-      assetName: string;
-      playlistName: string | null;
-      campaignName: string | null;
-      status: ProofOfPlayStatus;
-      timestamp: Date;
-      startTime: Date;
-      endTime: Date | null;
-      durationSeconds: number | null;
-    }[] = [];
+    let missingPlaylistId = 0;
+    const batchSeen = new Set<string>();
+    const queued: QueuedPopLog[] = [];
 
     for (const log of logs) {
-      if (!log.assetName?.trim() && !log.content?.trim()) {
-        this.logger.warn(`Skipping PoP log from ${device.name}: missing assetName/content`);
+      if (!log.assetName?.trim() && !log.content?.trim()) continue;
+      const playlistId = log.playlistId?.trim();
+      if (!playlistId) {
+        missingPlaylistId += 1;
         continue;
       }
 
       const assetName = (log.assetName ?? log.content ?? 'Unknown asset').trim();
       const rawStart = log.startTime ?? log.timestamp;
       const startTime = rawStart ? new Date(rawStart) : new Date();
-      if (Number.isNaN(startTime.getTime())) {
-        this.logger.warn(`Skipping PoP log from ${device.name}: invalid start time for ${assetName}`);
-        continue;
-      }
+      if (Number.isNaN(startTime.getTime())) continue;
+      if (startTime.getTime() < cutoff) continue;
 
       const maxFutureMs = 24 * 60 * 60 * 1000;
       const skewMs = startTime.getTime() - Date.now();
-      if (skewMs > maxFutureMs) {
-        this.logger.warn(`Skipping PoP log from ${device.name}: start time too far in the future for ${assetName}`);
-        continue;
-      }
+      if (skewMs > maxFutureMs) continue;
       if (skewMs > clockSkewToleranceMs) {
         clockSkewed += 1;
         maxSkewMs = Math.max(maxSkewMs, skewMs);
       }
 
-      // Prefer client-stamped playlistId; otherwise reconstruct which schedule was
-      // active at the playback instant so delayed uploads after expiry stay correct.
-      const playbackPlaylistId =
-        (typeof log.playlistId === 'string' && log.playlistId.trim()
-          ? log.playlistId.trim()
-          : null) ??
-        (await this.schedules.resolvePlaylistIdAt(
-          device.organizationId,
-          device.id,
-          startTime,
-          device.currentPlaylistId,
-        ));
+      const startIso = startTime.toISOString();
+      const key = popLogDedupeKey({ deviceId: device.id, assetName, startTime: startIso });
+      if (batchSeen.has(key)) continue;
+      batchSeen.add(key);
 
-      const playbackContext = contextIndex.resolve(assetName, playbackPlaylistId);
+      const normalizedStatus =
+        String(log.status).trim().toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'FAILED';
+      const endTime = log.endTime ? new Date(log.endTime) : null;
+
+      queued.push({
+        assetName,
+        playlistId,
+        playlistName: log.playlistName,
+        campaignName: log.campaignName,
+        assetId: log.assetId,
+        status: normalizedStatus,
+        startTime: startIso,
+        endTime: endTime && !Number.isNaN(endTime.getTime()) ? endTime.toISOString() : undefined,
+        durationSeconds: log.durationSeconds,
+      });
+    }
+
+    const invalid = batchSize - queued.length;
+    this.metrics.increment('PopLogsInvalid', invalid);
+
+    if (!queued.length) {
+      return this.buildPopLogSubmitResponse(device, {
+        received: 0,
+        skipped: batchSize,
+        accepted: false,
+        reason: missingPlaylistId === batchSize ? 'playlist_id_required' : 'all_logs_invalid',
+      });
+    }
+
+    if (this.popLogQueue.enabled) {
+      await this.popLogQueue.enqueue({
+        organizationId: device.organizationId,
+        deviceId: device.id,
+        deviceName: device.name,
+        receivedAt: new Date().toISOString(),
+        logs: queued,
+      });
+      this.metrics.increment('PopLogsEnqueued', queued.length);
+      this.metrics.increment('PopLogsDuplicates', batchSize - invalid - queued.length);
+      return this.buildPopLogSubmitResponse(device, {
+        received: queued.length,
+        skipped: batchSize - queued.length,
+        duplicates: batchSize - invalid - queued.length,
+        clockSkewed,
+        accepted: true,
+        queued: true,
+      });
+    }
+
+    const stored = await this.persistPopLogsLocally(device, queued);
+    if (clockSkewed > 0 && process.env.PLAYER_POP_LOG !== 'false') {
+      this.logger.warn(
+        `Device clock ahead of server for deviceId=${device.id}: ${clockSkewed} log(s) up to ${Math.round(maxSkewMs / 60000)} min in the future.`,
+      );
+    }
+    return this.buildPopLogSubmitResponse(device, {
+      received: stored,
+      skipped: batchSize - stored,
+      duplicates: queued.length - stored,
+      clockSkewed,
+      accepted: true,
+      queued: false,
+    });
+  }
+
+  private async persistPopLogsLocally(device: PairedDevice, logs: QueuedPopLog[]) {
+    const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
+    const rows = logs.map((log) => {
+      const startTime = new Date(log.startTime);
+      const playbackContext = contextIndex.resolve(log.assetName, log.playlistId);
       const enriched = enrichPopLogFields(
         {
-          assetName,
+          assetName: log.assetName,
           playlistName: log.playlistName,
           campaignName: log.campaignName,
           startTime,
@@ -1677,89 +1711,27 @@ export class PlayerService {
         },
         playbackContext,
       );
-
-      const normalizedStatus =
-        String(log.status).trim().toUpperCase() === 'VERIFIED'
-          ? ProofOfPlayStatus.VERIFIED
-          : ProofOfPlayStatus.FAILED;
-
-      const endTime = enriched.endTime;
-      this.logger.log(
-        `[POP] deviceId=${device.id} playlistId=${playbackPlaylistId ?? 'none'} ` +
-          `assetId=${log.assetId ?? 'n/a'} assetName=${assetName} ` +
-          `startTime=${startTime.toISOString()} endTime=${endTime?.toISOString() ?? 'n/a'} ` +
-          `duration=${enriched.durationSeconds ?? 'n/a'} responseStatus=pending`,
-      );
-
-      rows.push({
+      return {
         organizationId: device.organizationId,
         deviceId: device.id,
         device: device.name,
-        content: assetName,
-        assetName,
+        content: log.assetName,
+        assetName: log.assetName,
         playlistName: enriched.playlistName,
         campaignName: enriched.campaignName,
-        status: normalizedStatus,
+        status:
+          log.status === 'VERIFIED' ? ProofOfPlayStatus.VERIFIED : ProofOfPlayStatus.FAILED,
         timestamp: startTime,
         startTime,
-        endTime,
+        endTime: enriched.endTime,
         durationSeconds: enriched.durationSeconds,
-      });
-    }
-
-    if (!rows.length) {
-      return this.buildPopLogSubmitResponse(device, {
-        received: 0,
-        skipped: batchSize,
-        accepted: false,
-        reason: 'all_logs_invalid',
-      });
-    }
-
-    // Collapse repeats of the same playback event inside this batch, then let the
-    // `ProofOfPlayLog_natural_key` unique index reject anything already stored, so
-    // a device that re-flushes after a timeout cannot duplicate its history.
-    const batchSeen = new Set<string>();
-    const uniqueRows = rows.filter((row) => {
-      const key = popLogNaturalKey(row);
-      if (batchSeen.has(key)) return false;
-      batchSeen.add(key);
-      return true;
+      };
     });
-
-    const { count: stored } = await this.prisma.proofOfPlayLog.createMany({
-      data: uniqueRows,
+    const { count } = await this.prisma.proofOfPlayLog.createMany({
+      data: rows,
       skipDuplicates: true,
     });
-
-    const invalid = batchSize - rows.length;
-    const duplicates = rows.length - stored;
-
-    this.logger.log(
-      `[POP] deviceId=${device.id} eventCreated=${stored} skipped=${batchSize - stored} ` +
-        `duplicates=${duplicates} responseStatus=accepted`,
-    );
-    this.logger.log(
-      `Stored ${stored} PoP logs from deviceId=${device.id} (${device.name})` +
-        (invalid ? ` (${invalid} invalid)` : '') +
-        (duplicates ? ` (${duplicates} already recorded)` : ''),
-    );
-
-    if (clockSkewed > 0) {
-      this.logger.warn(
-        `Device clock ahead of server for deviceId=${device.id} (${device.name}): ` +
-          `${clockSkewed} log(s) up to ${Math.round(maxSkewMs / 60000)} min in the future. ` +
-          `These will not appear under Today/Last 7 days until the device clock is corrected.`,
-      );
-    }
-
-    return this.buildPopLogSubmitResponse(device, {
-      received: stored,
-      skipped: batchSize - stored,
-      duplicates,
-      clockSkewed,
-      accepted: true,
-    });
+    return count;
   }
 
   private buildPopLogSubmitResponse(
@@ -1770,6 +1742,7 @@ export class PlayerService {
       duplicates?: number;
       clockSkewed?: number;
       accepted: boolean;
+      queued?: boolean;
       reason?: string;
     },
   ) {
@@ -1779,6 +1752,7 @@ export class PlayerService {
       duplicates: result.duplicates ?? 0,
       clockSkewed: result.clockSkewed ?? 0,
       accepted: result.accepted,
+      queued: result.queued ?? false,
       deviceId: device.id,
       deviceName: device.name,
       popLogsExpected: device.featureProofOfPlay,
