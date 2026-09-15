@@ -60,6 +60,8 @@ In GitHub → **Settings → Environments → production**:
 
 Push to `main`, or **Actions → Deploy Orion production → Run workflow**.
 
+If a previous deploy rolled back, GitHub Actions deletes leftover named resources (`orion-api`, `orion-media-…`, log groups) and imports any that CloudFormation still needs. You do not have to delete those by hand.
+
 Then upload the private key:
 
 ```bash

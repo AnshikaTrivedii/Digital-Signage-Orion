@@ -62,7 +62,7 @@ export class OrionEnvironmentStack extends Stack {
       lifecycleRules: [
         { abortIncompleteMultipartUploadAfter: Duration.days(7), noncurrentVersionExpiration: Duration.days(30) },
       ],
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
       autoDeleteObjects: false,
     });
 
@@ -91,13 +91,13 @@ export class OrionEnvironmentStack extends Stack {
     const apiRepository = new ecr.Repository(this, 'ApiRepository', {
       repositoryName: `${prefix}-api`,
       imageScanOnPush: true,
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
       lifecycleRules: [{ maxImageCount: 40 }],
     });
     const workerRepository = new ecr.Repository(this, 'WorkerRepository', {
       repositoryName: `${prefix}-worker`,
       imageScanOnPush: true,
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
       lifecycleRules: [{ maxImageCount: 40 }],
     });
 
@@ -175,7 +175,7 @@ export class OrionEnvironmentStack extends Stack {
     const applicationLogGroup = new logs.LogGroup(this, 'ApplicationLogs', {
       logGroupName: `/orion/${envName}/application`,
       retention: logs.RetentionDays.TWO_WEEKS,
-      removalPolicy: RemovalPolicy.RETAIN,
+      removalPolicy: RemovalPolicy.RETAIN_ON_UPDATE_OR_DELETE,
     });
 
     const apiRole = this.createInstanceRole({
@@ -580,7 +580,6 @@ export class OrionEnvironmentStack extends Stack {
     );
 
     const launchTemplate = new ec2.LaunchTemplate(this, `${props.id}LaunchTemplate`, {
-      launchTemplateName: `${props.name}-lt`,
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
       machineImage: ec2.MachineImage.latestAmazonLinux2023({ cpuType: ec2.AmazonLinuxCpuType.ARM_64 }),
       role: props.role,

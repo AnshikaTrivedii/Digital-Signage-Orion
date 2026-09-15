@@ -22,6 +22,15 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Recover leftover resources from failed deploys
+        run: bash infra/aws/scripts/recover-failed-stack.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -31,11 +40,6 @@ jobs:
       - run: npm run build:api
       - run: npm run build:worker
       - run: STATIC_EXPORT=true npm run build:web
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Install CDK
         working-directory: infra/aws/cdk
@@ -59,7 +63,7 @@ jobs:
           if [[ -n "${MEDIA_CERTIFICATE_ARN:-}" ]]; then
             CONTEXT_ARGS+=(-c "mediaCertificateArn=$MEDIA_CERTIFICATE_ARN")
           fi
-          npx cdk deploy Orion --require-approval never \
+          npx cdk deploy Orion --require-approval never --import-existing-resources \
             "${CONTEXT_ARGS[@]}" \
             --parameters CloudFrontPublicKey="$CLOUDFRONT_PUBLIC_KEY"
 
