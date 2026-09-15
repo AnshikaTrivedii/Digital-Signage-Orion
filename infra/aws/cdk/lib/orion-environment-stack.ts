@@ -275,7 +275,10 @@ export class OrionEnvironmentStack extends Stack {
         { name: 'STATIC_EXPORT', value: 'true' },
       ],
     });
-    const dashboardOrigins = [`https://${webApp.attrDefaultDomain}`];
+    const dashboardOrigins = [
+      `https://${webApp.attrDefaultDomain}`,
+      `https://${dashboardBranch}.${webApp.attrDefaultDomain}`,
+    ];
     if (rootDomain) dashboardOrigins.push(`https://app.${rootDomain}`);
 
     const apiAsg = this.createServiceAsg({
