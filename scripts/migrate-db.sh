@@ -13,7 +13,7 @@ echo "Applying Prisma migrations..."
 npx prisma migrate deploy
 
 echo "Ensuring Proof-of-Play partitions and dropping partitions older than 30 days..."
-npx prisma db execute --stdin <<'SQL'
+npx prisma db execute --url "$DATABASE_URL" --stdin <<'SQL'
 SELECT orion_ensure_pop_partitions(14, 30);
 SELECT orion_drop_old_pop_partitions(30);
 SQL

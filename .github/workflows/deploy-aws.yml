@@ -114,9 +114,9 @@ jobs:
             case "$STATUS" in
               SUCCEEDED) exit 0 ;;
               FAILED|FAULT|STOPPED|TIMED_OUT)
-                aws logs get-log-events --log-group-name /aws/codebuild/"$PROJECT" \
-                  --log-stream-name "$(aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].logs.streamName' --output text)" \
-                  --limit 50 --query 'events[].message' --output text || true
+                aws codebuild batch-get-builds --ids "$BUILD_ID" \
+                  --query 'builds[0].phases[?phaseStatus==`FAILED`].[phaseType,contexts[0].message]' \
+                  --output text
                 exit 1
                 ;;
             esac
