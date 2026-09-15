@@ -86,7 +86,13 @@ CloudFormation stack `Orion` → **Outputs**:
 - `ApiUrl` — API (`https://….cloudfront.net` until you add a domain)
 - `MediaUrl` — signed media (`https://….cloudfront.net`)
 
-Connect Amplify to this GitHub repo’s `main` branch. Create the first admin:
+GitHub Actions publishes the static dashboard to this Amplify app. There is **no Connect GitHub button** on CDK-created Amplify apps; do not create a second app. After a production workflow run, open `AppUrl`:
+
+https://main.d2kevg7eqxjf2t.amplifyapp.com
+
+`NEXT_PUBLIC_API_URL` is baked in at build time from the stack `ApiUrl` output (`https://d1i9m5txth9eo7.cloudfront.net` today).
+
+Create the first admin:
 
 ```bash
 curl -X POST "$API_URL/api/auth/bootstrap/super-admin" \

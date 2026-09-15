@@ -39,7 +39,6 @@ jobs:
       - run: npx prisma generate
       - run: npm run build:api
       - run: npm run build:worker
-      - run: STATIC_EXPORT=true npm run build:web
 
       - name: Install CDK
         working-directory: infra/aws/cdk
@@ -80,6 +79,8 @@ jobs:
             aws cloudformation describe-stacks --stack-name Orion \
               --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
           }
+          echo "amplify_app=$(output AmplifyAppId)" >> "$GITHUB_OUTPUT"
+          echo "api_url=$(output ApiUrl)" >> "$GITHUB_OUTPUT"
           echo "api_repo=$(output ApiRepositoryUri)" >> "$GITHUB_OUTPUT"
           echo "worker_repo=$(output WorkerRepositoryUri)" >> "$GITHUB_OUTPUT"
           echo "migration_project=$(output MigrationProjectName)" >> "$GITHUB_OUTPUT"
@@ -87,6 +88,14 @@ jobs:
           echo "worker_asg=$(output WorkerAutoScalingGroupName)" >> "$GITHUB_OUTPUT"
           echo "api_parameter=$(output ApiImageParameterName)" >> "$GITHUB_OUTPUT"
           echo "worker_parameter=$(output WorkerImageParameterName)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish dashboard to Amplify
+        env:
+          AMPLIFY_APP_ID: ${{ steps.stack.outputs.amplify_app }}
+          NEXT_PUBLIC_API_URL: ${{ steps.stack.outputs.api_url }}
+        run: |
+          STATIC_EXPORT=true npm run build:web
+          bash infra/aws/scripts/deploy-amplify-hosting.sh
 
       - name: Build and push ARM64 API and worker images
         env:

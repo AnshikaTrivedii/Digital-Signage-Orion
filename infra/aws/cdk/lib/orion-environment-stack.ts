@@ -268,7 +268,7 @@ export class OrionEnvironmentStack extends Stack {
     new amplify.CfnBranch(this, 'DashboardBranch', {
       appId: webApp.attrAppId,
       branchName: dashboardBranch,
-      enableAutoBuild: true,
+      enableAutoBuild: false,
       stage: 'PRODUCTION',
       environmentVariables: [
         { name: 'NEXT_PUBLIC_API_URL', value: apiPublicUrl },
@@ -439,7 +439,7 @@ export class OrionEnvironmentStack extends Stack {
     });
 
     new cdk.CfnOutput(this, 'ApiUrl', { value: apiPublicUrl });
-    new cdk.CfnOutput(this, 'AppUrl', { value: rootDomain ? `https://app.${rootDomain}` : `https://${webApp.attrDefaultDomain}` });
+    new cdk.CfnOutput(this, 'AppUrl', { value: rootDomain ? `https://app.${rootDomain}` : `https://${dashboardBranch}.${webApp.attrDefaultDomain}` });
     new cdk.CfnOutput(this, 'MediaUrl', { value: mediaPublicUrl });
     new cdk.CfnOutput(this, 'ApiDnsTarget', { value: alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'MediaDnsTarget', { value: mediaDistribution.distributionDomainName });
