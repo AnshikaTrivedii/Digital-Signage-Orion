@@ -44,7 +44,7 @@ export class OrionEnvironmentStack extends Stack {
     const vpc = new ec2.Vpc(this, 'Vpc', {
       vpcName: `${prefix}-vpc`,
       maxAzs: 2,
-      natGateways: 2,
+      natGateways: 1,
       subnetConfiguration: [
         { name: 'public', subnetType: ec2.SubnetType.PUBLIC, cidrMask: 24 },
         { name: 'application', subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS, cidrMask: 24 },
@@ -79,7 +79,7 @@ export class OrionEnvironmentStack extends Stack {
             certificate: acm.Certificate.fromCertificateArn(this, 'MediaCertificate', mediaCertificateArn),
           }
         : {}),
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_ALL,
+      priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
       defaultBehavior: {
         origin: origins.S3BucketOrigin.withOriginAccessControl(mediaBucket),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -145,26 +145,22 @@ export class OrionEnvironmentStack extends Stack {
     databaseSecurityGroup.addIngressRule(workerSecurityGroup, ec2.Port.tcp(5432), 'worker PostgreSQL');
 
     const database = new rds.DatabaseInstance(this, 'Database', {
-      instanceIdentifier: `${prefix}-postgres`,
       engine: rds.DatabaseInstanceEngine.postgres({ version: rds.PostgresEngineVersion.VER_16 }),
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.R6G, ec2.InstanceSize.LARGE),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
       vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [databaseSecurityGroup],
       credentials: rds.Credentials.fromGeneratedSecret('orion'),
       databaseName: 'orion',
-      multiAz: true,
-      allocatedStorage: 500,
-      maxAllocatedStorage: 2048,
+      multiAz: false,
+      allocatedStorage: 20,
+      maxAllocatedStorage: 100,
       storageType: rds.StorageType.GP3,
       storageEncrypted: true,
       backupRetention: Duration.days(7),
-      deletionProtection: true,
+      deletionProtection: false,
       removalPolicy: RemovalPolicy.SNAPSHOT,
       publiclyAccessible: false,
-      monitoringInterval: Duration.seconds(60),
-      enablePerformanceInsights: true,
-      cloudwatchLogsRetention: logs.RetentionDays.TWO_WEEKS,
     });
 
     const opsTopic = new sns.Topic(this, 'OpsTopic', { displayName: `${prefix}-ops` });
@@ -233,7 +229,7 @@ export class OrionEnvironmentStack extends Stack {
       ? undefined
       : new cloudfront.Distribution(this, 'ApiDistribution', {
           comment: `${prefix} API HTTPS without a custom domain`,
-          priceClass: cloudfront.PriceClass.PRICE_CLASS_ALL,
+          priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
           defaultBehavior: {
             origin: new origins.LoadBalancerV2Origin(alb, {
               protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
@@ -292,8 +288,8 @@ export class OrionEnvironmentStack extends Stack {
       serviceName: 'api',
       envName,
       logGroupName: applicationLogGroup.logGroupName,
-      min: 2,
-      max: 6,
+      min: 1,
+      max: 2,
       containerPort: 3001,
       elbHealthCheck: true,
       environment: {
@@ -339,8 +335,8 @@ export class OrionEnvironmentStack extends Stack {
       serviceName: 'worker',
       envName,
       logGroupName: applicationLogGroup.logGroupName,
-      min: 2,
-      max: 4,
+      min: 1,
+      max: 2,
       environment: {
         POP_LOG_QUEUE_URL: popLogQueue.queueUrl,
         METRICS_NAMESPACE: `Orion/${envName}`,
@@ -583,22 +579,27 @@ export class OrionEnvironmentStack extends Stack {
       `systemctl enable --now orion-${props.serviceName}`,
     );
 
-    return new autoscaling.AutoScalingGroup(this, props.id, {
-      autoScalingGroupName: props.name,
-      vpc: props.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MEDIUM),
+    const launchTemplate = new ec2.LaunchTemplate(this, `${props.id}LaunchTemplate`, {
+      launchTemplateName: `${props.name}-lt`,
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.SMALL),
       machineImage: ec2.MachineImage.latestAmazonLinux2023({ cpuType: ec2.AmazonLinuxCpuType.ARM_64 }),
       role: props.role,
       securityGroup: props.securityGroup,
       userData,
+      requireImdsv2: true,
+    });
+
+    return new autoscaling.AutoScalingGroup(this, props.id, {
+      autoScalingGroupName: props.name,
+      vpc: props.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS },
+      launchTemplate,
       minCapacity: props.min,
       maxCapacity: props.max,
-      requireImdsv2: true,
       healthCheck: props.elbHealthCheck
         ? autoscaling.HealthCheck.elb({ grace: Duration.minutes(10) })
         : autoscaling.HealthCheck.ec2({ grace: Duration.minutes(10) }),
-      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({ minInstancesInService: 1, maxBatchSize: 1 }),
+      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({ minInstancesInService: 0, maxBatchSize: 1 }),
     });
   }
 
@@ -688,13 +689,13 @@ export class OrionEnvironmentStack extends Stack {
     });
     new cloudwatch.Alarm(this, 'DatabaseFreeStorageAlarm', {
       metric: props.database.metricFreeStorageSpace(),
-      threshold: 50 * 1024 * 1024 * 1024,
+      threshold: 4 * 1024 * 1024 * 1024,
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
     });
     new cloudwatch.Alarm(this, 'DatabaseConnectionsAlarm', {
       metric: props.database.metricDatabaseConnections(),
-      threshold: 400,
+      threshold: 60,
       evaluationPeriods: 2,
       comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
     });

@@ -6,6 +6,8 @@ One stack: `Orion` in `ap-south-1`.
 
 You **do not need a domain to deploy**. Without DNS, AWS gives you HTTPS URLs automatically. Add `app` / `api` / `media` hostnames later and redeploy.
 
+This stack is sized for about **$70–90/month** in `ap-south-1` (1 NAT, `db.t4g.small` 20 GB, one API + one worker `t4g.small`). That is a small production, not the original 2,000-device Multi-AZ plan.
+
 ## One-time setup
 
 ### 1. Tools
