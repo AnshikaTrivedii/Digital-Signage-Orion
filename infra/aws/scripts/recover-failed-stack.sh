@@ -105,10 +105,15 @@ delete_named_leftovers() {
   ignore aws ec2 delete-launch-template --launch-template-name orion-api-lt
   ignore aws ec2 delete-launch-template --launch-template-name orion-worker-lt
   ignore aws codebuild delete-project --name orion-migrate
-  app_id="$(aws amplify list-apps --query 'apps[?name==`orion-dashboard`].appId' --output text 2>/dev/null || true)"
-  if [[ -n "${app_id:-}" && "$app_id" != "None" ]]; then
-    ignore aws amplify delete-app --app-id "$app_id"
-  fi
+  ignore aws iam detach-role-policy --role-name orion-amplify-hosting \
+    --policy-arn arn:aws:iam::aws:policy/AdministratorAccess-Amplify
+  ignore aws iam delete-role --role-name orion-amplify-hosting
+  for app_name in orion-dashboard orion-dashboard-ssr; do
+    app_id="$(aws amplify list-apps --query 'apps[?name==`'"${app_name}"'`].appId' --output text 2>/dev/null || true)"
+    if [[ -n "${app_id:-}" && "$app_id" != "None" ]]; then
+      ignore aws amplify delete-app --app-id "$app_id"
+    fi
+  done
   db_ids="$(aws rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier' --output text 2>/dev/null || true)"
   for id in $db_ids; do
     if [[ "$id" == *orion* ]]; then

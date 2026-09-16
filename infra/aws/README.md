@@ -43,12 +43,25 @@ npx cdk deploy Orion-github-oidc \
 
 Copy `GitHubDeployRoleArn`.
 
+### 3b. Amplify GitHub App token (required for dashboard SSR)
+
+The production dashboard is **Amplify Hosting Compute** (`orion-dashboard-ssr`, platform `WEB_COMPUTE`). Amplify builds Next.js from GitHub on every push to `main`. GitHub Actions no longer zips or uploads frontend artifacts.
+
+The static `orion-dashboard` app cannot be converted in place. The first CDK deploy that includes Compute **creates** `orion-dashboard-ssr` and **deletes** `orion-dashboard`. Wait for the Amplify `main` job to succeed before using `AppUrl`. The old `*.amplifyapp.com` URL will stop working.
+
+1. In the AWS Amplify console, install the **Amplify GitHub App** on `Digital-Signage-Orion` (repository admin access).
+2. Create a GitHub personal access token that can create the repo webhook: classic PAT with `repo` and `admin:repo_hook`, or a fine-grained token with **Contents** (read) and **Webhooks** (read/write) on this repo.
+3. Store it as a GitHub environment secret (not a repo variable).
+
+If you connect the repo in the Amplify console first, still keep this token in CDK so later `cdk deploy` does not wipe the Git connection.
+
 In GitHub → **Settings → Environments → production**:
 
 **Required**
 
 - Variable `AWS_DEPLOY_ROLE_ARN`
 - Secret `CLOUDFRONT_PUBLIC_KEY` = contents of `cloudfront-public-key.pem`
+- Secret `AMPLIFY_GITHUB_TOKEN` = GitHub PAT for the Amplify GitHub App
 
 **Optional (only when you have a domain)**
 
@@ -60,7 +73,9 @@ In GitHub → **Settings → Environments → production**:
 
 Push to `main`, or **Actions → Deploy Orion production → Run workflow**.
 
-If a previous deploy rolled back, GitHub Actions deletes leftover named resources (`orion-api`, `orion-media-…`, log groups) and imports any that CloudFormation still needs. You do not have to delete those by hand.
+GitHub Actions deploys CDK (API, worker, Amplify app config) and rolls out API/worker images. Amplify CI builds `apps/web` with `next build` and publishes Hosting Compute. Do not create a second Amplify app by hand.
+
+If a previous deploy rolled back, GitHub Actions deletes leftover named resources (`orion-api`, `orion-media-…`, `orion-dashboard-ssr`, log groups) and imports any that CloudFormation still needs. You do not have to delete those by hand.
 
 Then upload the private key:
 
@@ -82,15 +97,16 @@ aws autoscaling start-instance-refresh --auto-scaling-group-name orion-api \
 
 CloudFormation stack `Orion` → **Outputs**:
 
-- `AppUrl` — Amplify dashboard (`https://….amplifyapp.com`)
+- `AppUrl` / `AmplifySsrAppUrl` — Amplify Hosting Compute dashboard (`https://main.<app>.amplifyapp.com`)
+- `AmplifySsrAppId` — Compute app id
 - `ApiUrl` — API (`https://….cloudfront.net` until you add a domain)
 - `MediaUrl` — signed media (`https://….cloudfront.net`)
 
-GitHub Actions publishes the static dashboard to this Amplify app. There is **no Connect GitHub button** on CDK-created Amplify apps; do not create a second app. After a production workflow run, open `AppUrl`:
+After CDK deploy, wait until the Amplify console job for `orion-dashboard-ssr` / `main` is **SUCCEED**. Confirm the app platform is **WEB_COMPUTE** and the framework is **Next.js - SSR**. Then open `AppUrl`.
 
-https://main.d2kevg7eqxjf2t.amplifyapp.com
+Verify playlist deep links: open `/app/playlists/<real-uuid>` and refresh. Client navigation from the playlist list to the editor must keep the real id (not `__id__`).
 
-`NEXT_PUBLIC_API_URL` is baked in at build time from the stack `ApiUrl` output (`https://d1i9m5txth9eo7.cloudfront.net` today).
+`NEXT_PUBLIC_API_URL` is an Amplify env var set from the stack `ApiUrl` output and inlined when Amplify runs `next build`. Changing the API URL requires a new Amplify build (push to `main`, or **Redeploy this version** in the Amplify console).
 
 Create the first admin:
 
@@ -107,7 +123,7 @@ Point the Android player at `ApiUrl`.
 1. Issue ACM certs: `api.yourdomain.com` in `ap-south-1`, `media.yourdomain.com` in `us-east-1`
 2. Set GitHub production variables `ROOT_DOMAIN`, `API_CERTIFICATE_ARN`, `MEDIA_CERTIFICATE_ARN`
 3. Redeploy (push `main` or rerun the workflow)
-4. Create DNS: `app` → Amplify, `api` → ALB, `media` → CloudFront
-5. Rebuild Amplify so `NEXT_PUBLIC_API_URL` becomes `https://api.yourdomain.com`
+4. Create DNS: `app` → the Compute app (`AmplifySsrAppUrl` / Amplify custom domain), `api` → ALB, `media` → CloudFront
+5. Trigger an Amplify rebuild so `NEXT_PUBLIC_API_URL` becomes `https://api.yourdomain.com` (push to `main` or Redeploy this version)
 
 Roll back by writing a previous image SHA into `/orion/api-image` and `/orion/worker-image`, then starting ASG instance refreshes.

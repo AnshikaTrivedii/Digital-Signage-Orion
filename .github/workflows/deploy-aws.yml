@@ -51,7 +51,12 @@ jobs:
           API_CERTIFICATE_ARN: ${{ vars.API_CERTIFICATE_ARN }}
           MEDIA_CERTIFICATE_ARN: ${{ vars.MEDIA_CERTIFICATE_ARN }}
           CLOUDFRONT_PUBLIC_KEY: ${{ secrets.CLOUDFRONT_PUBLIC_KEY }}
+          AMPLIFY_GITHUB_TOKEN: ${{ secrets.AMPLIFY_GITHUB_TOKEN }}
         run: |
+          if [[ -z "${AMPLIFY_GITHUB_TOKEN:-}" ]]; then
+            echo "::error::Set GitHub environment secret AMPLIFY_GITHUB_TOKEN (see infra/aws/README.md)"
+            exit 1
+          fi
           CONTEXT_ARGS=()
           if [[ -n "${ROOT_DOMAIN:-}" ]]; then
             CONTEXT_ARGS+=(-c "rootDomain=$ROOT_DOMAIN")
@@ -64,7 +69,10 @@ jobs:
           fi
           npx cdk deploy Orion --require-approval never --import-existing-resources \
             "${CONTEXT_ARGS[@]}" \
-            --parameters CloudFrontPublicKey="$CLOUDFRONT_PUBLIC_KEY"
+            --parameters CloudFrontPublicKey="$CLOUDFRONT_PUBLIC_KEY" \
+            --parameters AmplifyGithubToken="$AMPLIFY_GITHUB_TOKEN" \
+            --parameters GitHubOwner="${GITHUB_REPOSITORY_OWNER}" \
+            --parameters GitHubRepo="${GITHUB_REPOSITORY#*/}"
 
       - uses: docker/setup-qemu-action@v3
         with:
@@ -79,7 +87,6 @@ jobs:
             aws cloudformation describe-stacks --stack-name Orion \
               --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
           }
-          echo "amplify_app=$(output AmplifyAppId)" >> "$GITHUB_OUTPUT"
           echo "api_url=$(output ApiUrl)" >> "$GITHUB_OUTPUT"
           echo "api_repo=$(output ApiRepositoryUri)" >> "$GITHUB_OUTPUT"
           echo "worker_repo=$(output WorkerRepositoryUri)" >> "$GITHUB_OUTPUT"
@@ -88,14 +95,6 @@ jobs:
           echo "worker_asg=$(output WorkerAutoScalingGroupName)" >> "$GITHUB_OUTPUT"
           echo "api_parameter=$(output ApiImageParameterName)" >> "$GITHUB_OUTPUT"
           echo "worker_parameter=$(output WorkerImageParameterName)" >> "$GITHUB_OUTPUT"
-
-      - name: Build and publish dashboard to Amplify
-        env:
-          AMPLIFY_APP_ID: ${{ steps.stack.outputs.amplify_app }}
-          NEXT_PUBLIC_API_URL: ${{ steps.stack.outputs.api_url }}
-        run: |
-          STATIC_EXPORT=true npm run build:web
-          bash infra/aws/scripts/deploy-amplify-hosting.sh
 
       - name: Build and push ARM64 API and worker images
         env:

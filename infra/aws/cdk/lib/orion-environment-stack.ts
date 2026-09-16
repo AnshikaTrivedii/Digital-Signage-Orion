@@ -40,6 +40,22 @@ export class OrionEnvironmentStack extends Stack {
       noEcho: true,
       description: 'PEM public key paired with the CloudFront signing private key secret.',
     });
+    const amplifyGithubToken = new cdk.CfnParameter(this, 'AmplifyGithubToken', {
+      type: 'String',
+      noEcho: true,
+      description:
+        'GitHub PAT for the Amplify GitHub App (repo + admin:repo_hook). Connects orion-dashboard-ssr to this repository.',
+    });
+    const githubOwner = new cdk.CfnParameter(this, 'GitHubOwner', {
+      type: 'String',
+      default: String(this.node.tryGetContext('githubOwner') ?? 'AnshikaTrivedii'),
+      description: 'GitHub organization or user that owns the Orion repository.',
+    });
+    const githubRepo = new cdk.CfnParameter(this, 'GitHubRepo', {
+      type: 'String',
+      default: String(this.node.tryGetContext('githubRepo') ?? 'Digital-Signage-Orion'),
+      description: 'GitHub repository Amplify Hosting Compute builds from.',
+    });
 
     const vpc = new ec2.Vpc(this, 'Vpc', {
       vpcName: `${prefix}-vpc`,
@@ -296,31 +312,67 @@ export class OrionEnvironmentStack extends Stack {
       ? `https://media.${rootDomain}`
       : `https://${mediaDistribution.distributionDomainName}`;
 
-    const webApp = new amplify.CfnApp(this, 'DashboardHosting', {
-      name: `${prefix}-dashboard`,
-      platform: 'WEB',
-      buildSpec:
-        'version: 1\napplications:\n  - appRoot: apps/web\n    frontend:\n      phases:\n        preBuild:\n          commands:\n            - cd ../.. && npm ci\n        build:\n          commands:\n            - cd ../.. && STATIC_EXPORT=true npm run build:web\n      artifacts:\n        baseDirectory: out\n        files:\n          - \'**/*\'\n      cache:\n        paths:\n          - node_modules/**/*',
-      environmentVariables: [
-        { name: 'STATIC_EXPORT', value: 'true' },
-        { name: 'NEXT_PUBLIC_API_URL', value: apiPublicUrl },
-      ],
-      customRules: [
-        {
-          source: '/app/playlists/<*>',
-          target: '/app/playlists/__id__/index.html',
-          status: '200',
-        },
+    const dashboardBuildSpec = [
+      'version: 1',
+      'applications:',
+      '  - appRoot: apps/web',
+      '    frontend:',
+      '      phases:',
+      '        preBuild:',
+      '          commands:',
+      '            - nvm use 22 || true',
+      '            - cd ../.. && npm ci',
+      '        build:',
+      '          commands:',
+      '            - cd ../.. && npm run build:web',
+      '      artifacts:',
+      '        baseDirectory: .next',
+      '        files:',
+      "          - '**/*'",
+      '      cache:',
+      '        paths:',
+      '          - ../../node_modules/**/*',
+      '          - .next/cache/**/*',
+    ].join('\n');
+
+    const amplifyServiceRole = new iam.Role(this, 'AmplifyHostingRole', {
+      roleName: `${prefix}-amplify-hosting`,
+      description: 'Amplify Hosting service role for Orion dashboard SSR compute.',
+      assumedBy: new iam.ServicePrincipal('amplify.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess-Amplify'),
       ],
     });
-    new amplify.CfnBranch(this, 'DashboardBranch', {
-      appId: webApp.attrAppId,
-      branchName: dashboardBranch,
-      enableAutoBuild: false,
-      stage: 'PRODUCTION',
+
+    const webApp = new amplify.CfnApp(this, 'DashboardComputeHosting', {
+      name: `${prefix}-dashboard-ssr`,
+      platform: 'WEB_COMPUTE',
+      iamServiceRole: amplifyServiceRole.roleArn,
+      repository: cdk.Fn.join('', [
+        'https://github.com/',
+        githubOwner.valueAsString,
+        '/',
+        githubRepo.valueAsString,
+      ]),
+      accessToken: amplifyGithubToken.valueAsString,
+      buildSpec: dashboardBuildSpec,
       environmentVariables: [
         { name: 'NEXT_PUBLIC_API_URL', value: apiPublicUrl },
-        { name: 'STATIC_EXPORT', value: 'true' },
+        { name: 'NODE_VERSION', value: '22' },
+        { name: 'AMPLIFY_MONOREPO_APP_ROOT', value: 'apps/web' },
+        { name: 'NEXT_TELEMETRY_DISABLED', value: '1' },
+      ],
+    });
+    webApp.node.addDependency(amplifyServiceRole);
+    new amplify.CfnBranch(this, 'DashboardComputeBranch', {
+      appId: webApp.attrAppId,
+      branchName: dashboardBranch,
+      enableAutoBuild: true,
+      stage: 'PRODUCTION',
+      framework: 'Next.js - SSR',
+      environmentVariables: [
+        { name: 'NEXT_PUBLIC_API_URL', value: apiPublicUrl },
+        { name: 'NODE_VERSION', value: '22' },
       ],
     });
     const dashboardOrigins = [
@@ -489,13 +541,16 @@ export class OrionEnvironmentStack extends Stack {
       database,
     });
 
+    const amplifySsrAppUrl = `https://${dashboardBranch}.${webApp.attrDefaultDomain}`;
     new cdk.CfnOutput(this, 'ApiUrl', { value: apiPublicUrl });
-    new cdk.CfnOutput(this, 'AppUrl', { value: rootDomain ? `https://app.${rootDomain}` : `https://${dashboardBranch}.${webApp.attrDefaultDomain}` });
+    new cdk.CfnOutput(this, 'AppUrl', { value: rootDomain ? `https://app.${rootDomain}` : amplifySsrAppUrl });
     new cdk.CfnOutput(this, 'MediaUrl', { value: mediaPublicUrl });
     new cdk.CfnOutput(this, 'ApiDnsTarget', { value: alb.loadBalancerDnsName });
     new cdk.CfnOutput(this, 'MediaDnsTarget', { value: mediaDistribution.distributionDomainName });
     new cdk.CfnOutput(this, 'AmplifyDefaultDomain', { value: webApp.attrDefaultDomain });
     new cdk.CfnOutput(this, 'AmplifyAppId', { value: webApp.attrAppId });
+    new cdk.CfnOutput(this, 'AmplifySsrAppId', { value: webApp.attrAppId });
+    new cdk.CfnOutput(this, 'AmplifySsrAppUrl', { value: amplifySsrAppUrl });
     new cdk.CfnOutput(this, 'AmplifyBranch', { value: dashboardBranch });
     new cdk.CfnOutput(this, 'DnsInstructions', {
       value: rootDomain
