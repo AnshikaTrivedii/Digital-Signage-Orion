@@ -576,7 +576,7 @@ export class OrionEnvironmentStack extends Stack {
       `aws ecr get-login-password --region '${this.region}' | docker login --username AWS --password-stdin "${'$'}{IMAGE_URI%%/*}"`,
       'for i in $(seq 1 30); do docker pull "$IMAGE_URI" && break; sleep 20; done',
       `docker rm -f orion-${props.serviceName} || true`,
-      `exec docker run --name orion-${props.serviceName} --env-file /etc/orion/service.env ${portPublish} --log-driver=awslogs --log-opt awslogs-region=${this.region} --log-opt awslogs-group=${props.logGroupName} --log-opt awslogs-stream=${props.serviceName}-$(hostname) "$IMAGE_URI"`,
+      `exec docker run --name orion-${props.serviceName} --env-file /etc/orion/service.env ${portPublish} -v /etc/orion/cloudfront.pem:/etc/orion/cloudfront.pem:ro --log-driver=awslogs --log-opt awslogs-region=${this.region} --log-opt awslogs-group=${props.logGroupName} --log-opt awslogs-stream=${props.serviceName}-$(hostname) "$IMAGE_URI"`,
       'SCRIPT',
       `chmod +x /opt/orion-${props.serviceName}.sh`,
       `cat > /etc/systemd/system/orion-${props.serviceName}.service <<EOF`,
