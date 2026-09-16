@@ -75,7 +75,7 @@ Refresh the API ASG so instances load the key:
 
 ```bash
 aws autoscaling start-instance-refresh --auto-scaling-group-name orion-api \
-  --preferences MinHealthyPercentage=50,InstanceWarmup=300
+  --preferences MinHealthyPercentage=100,InstanceWarmup=300
 ```
 
 ### 5. Use the AWS URLs (no domain)

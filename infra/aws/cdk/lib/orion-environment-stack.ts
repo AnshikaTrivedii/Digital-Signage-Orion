@@ -236,11 +236,41 @@ export class OrionEnvironmentStack extends Stack {
         accessControlMaxAge: Duration.hours(1),
       },
     });
+    // Preflight must be 2xx. If OPTIONS is forwarded to a 502 origin, the
+    // browser reports CORS even when the response-headers policy added ACAO.
+    const apiPreflightFunction = new cloudfront.Function(this, 'ApiPreflightFunction', {
+      comment: `${prefix} answer API CORS preflight at the edge`,
+      code: cloudfront.FunctionCode.fromInline(
+        [
+          'function handler(event) {',
+          '  var request = event.request;',
+          "  if (request.method === 'OPTIONS') {",
+          '    return {',
+          '      statusCode: 204,',
+          "      statusDescription: 'No Content',",
+          '      headers: {',
+          "        'access-control-allow-origin': { value: '*' },",
+          "        'access-control-allow-methods': { value: 'GET,HEAD,OPTIONS,PUT,POST,PATCH,DELETE' },",
+          "        'access-control-allow-headers': { value: 'Authorization,Content-Type,x-organization-id' },",
+          "        'access-control-max-age': { value: '86400' }",
+          '      }',
+          '    };',
+          '  }',
+          '  return request;',
+          '}',
+        ].join('\n'),
+      ),
+    });
     const apiCdn = hasCustomApiDomain
       ? undefined
       : new cloudfront.Distribution(this, 'ApiDistribution', {
           comment: `${prefix} API HTTPS without a custom domain`,
           priceClass: cloudfront.PriceClass.PRICE_CLASS_200,
+          errorResponses: [
+            { httpStatus: 502, ttl: Duration.seconds(1) },
+            { httpStatus: 503, ttl: Duration.seconds(1) },
+            { httpStatus: 504, ttl: Duration.seconds(1) },
+          ],
           defaultBehavior: {
             origin: new origins.LoadBalancerV2Origin(alb, {
               protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
@@ -251,6 +281,12 @@ export class OrionEnvironmentStack extends Stack {
             originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
             responseHeadersPolicy: apiCorsPolicy,
             allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+            functionAssociations: [
+              {
+                function: apiPreflightFunction,
+                eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+              },
+            ],
           },
         });
     const apiPublicUrl = hasCustomApiDomain
@@ -613,7 +649,10 @@ export class OrionEnvironmentStack extends Stack {
       healthCheck: props.elbHealthCheck
         ? autoscaling.HealthCheck.elb({ grace: Duration.minutes(10) })
         : autoscaling.HealthCheck.ec2({ grace: Duration.minutes(10) }),
-      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({ minInstancesInService: 0, maxBatchSize: 1 }),
+      updatePolicy: autoscaling.UpdatePolicy.rollingUpdate({
+        minInstancesInService: props.elbHealthCheck ? 1 : 0,
+        maxBatchSize: 1,
+      }),
     });
   }
 
