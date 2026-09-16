@@ -73,7 +73,7 @@ In GitHub → **Settings → Environments → production**:
 
 Push to `main`, or **Actions → Deploy Orion production → Run workflow**.
 
-GitHub Actions deploys CDK (API, worker, Amplify app config) and rolls out API/worker images. Amplify CI builds `apps/web` with `next build` and publishes Hosting Compute. Do not create a second Amplify app by hand.
+GitHub Actions deploys CDK (API, worker, Amplify app config) and rolls out API/worker images. Amplify CI builds `apps/web` with webpack (`next build --webpack`) and publishes Hosting Compute. Turbopack production builds leave symlinks that Amplify Compute cannot load. Do not create a second Amplify app by hand.
 
 If a previous deploy rolled back, GitHub Actions deletes leftover named resources (`orion-api`, `orion-media-…`, `orion-dashboard-ssr`, log groups) and imports any that CloudFormation still needs. You do not have to delete those by hand.
 

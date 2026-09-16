@@ -325,7 +325,7 @@ export class OrionEnvironmentStack extends Stack {
       '            - npm ci',
       '        build:',
       '          commands:',
-      '            - npm run build:web',
+      '            - npm run build:amplify --workspace @orion/web',
       '      artifacts:',
       '        baseDirectory: apps/web/.next',
       '        files:',
