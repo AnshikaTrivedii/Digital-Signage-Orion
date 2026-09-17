@@ -1,6 +1,6 @@
 export type QueuedPopLog = {
   assetName: string;
-  playlistId: string;
+  playlistId?: string;
   playlistName?: string;
   campaignName?: string;
   assetId?: string;

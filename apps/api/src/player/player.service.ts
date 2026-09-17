@@ -1605,11 +1605,10 @@ export class PlayerService {
 
     for (const log of logs) {
       if (!log.assetName?.trim() && !log.content?.trim()) continue;
-      const playlistId = log.playlistId?.trim();
-      if (!playlistId) {
-        missingPlaylistId += 1;
-        continue;
-      }
+      // Players built from the published contract often omit playlistId.
+      // Persist anyway and fill context from the device's current playlist when possible.
+      const playlistId = log.playlistId?.trim() || device.currentPlaylistId || undefined;
+      if (!log.playlistId?.trim()) missingPlaylistId += 1;
 
       const assetName = (log.assetName ?? log.content ?? 'Unknown asset').trim();
       const rawStart = log.startTime ?? log.timestamp;
@@ -1655,8 +1654,14 @@ export class PlayerService {
         received: 0,
         skipped: batchSize,
         accepted: false,
-        reason: missingPlaylistId === batchSize ? 'playlist_id_required' : 'all_logs_invalid',
+        reason: 'all_logs_invalid',
       });
+    }
+
+    if (missingPlaylistId > 0) {
+      this.logger.warn(
+        `PoP batch for deviceId=${device.id} omitted playlistId on ${missingPlaylistId}/${queued.length} log(s); stored with currentPlaylistId=${device.currentPlaylistId ?? 'none'}.`,
+      );
     }
 
     if (this.popLogQueue.enabled) {
@@ -1696,6 +1701,11 @@ export class PlayerService {
   }
 
   private async persistPopLogsLocally(device: PairedDevice, logs: QueuedPopLog[]) {
+    const startTimes = logs
+      .map((log) => new Date(log.startTime))
+      .filter((startTime) => !Number.isNaN(startTime.getTime()));
+    await this.ensurePopLogPartitions(startTimes);
+
     const contextIndex = await new PopLogContextIndex(this.prisma).load(device.organizationId);
     const rows = logs.map((log) => {
       const startTime = new Date(log.startTime);
@@ -1732,6 +1742,25 @@ export class PlayerService {
       skipDuplicates: true,
     });
     return count;
+  }
+
+  private async ensurePopLogPartitions(startTimes: Date[]) {
+    const days = [
+      ...new Set(
+        startTimes
+          .filter((startTime) => !Number.isNaN(startTime.getTime()))
+          .map((startTime) => startTime.toISOString().slice(0, 10)),
+      ),
+    ];
+    try {
+      for (const day of days) {
+        await this.prisma.$executeRaw`SELECT orion_ensure_pop_partition(${day}::date)`;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Could not ensure ProofOfPlayLog partitions; inserting anyway. ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   private buildPopLogSubmitResponse(

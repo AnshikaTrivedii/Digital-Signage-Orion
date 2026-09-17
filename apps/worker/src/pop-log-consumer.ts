@@ -4,7 +4,7 @@ import { putCount } from './metrics';
 
 export type QueuedPopLog = {
   assetName: string;
-  playlistId: string;
+  playlistId?: string;
   playlistName?: string;
   campaignName?: string;
   assetId?: string;
@@ -41,6 +41,8 @@ function hourStartUtc(at: Date) {
 export async function consumePopLogBatch(prisma: PrismaClient, message: PopLogBatchMessage) {
   if (!message.logs?.length) return { inserted: 0 };
 
+  await ensurePartitionsForLogs(prisma, message.logs);
+
   const playlistIds = [...new Set(message.logs.map((log) => log.playlistId).filter(Boolean))];
   const playlists = playlistIds.length
     ? await prisma.playlist.findMany({
@@ -70,7 +72,9 @@ export async function consumePopLogBatch(prisma: PrismaClient, message: PopLogBa
   for (const log of message.logs) {
     const startTime = new Date(log.startTime);
     if (Number.isNaN(startTime.getTime())) continue;
-    const context = contextByPlaylist.get(log.playlistId)?.get(log.assetName.trim().toLowerCase());
+    const context = log.playlistId
+      ? contextByPlaylist.get(log.playlistId)?.get(log.assetName.trim().toLowerCase())
+      : undefined;
     let durationSeconds =
       typeof log.durationSeconds === 'number' && log.durationSeconds > 0
         ? Math.floor(log.durationSeconds)
@@ -127,6 +131,27 @@ export async function consumePopLogBatch(prisma: PrismaClient, message: PopLogBa
   await putCount('PopLogsConsumed', inserted.length);
   await putCount('PopLogsDuplicates', Math.max(0, message.logs.length - inserted.length));
   return { inserted: inserted.length };
+}
+
+async function ensurePartitionsForLogs(prisma: PrismaClient, logs: QueuedPopLog[]) {
+  const days = [
+    ...new Set(
+      logs
+        .map((log) => new Date(log.startTime))
+        .filter((startTime) => !Number.isNaN(startTime.getTime()))
+        .map((startTime) => startTime.toISOString().slice(0, 10)),
+    ),
+  ];
+  try {
+    for (const day of days) {
+      await prisma.$executeRaw`SELECT orion_ensure_pop_partition(${day}::date)`;
+    }
+  } catch (error) {
+    console.warn(
+      'Could not ensure ProofOfPlayLog partitions; inserting anyway.',
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 async function upsertHourlyAggregates(prisma: PrismaClient, rows: InsertedPopRow[]) {
