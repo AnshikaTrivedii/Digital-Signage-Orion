@@ -9,6 +9,7 @@ import { SyncQueryDto } from './dto/sync-query.dto';
 import {
   deviceReportValidationPipe,
   heartbeatValidationPipe,
+  popLogValidationPipe,
 } from './player-validation.pipe';
 import { PlayerService } from './player.service';
 
@@ -105,7 +106,7 @@ export class PlayerController {
    * Device authenticates via its device token in the Authorization header.
    */
   @Post('pop-logs')
-  @UsePipes(playerValidationPipe)
+  @UsePipes(popLogValidationPipe)
   submitPopLogs(
     @Headers('authorization') authHeader: string | undefined,
     @Body() body: SubmitPopLogsDto,

@@ -512,6 +512,9 @@ export class PlayerService {
       brightness?: number;
       volume?: number;
       screenTimeoutSeconds?: number;
+      popPendingCount?: number;
+      popLastError?: string;
+      popLastGeneratedAt?: string;
       permissions?: {
         internet?: boolean;
         storage?: boolean;
@@ -529,6 +532,11 @@ export class PlayerService {
     if (process.env.PLAYER_HEARTBEAT_LOG !== 'false') {
       this.logger.log(
         `Heartbeat accepted deviceId=${device.id} playerVersion=${data.playerVersion ?? 'unknown'} storageTotal=${data.storageTotalBytes ?? 'n/a'}`,
+      );
+    }
+    if ((data.popPendingCount ?? 0) > 0 || data.popLastError) {
+      this.logger.log(
+        `Heartbeat PoP deviceId=${device.id} pending=${data.popPendingCount ?? 'n/a'} lastError=${data.popLastError ?? 'none'} lastGenerated=${data.popLastGeneratedAt ?? 'n/a'}`,
       );
     }
     await this.deviceManagement.ingestTelemetry(device.id, data);
@@ -1581,6 +1589,9 @@ export class PlayerService {
   ) {
     const device = await this.resolveDeviceByToken(authHeader);
     const batchSize = logs?.length ?? 0;
+    this.logger.log(
+      `PoP ingest received deviceId=${device.id} deviceName=${device.name} batch=${batchSize} popEnabled=${device.featureProofOfPlay}`,
+    );
 
     if (!device.featureProofOfPlay) {
       return this.buildPopLogSubmitResponse(device, {
@@ -1664,39 +1675,43 @@ export class PlayerService {
       );
     }
 
+    // Always write Postgres here, same as the Render/dev API. SQS is optional
+    // fan-out for aggregates; the reports dashboard only reads ProofOfPlayLog.
+    const stored = await this.persistPopLogsLocally(device, queued);
+
     if (this.popLogQueue.enabled) {
-      await this.popLogQueue.enqueue({
-        organizationId: device.organizationId,
-        deviceId: device.id,
-        deviceName: device.name,
-        receivedAt: new Date().toISOString(),
-        logs: queued,
-      });
-      this.metrics.increment('PopLogsEnqueued', queued.length);
-      this.metrics.increment('PopLogsDuplicates', batchSize - invalid - queued.length);
-      return this.buildPopLogSubmitResponse(device, {
-        received: queued.length,
-        skipped: batchSize - queued.length,
-        duplicates: batchSize - invalid - queued.length,
-        clockSkewed,
-        accepted: true,
-        queued: true,
-      });
+      try {
+        await this.popLogQueue.enqueue({
+          organizationId: device.organizationId,
+          deviceId: device.id,
+          deviceName: device.name,
+          receivedAt: new Date().toISOString(),
+          logs: queued,
+        });
+        this.metrics.increment('PopLogsEnqueued', queued.length);
+      } catch (error) {
+        this.logger.warn(
+          `PoP SQS enqueue failed after local persist deviceId=${device.id}: ${error instanceof Error ? error.message : error}`,
+        );
+      }
     }
 
-    const stored = await this.persistPopLogsLocally(device, queued);
+    this.metrics.increment('PopLogsDuplicates', queued.length - stored);
     if (clockSkewed > 0 && process.env.PLAYER_POP_LOG !== 'false') {
       this.logger.warn(
         `Device clock ahead of server for deviceId=${device.id}: ${clockSkewed} log(s) up to ${Math.round(maxSkewMs / 60000)} min in the future.`,
       );
     }
+    this.logger.log(
+      `PoP stored deviceId=${device.id} inserted=${stored} skipped=${batchSize - stored} queued=${this.popLogQueue.enabled}`,
+    );
     return this.buildPopLogSubmitResponse(device, {
       received: stored,
       skipped: batchSize - stored,
       duplicates: queued.length - stored,
       clockSkewed,
       accepted: true,
-      queued: false,
+      queued: this.popLogQueue.enabled,
     });
   }
 

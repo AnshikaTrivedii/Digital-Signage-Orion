@@ -38,3 +38,22 @@ export function createPlayerTelemetryValidationPipe(label: string) {
 
 export const heartbeatValidationPipe = createPlayerTelemetryValidationPipe('heartbeat');
 export const deviceReportValidationPipe = createPlayerTelemetryValidationPipe('device-report');
+
+const popLogLogger = new Logger('PlayerPopLogs');
+
+/** Always log PoP body validation failures — they never reach submitPopLogs. */
+export const popLogValidationPipe = new ValidationPipe({
+  whitelist: true,
+  transform: true,
+  forbidNonWhitelisted: false,
+  transformOptions: { enableImplicitConversion: true },
+  exceptionFactory: (errors: ValidationError[]) => {
+    const detail = formatValidationErrors(errors);
+    popLogLogger.warn(`pop-logs validation failed: ${detail || 'Validation failed'}`);
+    return new BadRequestException({
+      statusCode: 400,
+      message: detail || 'Validation failed',
+      error: 'Bad Request',
+    });
+  },
+});

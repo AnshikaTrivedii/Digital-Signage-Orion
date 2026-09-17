@@ -30,7 +30,7 @@ export class PopLogQueueService {
         }),
       );
     }
-    this.logger.debug(`Enqueued ${message.logs.length} PoP events for deviceId=${message.deviceId} in ${chunks.length} message(s)`);
+    this.logger.log(`Enqueued ${message.logs.length} PoP events for deviceId=${message.deviceId} in ${chunks.length} message(s)`);
   }
 
   private chunk(logs: QueuedPopLog[]): QueuedPopLog[][] {
