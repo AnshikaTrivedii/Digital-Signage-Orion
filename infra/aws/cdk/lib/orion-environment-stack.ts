@@ -505,7 +505,20 @@ export class OrionEnvironmentStack extends Stack {
           name: 'AWSCommonRules',
           priority: 0,
           overrideAction: { none: {} },
-          statement: { managedRuleGroupStatement: { vendorName: 'AWS', name: 'AWSManagedRulesCommonRuleSet' } },
+          statement: {
+            managedRuleGroupStatement: {
+              vendorName: 'AWS',
+              name: 'AWSManagedRulesCommonRuleSet',
+              // Default CRS SizeRestrictions_BODY blocks >8KB. Player PoP flushes
+              // are ~16KB (50 logs), so they never reached Nest (ALB 403 HTML).
+              ruleActionOverrides: [
+                {
+                  name: 'SizeRestrictions_BODY',
+                  actionToUse: { count: {} },
+                },
+              ],
+            },
+          },
           visibilityConfig: { cloudWatchMetricsEnabled: true, metricName: 'common', sampledRequestsEnabled: true },
         },
         {
