@@ -43,7 +43,13 @@ export async function consumePopLogBatch(prisma: PrismaClient, message: PopLogBa
 
   await ensurePartitionsForLogs(prisma, message.logs);
 
-  const playlistIds = [...new Set(message.logs.map((log) => log.playlistId).filter(Boolean))];
+  const playlistIds = [
+    ...new Set(
+      message.logs
+        .map((log) => log.playlistId)
+        .filter((playlistId): playlistId is string => Boolean(playlistId)),
+    ),
+  ];
   const playlists = playlistIds.length
     ? await prisma.playlist.findMany({
         where: { organizationId: message.organizationId, id: { in: playlistIds } },
