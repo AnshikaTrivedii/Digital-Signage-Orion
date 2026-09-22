@@ -1,0 +1,60 @@
+.orion-pin-wrap,
+.orion-cluster-wrap {
+  background: none !important;
+  border: none !important;
+}
+
+.orion-pin {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: hsl(var(--status-danger));
+  box-shadow:
+    0 0 0 2px hsl(var(--bg-surface)),
+    0 6px 14px hsl(var(--overlay-base) / 0.35);
+}
+
+.orion-pin.is-online {
+  background: hsl(var(--status-success));
+}
+
+.orion-pin i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(var(--surface-contrast) / 0.92);
+}
+
+.orion-cluster {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: hsl(var(--accent-primary));
+  color: white;
+  font-family: Outfit, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  box-shadow:
+    0 0 0 3px hsl(var(--accent-primary) / 0.22),
+    0 8px 18px hsl(var(--overlay-base) / 0.35);
+}
+
+.orion-map-popup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 32px;
+  margin-top: 4px;
+  border: none;
+  border-radius: 9px;
+  background: hsl(var(--accent-primary));
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}

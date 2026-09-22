@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
@@ -15,6 +15,7 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { formatReportDateTime } from "@/lib/format-datetime";
 import { useAuth } from "@/components/AuthProvider";
 import { DeviceDetailPanel } from "@/components/devices/DeviceDetailPanel";
+import type { DeviceInstallation } from "@/lib/device-location";
 
 interface Device {
     id: string;
@@ -44,6 +45,7 @@ interface Device {
     lastScreenshotUrl?: string | null;
     lastScreenshotAt?: string | null;
     assignedPlaylist?: string | null;
+    installation?: DeviceInstallation | null;
     initialSyncState?: "none" | "pending" | "timed_out";
     pendingInitialSync?: boolean;
     initialSyncRequestedAt?: string | null;
@@ -164,6 +166,7 @@ export default function DevicesPage() {
     const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
     const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+    const openedFromQuery = useRef(false);
     const [isEditing, setIsEditing] = useState(false);
     const [editForm, setEditForm] = useState<DeviceFormState>(EMPTY_FORM);
 
@@ -230,6 +233,17 @@ export default function DevicesPage() {
     useEffect(() => {
         void loadDevices();
     }, [loadDevices]);
+
+    useEffect(() => {
+        if (openedFromQuery.current || devices.length === 0) return;
+        const deviceId = new URLSearchParams(window.location.search).get("device");
+        if (!deviceId) return;
+        const match = devices.find((device) => device.id === deviceId);
+        if (!match) return;
+        openedFromQuery.current = true;
+        setSelectedDevice(match);
+        setIsEditing(false);
+    }, [devices]);
 
     useEffect(() => {
         const intervalMs = selectedDevice ? 5000 : 10000;
@@ -307,6 +321,9 @@ export default function DevicesPage() {
             return (
                 d.name.toLowerCase().includes(s) ||
                 d.location.toLowerCase().includes(s) ||
+                d.installation?.displayLabel?.toLowerCase().includes(s) ||
+                d.installation?.city?.toLowerCase().includes(s) ||
+                d.installation?.address?.toLowerCase().includes(s) ||
                 d.ip.toLowerCase().includes(s)
             );
         });
@@ -958,7 +975,9 @@ export default function DevicesPage() {
                                         <td style={{ padding: "14px 16px", fontSize: "0.85rem" }}>
                                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                                 <MapPin size={12} style={{ color: "hsl(var(--text-muted))" }} />
-                                                {d.location}
+                                                {d.installation?.displayLabel || d.installation?.configured
+                                                    ? (d.installation?.displayLabel || d.location)
+                                                    : "Location not configured"}
                                             </span>
                                         </td>
                                         <td style={{ padding: "14px 16px", fontSize: "0.85rem", maxWidth: 220 }}>

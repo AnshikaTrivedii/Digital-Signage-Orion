@@ -44,6 +44,7 @@ import { storageBytesToNumber } from '../common/device-storage.utils';
 import { getPreviewKind } from '../assets/asset-media.utils';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
 import { DeviceManagementService, resolveInitialSyncState } from '../device-management/device-management.service';
+import { DeviceLocationService } from '../device-location/device-location.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import { PlaylistSyncService } from '../sync/playlist-sync.service';
@@ -122,6 +123,7 @@ export class ClientDataService {
     private readonly playlistSync: PlaylistSyncService,
     private readonly deviceCache: DeviceCacheService,
     private readonly deviceManagement: DeviceManagementService,
+    private readonly deviceLocation: DeviceLocationService,
   ) {}
 
   async dashboard(actor: RequestActor) {
@@ -272,6 +274,52 @@ export class ClientDataService {
           warnings: entry.readinessWarnings,
         })),
     };
+  }
+
+  async listDeviceLocations(actor: RequestActor) {
+    return this.deviceLocation.listDashboardLocations(this.getOrgId(actor));
+  }
+
+  async searchAddresses(actor: RequestActor, query: string) {
+    this.getOrgId(actor);
+    return this.deviceLocation.searchAddresses(query ?? '');
+  }
+
+  async reverseGeocode(actor: RequestActor, lat: string, lon: string) {
+    this.getOrgId(actor);
+    const latitude = Number(lat);
+    const longitude = Number(lon);
+    return this.deviceLocation.reverseGeocode(latitude, longitude);
+  }
+
+  async updateInstallationLocation(
+    actor: RequestActor,
+    deviceId: string,
+    body: {
+      latitude: number;
+      longitude: number;
+      address?: string;
+      city?: string;
+      state?: string;
+      country?: string;
+      postalCode?: string;
+      allowDeviceLocationUpdates?: boolean;
+      geocoded?: boolean;
+    },
+  ) {
+    this.assertCanEdit(actor);
+    const updated = await this.deviceLocation.assignInstallationLocation(
+      this.getOrgId(actor),
+      deviceId,
+      body,
+    );
+    return this.serializeDevice(updated);
+  }
+
+  async clearInstallationLocation(actor: RequestActor, deviceId: string) {
+    this.assertCanEdit(actor);
+    const updated = await this.deviceLocation.clearInstallationLocation(this.getOrgId(actor), deviceId);
+    return this.serializeDevice(updated);
   }
 
   async getPlaylistAssets(actor: RequestActor, playlistId: string) {
@@ -1434,6 +1482,21 @@ export class ClientDataService {
     initialSyncRequestedAt?: Date | null;
     currentPlaylist?: { name: string } | null;
     currentLayout?: { name: string } | null;
+    installLatitude?: number | null;
+    installLongitude?: number | null;
+    installAddress?: string | null;
+    installCity?: string | null;
+    installState?: string | null;
+    installCountry?: string | null;
+    installPostalCode?: string | null;
+    locationSource?: import('@prisma/client').DeviceLocationSource | null;
+    locationAccuracyMeters?: number | null;
+    locationUpdatedAt?: Date | null;
+    allowDeviceLocationUpdates?: boolean | null;
+    lastGpsLatitude?: number | null;
+    lastGpsLongitude?: number | null;
+    lastGpsAccuracyMeters?: number | null;
+    lastGpsAt?: Date | null;
   }) {
     const effectiveStatus = this.deviceManagement.resolveEffectiveStatus({
       lastSeenAt: device.lastSeenAt ?? null,
@@ -1502,6 +1565,7 @@ export class ClientDataService {
           ? Date.now() - device.cacheLastReportedAt.getTime() > 15 * 60 * 1000
           : true,
       },
+      installation: this.deviceLocation.serializeInstallation(device),
     };
   }
 

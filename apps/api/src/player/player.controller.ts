@@ -3,6 +3,7 @@ import { CacheReportDto } from './dto/cache-report.dto';
 import { DeviceReportDto, SubmitSystemLogsDto } from './dto/device-report.dto';
 import { InitPairingDto } from './dto/init-pairing.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
+import { PlayerLocationDto } from './dto/player-location.dto';
 import { SubmitPopLogsDto } from './dto/pop-log.dto';
 import { PairingStatusQueryDto } from './dto/pairing-status-query.dto';
 import { SyncQueryDto } from './dto/sync-query.dto';
@@ -64,6 +65,19 @@ export class PlayerController {
     @Body() body: HeartbeatDto,
   ) {
     return this.playerService.heartbeat(authHeader, body);
+  }
+
+  /**
+   * Optional GNSS report from a paired player. Do not call on every heartbeat.
+   * The server ignores sub-50m jitter and reports more frequent than 15 minutes.
+   */
+  @Post('location')
+  @UsePipes(playerValidationPipe)
+  reportLocation(
+    @Headers('authorization') authHeader: string | undefined,
+    @Body() body: PlayerLocationDto,
+  ) {
+    return this.playerService.reportLocation(authHeader, body);
   }
 
   /**

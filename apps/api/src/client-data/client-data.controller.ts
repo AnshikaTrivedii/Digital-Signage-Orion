@@ -35,6 +35,7 @@ import { CreateLayoutDto } from './dto/create-layout.dto';
 import { SaveLayoutZonesDto } from './dto/save-layout-zones.dto';
 import { UpdateLayoutDto } from './dto/update-layout.dto';
 import { UpdatePlaylistDto } from './dto/update-playlist.dto';
+import { UpdateInstallationLocationDto } from '../device-location/dto/update-installation-location.dto';
 
 @Controller('client-data')
 @UseGuards(JwtAuthGuard)
@@ -44,6 +45,25 @@ export class ClientDataController {
   @Get('dashboard')
   dashboard(@CurrentActor() actor: RequestActor) {
     return this.clientDataService.dashboard(actor);
+  }
+
+  @Get('dashboard/device-locations')
+  deviceLocations(@CurrentActor() actor: RequestActor) {
+    return this.clientDataService.listDeviceLocations(actor);
+  }
+
+  @Get('geocode/search')
+  searchAddresses(@CurrentActor() actor: RequestActor, @Query('q') q: string) {
+    return this.clientDataService.searchAddresses(actor, q);
+  }
+
+  @Get('geocode/reverse')
+  reverseGeocode(
+    @CurrentActor() actor: RequestActor,
+    @Query('lat') lat: string,
+    @Query('lon') lon: string,
+  ) {
+    return this.clientDataService.reverseGeocode(actor, lat, lon);
   }
 
   @Get('playlists')
@@ -219,6 +239,20 @@ export class ClientDataController {
     @Body() body: UpdateDeviceDto,
   ) {
     return this.clientDataService.updateDevice(actor, deviceId, body);
+  }
+
+  @Patch('devices/:deviceId/installation-location')
+  updateInstallationLocation(
+    @CurrentActor() actor: RequestActor,
+    @Param('deviceId') deviceId: string,
+    @Body() body: UpdateInstallationLocationDto,
+  ) {
+    return this.clientDataService.updateInstallationLocation(actor, deviceId, body);
+  }
+
+  @Delete('devices/:deviceId/installation-location')
+  clearInstallationLocation(@CurrentActor() actor: RequestActor, @Param('deviceId') deviceId: string) {
+    return this.clientDataService.clearInstallationLocation(actor, deviceId);
   }
 
   @Post('devices/:deviceId/unregister')

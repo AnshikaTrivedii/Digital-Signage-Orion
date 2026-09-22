@@ -31,6 +31,7 @@ import {
     type ScreenBar,
     type TrendPoint,
 } from "./DashCharts";
+import { ScreenLocationsCard } from "./ScreenLocationsCard";
 import styles from "./dashboard.module.css";
 
 type DashboardData = {
@@ -368,6 +369,8 @@ export default function ClientDashboardPage() {
                 </button>
             ) : null}
 
+            <ScreenLocationsCard />
+
             <div className={styles.charts}>
                 <section className={styles.panel}>
                     <div className={styles.panelHead}>
@@ -415,11 +418,7 @@ export default function ClientDashboardPage() {
                             Assets <ChevronRight size={14} />
                         </button>
                     </div>
-                    {isLoading ? (
-                        <div className={styles.chartSkeleton} />
-                    ) : (
-                        <AssetMixChart mix={dashboardData?.assetMix ?? []} total={totalAssets} />
-                    )}
+                    {isLoading ? <div className={styles.chartSkeleton} /> : <AssetMixChart mix={dashboardData?.assetMix ?? []} total={totalAssets} />}
                 </section>
             </div>
 

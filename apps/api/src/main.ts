@@ -32,7 +32,7 @@ async function bootstrap() {
     }),
   );
 
-  const port = Number(process.env.PORT ?? 3001);
+  const port = Number(process.env.ORION_LISTEN_PORT ?? process.env.PORT ?? 3001);
   await app.listen(port);
   console.log(`Orion API ready on http://localhost:${port}/api`);
 }

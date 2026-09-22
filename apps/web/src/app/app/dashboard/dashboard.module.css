@@ -563,6 +563,71 @@
   font-size: 0.72rem;
 }
 
+.mapPanel {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+}
+
+.mapFilters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.mapChip,
+.mapSelect {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border-subtle) / 0.75);
+  background: hsl(var(--bg-base) / 0.45);
+  color: hsl(var(--text-secondary));
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.mapChipOn {
+  color: hsl(var(--text-primary));
+  border-color: hsl(var(--accent-primary) / 0.55);
+  background: hsl(var(--accent-primary) / 0.16);
+}
+
+.mapSelect {
+  border-radius: 10px;
+}
+
+.mapCanvas {
+  height: min(52vh, 460px);
+  min-height: 280px;
+  border-radius: 14px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, hsl(var(--bg-base) / 0.2), hsl(var(--bg-surface) / 0.55));
+}
+
+.mapEmpty {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  padding: 18px 8px;
+}
+
+.mapEmpty strong {
+  font-size: 0.92rem;
+}
+
+.mapEmpty p {
+  max-width: 52ch;
+  color: hsl(var(--text-muted));
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 .link {
   display: inline-flex;
   align-items: center;
@@ -785,6 +850,11 @@
   .grid,
   .donutWrap {
     grid-template-columns: 1fr;
+  }
+
+  .mapCanvas {
+    height: 320px;
+    min-height: 240px;
   }
 
   .span2 {

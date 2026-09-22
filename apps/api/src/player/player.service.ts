@@ -29,12 +29,14 @@ import {
   sortPlaylistAssetsBySequence,
 } from '../common/playlist-order';
 import { DeviceCacheService } from '../device-cache/device-cache.service';
+import { DeviceLocationService } from '../device-location/device-location.service';
 import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
 import type { ActiveScheduleSnapshot } from '../scheduling/schedule.service';
 import { ScheduleService } from '../scheduling/schedule.service';
 import type { CacheReportDto } from './dto/cache-report.dto';
+import type { PlayerLocationDto } from './dto/player-location.dto';
 import type { SyncQueryDto } from './dto/sync-query.dto';
 
 /** Device resolved from a valid paired token — organizationId is guaranteed. */
@@ -123,6 +125,7 @@ export class PlayerService {
     private readonly s3: S3Service,
     private readonly deviceCache: DeviceCacheService,
     private readonly deviceManagement: DeviceManagementService,
+    private readonly deviceLocation: DeviceLocationService,
     private readonly schedules: ScheduleService,
   ) {}
 
@@ -575,8 +578,17 @@ export class PlayerService {
       defaultUrlDuration: playerConfig.defaultUrlDuration,
       display: playerConfig.display,
       playback: playerConfig.playback,
+      locationPolicy: this.deviceLocation.locationPolicy(refreshed ?? device),
       ...commandPayload,
     };
+  }
+
+  /**
+   * Optional GNSS report from a paired player. Never called from heartbeat.
+   */
+  async reportLocation(authHeader: string | undefined, body: PlayerLocationDto) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    return this.deviceLocation.reportPlayerGps(device.id, body);
   }
 
   /**
