@@ -7,13 +7,14 @@ import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster";
 import { useTheme } from "@/components/ThemeProvider";
 import { formatRelativeAgo, type DeviceLocationMarker } from "@/lib/device-location";
-import { CARTO_ATTRIBUTION, fitDeviceBounds, orionClusterIcon, orionPinIcon, tileUrl } from "./leaflet-theme";
+import { applyIndiaMap, fitDeviceBounds, orionClusterIcon, orionPinIcon, tileAttribution, tileUrl } from "./leaflet-theme";
 import styles from "./orion-map.module.css";
 import "./orion-leaflet.css";
 
 type Props = {
     devices: DeviceLocationMarker[];
     onViewDevice: (deviceId: string) => void;
+    fitRequest?: number;
 };
 
 function popupHtml(device: DeviceLocationMarker) {
@@ -47,32 +48,39 @@ function escapeHtml(value: string) {
         .replaceAll('"', "&quot;");
 }
 
-export function ScreenLocationsMap({ devices, onViewDevice }: Props) {
+export function ScreenLocationsMap({ devices, onViewDevice, fitRequest = 0 }: Props) {
     const { theme } = useTheme();
     const rootRef = useRef<HTMLDivElement | null>(null);
     const mapRef = useRef<L.Map | null>(null);
     const tilesRef = useRef<L.TileLayer | null>(null);
     const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
     const onViewRef = useRef(onViewDevice);
+    const deviceKey = devices.map((device) => device.deviceId).join(",");
     onViewRef.current = onViewDevice;
 
     useEffect(() => {
         if (!rootRef.current || mapRef.current) return;
         const map = L.map(rootRef.current, {
-            zoomControl: true,
+            zoomControl: false,
             attributionControl: true,
             scrollWheelZoom: true,
+            minZoom: 4,
+            maxZoom: 18,
+            worldCopyJump: false,
         });
-        const tiles = L.tileLayer(tileUrl(theme), { attribution: CARTO_ATTRIBUTION, maxZoom: 19 });
+        L.control.zoom({ position: "bottomright" }).addTo(map);
+        const tiles = L.tileLayer(tileUrl(theme), { attribution: tileAttribution(), maxZoom: 18 });
         tiles.addTo(map);
+        applyIndiaMap(map);
         const cluster = L.markerClusterGroup({
             showCoverageOnHover: false,
-            maxClusterRadius: 48,
+            maxClusterRadius: 36,
             spiderfyOnMaxZoom: true,
-            disableClusteringAtZoom: 18,
+            disableClusteringAtZoom: 1,
             iconCreateFunction: (group: { getChildCount: () => number }) => orionClusterIcon(group.getChildCount()),
         });
         cluster.addTo(map);
+        fitDeviceBounds(map, []);
         mapRef.current = map;
         tilesRef.current = tiles;
         clusterRef.current = cluster;
@@ -102,8 +110,9 @@ export function ScreenLocationsMap({ devices, onViewDevice }: Props) {
                 title: device.name,
             });
             marker.bindPopup(popupHtml(device), { closeButton: true });
-            marker.on("popupopen", () => {
-                const button = document.querySelector<HTMLButtonElement>(
+            marker.on("popupopen", (event) => {
+                const root = (event as L.PopupEvent).popup.getElement();
+                const button = root?.querySelector<HTMLButtonElement>(
                     `[data-view-device="${CSS.escape(device.deviceId)}"]`,
                 );
                 button?.addEventListener("click", () => onViewRef.current(device.deviceId), { once: true });
@@ -113,7 +122,7 @@ export function ScreenLocationsMap({ devices, onViewDevice }: Props) {
         markers.forEach((marker) => cluster.addLayer(marker));
         fitDeviceBounds(map, devices);
         map.invalidateSize();
-    }, [devices]);
+    }, [deviceKey, devices, fitRequest]);
 
     return <div ref={rootRef} className={styles.orionMap} role="presentation" />;
 }

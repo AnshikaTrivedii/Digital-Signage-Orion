@@ -369,7 +369,18 @@ export default function ClientDashboardPage() {
                 </button>
             ) : null}
 
-            <ScreenLocationsCard />
+            <div className={styles.mapRow}>
+                <ScreenLocationsCard />
+                <section className={styles.panel}>
+                    <div className={styles.panelHead}>
+                        <div>
+                            <h2>Fleet</h2>
+                            <p>Live device health mix.</p>
+                        </div>
+                    </div>
+                    <FleetDonut online={online} warning={warning} offline={offline} total={totalDevices} />
+                </section>
+            </div>
 
             <div className={styles.charts}>
                 <section className={styles.panel}>
@@ -383,16 +394,6 @@ export default function ClientDashboardPage() {
                         </button>
                     </div>
                     {isLoading ? <div className={styles.chartSkeleton} /> : <PlaybackTrendChart data={trend} />}
-                </section>
-
-                <section className={styles.panel}>
-                    <div className={styles.panelHead}>
-                        <div>
-                            <h2>Fleet</h2>
-                            <p>Live device health mix.</p>
-                        </div>
-                    </div>
-                    <FleetDonut online={online} warning={warning} offline={offline} total={totalDevices} />
                 </section>
 
                 <section className={styles.panel}>

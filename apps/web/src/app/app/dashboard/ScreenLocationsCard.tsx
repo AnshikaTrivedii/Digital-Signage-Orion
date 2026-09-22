@@ -1,14 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { LocateFixed } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import {
     formatRelativeAgo,
-    uniqueSorted,
     type DeviceLocationsResponse,
 } from "@/lib/device-location";
 import styles from "./dashboard.module.css";
@@ -18,18 +17,13 @@ const ScreenLocationsMap = dynamic(
     { ssr: false, loading: () => <div className={styles.mapCanvas} /> },
 );
 
-type StatusFilter = "all" | "online" | "offline";
-
 export function ScreenLocationsCard() {
     const { activeOrganizationId } = useAuth();
     const router = useRouter();
     const [payload, setPayload] = useState<DeviceLocationsResponse | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
-    const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-    const [city, setCity] = useState("all");
-    const [state, setState] = useState("all");
-    const [playlist, setPlaylist] = useState("all");
     const [now, setNow] = useState(() => Date.now());
+    const [fitRequest, setFitRequest] = useState(0);
 
     useEffect(() => {
         if (!activeOrganizationId) return;
@@ -67,65 +61,29 @@ export function ScreenLocationsCard() {
     }, [activeOrganizationId]);
 
     const devices = payload?.devices ?? [];
-    const cities = useMemo(() => uniqueSorted(devices.map((device) => device.city)), [devices]);
-    const states = useMemo(() => uniqueSorted(devices.map((device) => device.state)), [devices]);
-    const playlists = useMemo(() => uniqueSorted(devices.map((device) => device.playlistName)), [devices]);
-
-    const visible = useMemo(() => {
-        return devices.filter((device) => {
-            if (statusFilter === "online" && !device.online) return false;
-            if (statusFilter === "offline" && device.online) return false;
-            if (city !== "all" && device.city !== city) return false;
-            if (state !== "all" && device.state !== state) return false;
-            if (playlist !== "all" && device.playlistName !== playlist) return false;
-            return true;
-        });
-    }, [city, devices, playlist, state, statusFilter]);
+    const screenCount = payload?.screens ?? 0;
 
     return (
         <section className={`${styles.panel} ${styles.mapPanel}`}>
-            <div className={styles.panelHead}>
+            <div className={styles.mapOverlay}>
                 <div>
-                    <h2>Screen Locations</h2>
-                    <p>
-                        {payload ? `${payload.screens} Screen${payload.screens === 1 ? "" : "s"}` : "Loading screens"}
-                        {payload ? ` · Updated ${formatRelativeAgo(payload.updatedAt, now)}` : ""}
+                    <p className={styles.mapKicker}>Screen Locations</p>
+                    <h2 className={styles.mapCount}>
+                        {payload ? `${screenCount} Screen${screenCount === 1 ? "" : "s"}` : "Loading screens"}
+                    </h2>
+                    <p className={styles.mapUpdated}>
+                        <span className={styles.mapLiveDot} aria-hidden />
+                        {payload ? `Updated ${formatRelativeAgo(payload.updatedAt, now)}` : "Fetching locations"}
                     </p>
                 </div>
-                <button className={styles.link} onClick={() => router.push("/app/devices")}>
-                    Devices <ChevronRight size={14} />
+                <button
+                    type="button"
+                    className={styles.mapLocate}
+                    aria-label="Recenter map on India"
+                    onClick={() => setFitRequest((value) => value + 1)}
+                >
+                    <LocateFixed size={16} />
                 </button>
-            </div>
-
-            <div className={styles.mapFilters} role="toolbar" aria-label="Map filters">
-                {(["all", "online", "offline"] as const).map((value) => (
-                    <button
-                        key={value}
-                        type="button"
-                        className={`${styles.mapChip}${statusFilter === value ? ` ${styles.mapChipOn}` : ""}`}
-                        onClick={() => setStatusFilter(value)}
-                    >
-                        {value === "all" ? "All" : value === "online" ? "Online" : "Offline"}
-                    </button>
-                ))}
-                {cities.length > 1 ? (
-                    <select className={styles.mapSelect} value={city} onChange={(event) => setCity(event.target.value)}>
-                        <option value="all">All cities</option>
-                        {cities.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                ) : null}
-                {states.length > 1 ? (
-                    <select className={styles.mapSelect} value={state} onChange={(event) => setState(event.target.value)}>
-                        <option value="all">All states</option>
-                        {states.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                ) : null}
-                {playlists.length > 1 ? (
-                    <select className={styles.mapSelect} value={playlist} onChange={(event) => setPlaylist(event.target.value)}>
-                        <option value="all">All playlists</option>
-                        {playlists.map((value) => <option key={value} value={value}>{value}</option>)}
-                    </select>
-                ) : null}
             </div>
 
             {loadError ? (
@@ -135,22 +93,19 @@ export function ScreenLocationsCard() {
                 </div>
             ) : !payload ? (
                 <div className={styles.mapCanvas} />
-            ) : visible.length === 0 ? (
+            ) : devices.length === 0 ? (
                 <div className={styles.mapEmpty}>
                     <strong>No screen locations available</strong>
-                    <p>
-                        {devices.length === 0
-                            ? "Assign an installation location on a device to place it on this map. Screens without coordinates are omitted."
-                            : "No screens match the current filters."}
-                    </p>
+                    <p>Assign an installation location on a device to place it on this map. Screens without coordinates are omitted.</p>
                     <button className={styles.link} onClick={() => router.push("/app/devices")}>
-                        Open devices <ChevronRight size={14} />
+                        Open devices
                     </button>
                 </div>
             ) : (
                 <div className={styles.mapCanvas}>
                     <ScreenLocationsMap
-                        devices={visible}
+                        devices={devices}
+                        fitRequest={fitRequest}
                         onViewDevice={(deviceId) => router.push(`/app/devices?device=${encodeURIComponent(deviceId)}`)}
                     />
                 </div>

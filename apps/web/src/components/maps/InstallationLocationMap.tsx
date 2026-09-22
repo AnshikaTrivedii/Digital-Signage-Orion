@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useTheme } from "@/components/ThemeProvider";
-import { CARTO_ATTRIBUTION, orionPinIcon, tileUrl } from "./leaflet-theme";
+import { applyIndiaMap, indiaBounds, orionPinIcon, tileAttribution, tileUrl } from "./leaflet-theme";
 import styles from "./orion-map.module.css";
 import "./orion-leaflet.css";
 
@@ -14,8 +14,6 @@ type Props = {
     onPick: (latitude: number, longitude: number) => void;
     disabled?: boolean;
 };
-
-const INDIA_FALLBACK: L.LatLngExpression = [22.9734, 78.6569];
 
 export function InstallationLocationMap({ latitude, longitude, onPick, disabled }: Props) {
     const { theme } = useTheme();
@@ -28,12 +26,19 @@ export function InstallationLocationMap({ latitude, longitude, onPick, disabled 
 
     useEffect(() => {
         if (!rootRef.current || mapRef.current) return;
-        const map = L.map(rootRef.current, { zoomControl: true, scrollWheelZoom: true });
-        const tiles = L.tileLayer(tileUrl(theme), { attribution: CARTO_ATTRIBUTION, maxZoom: 19 });
+        const map = L.map(rootRef.current, {
+            zoomControl: true,
+            scrollWheelZoom: true,
+            minZoom: 4,
+            maxZoom: 18,
+            worldCopyJump: false,
+        });
+        const tiles = L.tileLayer(tileUrl(theme), { attribution: tileAttribution(), maxZoom: 18 });
         tiles.addTo(map);
+        applyIndiaMap(map);
         map.setView(
-            latitude != null && longitude != null ? [latitude, longitude] : INDIA_FALLBACK,
-            latitude != null && longitude != null ? 15 : 5,
+            latitude != null && longitude != null ? [latitude, longitude] : indiaBounds().getCenter(),
+            latitude != null && longitude != null ? 15 : 4,
         );
         map.on("click", (event: L.LeafletMouseEvent) => {
             if (disabled) return;
