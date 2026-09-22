@@ -28,13 +28,38 @@ run_migrate_deploy() {
   DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma migrate deploy
 }
 
-# Prisma P3009: "The `NAME` migration started at TIMESTAMP UTC failed"
-failed_migration_name() {
-  echo "$1" | sed -n 's/.*The `\([^`]*\)` migration started at.*/\1/p' | tail -1
+# Prisma P3009 names the failed row in `_prisma_migrations`, e.g.
+#   The `20260915120000_partition_proof_of_play_logs` migration started at ... failed
+failed_migration_from_p3009() {
+  echo "$1" | sed -n 's/.*The `\([0-9]\{14\}_[A-Za-z0-9_]*\)` migration started at .* failed.*/\1/p' | head -n 1
 }
 
-resolve_rolled_back() {
-  DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma migrate resolve --rolled-back "$1"
+mark_migration_rolled_back() {
+  local name="$1"
+  if [[ ! "$name" =~ ^[0-9]{14}_[A-Za-z0-9_]+$ ]]; then
+    echo "ERROR: refusing to resolve unexpected migration name: $name" >&2
+    return 1
+  fi
+
+  set +e
+  DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma migrate resolve --rolled-back "$name"
+  local resolve_status=$?
+  set -e
+  if [[ "$resolve_status" -eq 0 ]]; then
+    return 0
+  fi
+
+  # `migrate resolve` needs the migration folder. A failed row from another
+  # branch (e.g. main's partition migration while deploying dev) is only in
+  # the database, so clear it directly.
+  echo "==> prisma migrate resolve could not clear ${name}; updating _prisma_migrations"
+  DATABASE_URL="$MIGRATE_DATABASE_URL" npx prisma db execute --stdin --url="$MIGRATE_DATABASE_URL" <<SQL
+UPDATE "_prisma_migrations"
+SET rolled_back_at = NOW()
+WHERE migration_name = '${name}'
+  AND finished_at IS NULL
+  AND rolled_back_at IS NULL;
+SQL
 }
 
 echo "Running database migrations..."
@@ -45,21 +70,11 @@ set -e
 echo "$migrate_output"
 
 if [[ "$migrate_status" -ne 0 ]]; then
-  failed_migration="$(failed_migration_name "$migrate_output")"
-
-  if [[ "$failed_migration" == "20260811160000_scheduling_module" ]]; then
+  failed_migration="$(failed_migration_from_p3009 "$migrate_output")"
+  if [[ -n "$failed_migration" ]]; then
     echo ""
-    echo "==> Recovering failed scheduling migration and retrying..."
-    resolve_rolled_back "$failed_migration"
-    run_migrate_deploy
-  elif [[ -n "$failed_migration" && ! -d "prisma/migrations/${failed_migration}" ]]; then
-    # Production can retain a failed row for a migration that is no longer in
-    # this build (e.g. 20260915120000_partition_proof_of_play_logs). That P3009
-    # must not be treated as a scheduling rollback — that migration is applied
-    # and resolve --rolled-back then fails with P3012.
-    echo ""
-    echo "==> Clearing failed migration '${failed_migration}' (not in this build) and retrying..."
-    resolve_rolled_back "$failed_migration"
+    echo "==> Recovering failed migration ${failed_migration} and retrying..."
+    mark_migration_rolled_back "$failed_migration"
     run_migrate_deploy
   else
     exit "$migrate_status"
