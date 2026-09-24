@@ -36,10 +36,11 @@ export function InstallationLocationMap({ latitude, longitude, onPick, disabled 
         const tiles = L.tileLayer(tileUrl(theme), { attribution: tileAttribution(), maxZoom: 18 });
         tiles.addTo(map);
         applyIndiaMap(map);
-        map.setView(
-            latitude != null && longitude != null ? [latitude, longitude] : indiaBounds().getCenter(),
-            latitude != null && longitude != null ? 15 : 4,
-        );
+        if (latitude != null && longitude != null) {
+            map.setView([latitude, longitude], 15);
+        } else {
+            map.fitBounds(indiaBounds(), { padding: [12, 12], maxZoom: 5 });
+        }
         map.on("click", (event: L.LeafletMouseEvent) => {
             if (disabled) return;
             onPickRef.current(event.latlng.lat, event.latlng.lng);

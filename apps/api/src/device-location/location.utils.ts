@@ -3,6 +3,30 @@ import { DeviceLocationSource } from '@prisma/client';
 export const GPS_MATERIAL_CHANGE_METERS = 50;
 export const GPS_MIN_REPORT_INTERVAL_MS = 15 * 60 * 1000;
 
+/** ISO 3166-1 alpha-2 sent to Nominatim as `countrycodes`. */
+export const INDIA_COUNTRY_CODE = 'in';
+export const INDIA_COUNTRY_NAME = 'India';
+export const INDIA_LOCATION_REQUIRED_MESSAGE = 'Please select a location in India.';
+
+/**
+ * Geographic envelope of India (mainland + Lakshadweep + Andaman and Nicobar).
+ * Used for coordinate checks and Nominatim `viewbox`, not display-name matching.
+ */
+export const INDIA_GEO_BOUNDS = {
+  minLat: 6.4,
+  maxLat: 37.2,
+  minLng: 67.9,
+  maxLng: 97.5,
+} as const;
+
+/** Nominatim viewbox: minLon,maxLat,maxLon,minLat */
+export const INDIA_NOMINATIM_VIEWBOX = [
+  INDIA_GEO_BOUNDS.minLng,
+  INDIA_GEO_BOUNDS.maxLat,
+  INDIA_GEO_BOUNDS.maxLng,
+  INDIA_GEO_BOUNDS.minLat,
+].join(',');
+
 const OPERATOR_SOURCES: ReadonlySet<DeviceLocationSource> = new Set([
   DeviceLocationSource.ADMIN_ASSIGNED,
   DeviceLocationSource.GEOCODED,
@@ -24,6 +48,35 @@ export function isValidLongitude(value: number): boolean {
 
 export function isValidCoordinate(value: LatLng): boolean {
   return isValidLatitude(value.latitude) && isValidLongitude(value.longitude);
+}
+
+export function isWithinIndiaBounds(latitude: number, longitude: number): boolean {
+  return (
+    latitude >= INDIA_GEO_BOUNDS.minLat
+    && latitude <= INDIA_GEO_BOUNDS.maxLat
+    && longitude >= INDIA_GEO_BOUNDS.minLng
+    && longitude <= INDIA_GEO_BOUNDS.maxLng
+  );
+}
+
+export function isIndiaCountryCode(value?: string | null): boolean {
+  return value?.trim().toLowerCase() === INDIA_COUNTRY_CODE;
+}
+
+export function isIndiaCountryName(value?: string | null): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === 'india' || normalized === INDIA_COUNTRY_CODE || normalized === 'bharat';
+}
+
+export function applyIndiaNominatimSearchParams(url: URL, query: string) {
+  url.searchParams.set('q', query);
+  url.searchParams.set('format', 'json');
+  url.searchParams.set('addressdetails', '1');
+  url.searchParams.set('limit', '8');
+  url.searchParams.set('countrycodes', INDIA_COUNTRY_CODE);
+  url.searchParams.set('viewbox', INDIA_NOMINATIM_VIEWBOX);
+  url.searchParams.set('bounded', '1');
+  url.searchParams.set('accept-language', 'en-IN,en');
 }
 
 export function hasInstallationCoordinates(device: {

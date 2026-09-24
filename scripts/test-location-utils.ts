@@ -1,8 +1,15 @@
 import {
+  applyIndiaNominatimSearchParams,
   canApplyDeviceGpsToInstallation,
   composeLocationLabel,
   hasInstallationCoordinates,
+  INDIA_COUNTRY_CODE,
+  INDIA_LOCATION_REQUIRED_MESSAGE,
+  INDIA_NOMINATIM_VIEWBOX,
+  isIndiaCountryCode,
+  isIndiaCountryName,
   isValidCoordinate,
+  isWithinIndiaBounds,
   metersBetween,
   shouldAcceptGpsSample,
 } from '../apps/api/src/device-location/location.utils';
@@ -85,6 +92,29 @@ assert(
   composeLocationLabel({ address: 'Phoenix Mall', city: 'Lucknow', state: 'Uttar Pradesh' })
     === 'Phoenix Mall, Lucknow, Uttar Pradesh',
   'Address label composes without duplicates',
+);
+
+const searchUrl = new URL('https://nominatim.openstreetmap.org/search');
+applyIndiaNominatimSearchParams(searchUrl, 'Phoenix Mall');
+assert(searchUrl.searchParams.get('countrycodes') === INDIA_COUNTRY_CODE, 'Nominatim search sets countrycodes=in');
+assert(searchUrl.searchParams.get('viewbox') === INDIA_NOMINATIM_VIEWBOX, 'Nominatim search sets India viewbox');
+assert(searchUrl.searchParams.get('bounded') === '1', 'Nominatim search is bounded to the India viewbox');
+assert(searchUrl.searchParams.get('q') === 'Phoenix Mall', 'Nominatim search keeps the query');
+
+assert(isWithinIndiaBounds(26.8467, 80.9462), 'Lucknow is inside India bounds');
+assert(isWithinIndiaBounds(19.076, 72.8777), 'Mumbai is inside India bounds');
+assert(isWithinIndiaBounds(28.6139, 77.209), 'Delhi is inside India bounds');
+assert(isWithinIndiaBounds(12.9716, 77.5946), 'Bengaluru is inside India bounds');
+assert(!isWithinIndiaBounds(40.7128, -74.006), 'New York is outside India bounds');
+assert(!isWithinIndiaBounds(51.5074, -0.1278), 'London UK is outside India bounds');
+assert(!isWithinIndiaBounds(-33.8688, 151.2093), 'Sydney is outside India bounds');
+assert(isIndiaCountryCode('in') && isIndiaCountryCode('IN'), 'ISO country code in is accepted');
+assert(!isIndiaCountryCode('us') && !isIndiaCountryCode('gb'), 'Non-India ISO country codes are rejected');
+assert(isIndiaCountryName('India') && isIndiaCountryName('IN'), 'India country name is accepted');
+assert(!isIndiaCountryName('United States') && !isIndiaCountryName('Canada'), 'Foreign country names are rejected');
+assert(
+  INDIA_LOCATION_REQUIRED_MESSAGE === 'Please select a location in India.',
+  'Save-block message is the required copy',
 );
 
 if (process.exitCode) {

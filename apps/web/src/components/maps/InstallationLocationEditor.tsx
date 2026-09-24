@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "react-hot-toast";
 import { apiRequest, ApiError } from "@/lib/api";
-import type { DeviceInstallation, GeocodeHit } from "@/lib/device-location";
+import {
+    INDIA_COUNTRY_NAME,
+    INDIA_LOCATION_REQUIRED_MESSAGE,
+    isIndiaGeocodeHit,
+    isWithinIndiaBounds,
+    type DeviceInstallation,
+    type GeocodeHit,
+} from "@/lib/device-location";
 import { InstallationLocationMap } from "./InstallationLocationMap";
 import styles from "./orion-map.module.css";
 
@@ -98,6 +105,10 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
         && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
 
     const applyHit = (hit: GeocodeHit) => {
+        if (!isIndiaGeocodeHit(hit)) {
+            toast.error(INDIA_LOCATION_REQUIRED_MESSAGE);
+            return;
+        }
         setForm((current) => ({
             ...current,
             latitude: String(hit.latitude),
@@ -105,7 +116,7 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
             address: hit.address || current.address,
             city: hit.city || current.city,
             state: hit.state || current.state,
-            country: hit.country || current.country,
+            country: INDIA_COUNTRY_NAME,
             postalCode: hit.postalCode || current.postalCode,
         }));
         setQuery(hit.label ?? query);
@@ -114,18 +125,20 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
     };
 
     const pickMap = async (nextLat: number, nextLng: number) => {
-        setForm((current) => ({
-            ...current,
-            latitude: nextLat.toFixed(6),
-            longitude: nextLng.toFixed(6),
-        }));
+        if (!isWithinIndiaBounds(nextLat, nextLng)) {
+            toast.error(INDIA_LOCATION_REQUIRED_MESSAGE);
+            return;
+        }
         setFromSearch(false);
         try {
             const hit = await apiRequest<GeocodeHit>(
                 `/api/client-data/geocode/reverse?lat=${encodeURIComponent(String(nextLat))}&lon=${encodeURIComponent(String(nextLng))}`,
                 { headers: orgHeaders },
             );
-            if (!hit) return;
+            if (!hit || !isIndiaGeocodeHit(hit)) {
+                toast.error(INDIA_LOCATION_REQUIRED_MESSAGE);
+                return;
+            }
             setForm((current) => ({
                 ...current,
                 latitude: String(hit.latitude),
@@ -133,11 +146,11 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
                 address: current.address || hit.address || "",
                 city: current.city || hit.city || "",
                 state: current.state || hit.state || "",
-                country: current.country || hit.country || "",
+                country: INDIA_COUNTRY_NAME,
                 postalCode: current.postalCode || hit.postalCode || "",
             }));
-        } catch {
-            /* keep coordinates even if reverse geocode is unavailable */
+        } catch (error) {
+            toast.error(describeError(error, INDIA_LOCATION_REQUIRED_MESSAGE));
         }
     };
 
@@ -148,6 +161,10 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
         }
         if (!hasCoords) {
             toast.error("Choose a map location before saving.");
+            return;
+        }
+        if (!isWithinIndiaBounds(latitude, longitude) || (form.country.trim() && form.country.trim().toLowerCase() !== "india")) {
+            toast.error(INDIA_LOCATION_REQUIRED_MESSAGE);
             return;
         }
         setSaving(true);
@@ -161,7 +178,7 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
                     address: form.address.trim() || undefined,
                     city: form.city.trim() || undefined,
                     state: form.state.trim() || undefined,
-                    country: form.country.trim() || undefined,
+                    country: INDIA_COUNTRY_NAME,
                     postalCode: form.postalCode.trim() || undefined,
                     allowDeviceLocationUpdates: form.allowDeviceLocationUpdates,
                     geocoded: fromSearch,
@@ -201,14 +218,14 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
     return (
         <div className={styles.picker}>
             {!hasCoords ? (
-                <p className={styles.emptyHint}>Location not configured. Search an address or drop a pin on the map.</p>
+                <p className={styles.emptyHint}>Location not configured. Search an Indian address or drop a pin on the map in India.</p>
             ) : null}
 
             <div className={styles.search}>
                 <input
                     value={query}
                     disabled={!canEdit || saving}
-                    placeholder="Search an address or landmark"
+                    placeholder="Search an Indian city, address, or landmark"
                     onChange={(event) => setQuery(event.target.value)}
                 />
                 {hits.length > 0 ? (
@@ -253,11 +270,7 @@ export function InstallationLocationEditor({ deviceId, installation, canEdit, or
                 </label>
                 <label>
                     Country
-                    <input
-                        value={form.country}
-                        disabled={!canEdit || saving}
-                        onChange={(event) => setForm((current) => ({ ...current, country: event.target.value }))}
-                    />
+                    <input value={hasCoords ? INDIA_COUNTRY_NAME : form.country} disabled readOnly />
                 </label>
                 <label>
                     Postal code

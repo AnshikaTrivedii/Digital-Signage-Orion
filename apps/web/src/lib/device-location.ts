@@ -59,8 +59,40 @@ export type GeocodeHit = {
     city: string | null;
     state: string | null;
     country: string | null;
+    countryCode?: string | null;
     postalCode: string | null;
 };
+
+/** ISO 3166-1 alpha-2. Must match API Nominatim `countrycodes`. */
+export const INDIA_COUNTRY_CODE = "in";
+export const INDIA_COUNTRY_NAME = "India";
+export const INDIA_LOCATION_REQUIRED_MESSAGE = "Please select a location in India.";
+
+export const INDIA_GEO_BOUNDS = {
+    minLat: 6.4,
+    maxLat: 37.2,
+    minLng: 67.9,
+    maxLng: 97.5,
+} as const;
+
+export function isWithinIndiaBounds(latitude: number, longitude: number): boolean {
+    return (
+        latitude >= INDIA_GEO_BOUNDS.minLat
+        && latitude <= INDIA_GEO_BOUNDS.maxLat
+        && longitude >= INDIA_GEO_BOUNDS.minLng
+        && longitude <= INDIA_GEO_BOUNDS.maxLng
+    );
+}
+
+export function isIndiaCountryCode(value?: string | null): boolean {
+    return value?.trim().toLowerCase() === INDIA_COUNTRY_CODE;
+}
+
+export function isIndiaGeocodeHit(hit: Pick<GeocodeHit, "latitude" | "longitude" | "country" | "countryCode">): boolean {
+    if (!isWithinIndiaBounds(hit.latitude, hit.longitude)) return false;
+    if (hit.countryCode) return isIndiaCountryCode(hit.countryCode);
+    return hit.country?.trim().toLowerCase() === "india";
+}
 
 export function formatRelativeAgo(value: string | null | undefined, now = Date.now()): string {
     if (!value) return "Never";

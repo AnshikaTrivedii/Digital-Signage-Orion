@@ -3,11 +3,18 @@ import { DeviceLocationSource, DeviceStatus, Prisma } from '@prisma/client';
 import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  applyIndiaNominatimSearchParams,
   canApplyDeviceGpsToInstallation,
   composeLocationLabel,
   hasInstallationCoordinates,
+  INDIA_COUNTRY_CODE,
+  INDIA_COUNTRY_NAME,
+  INDIA_LOCATION_REQUIRED_MESSAGE,
+  isIndiaCountryCode,
+  isIndiaCountryName,
   isOperatorConfirmedSource,
   isValidCoordinate,
+  isWithinIndiaBounds,
   locationSourceLabel,
   shouldAcceptGpsSample,
 } from './location.utils';
@@ -16,6 +23,7 @@ type NominatimSearchHit = {
   lat?: string;
   lon?: string;
   display_name?: string;
+  error?: string;
   address?: {
     road?: string;
     pedestrian?: string;
@@ -26,6 +34,7 @@ type NominatimSearchHit = {
     village?: string;
     state?: string;
     country?: string;
+    country_code?: string;
     postcode?: string;
   };
 };
@@ -184,6 +193,11 @@ export class DeviceLocationService {
     if (!isValidCoordinate(body)) {
       throw new BadRequestException('Valid latitude and longitude are required');
     }
+    this.assertIndiaCoordinates(body.latitude, body.longitude);
+    if (body.country && !isIndiaCountryName(body.country)) {
+      throw new BadRequestException(INDIA_LOCATION_REQUIRED_MESSAGE);
+    }
+    await this.reverseGeocode(body.latitude, body.longitude);
 
     const device = await this.prisma.device.findFirst({
       where: { id: deviceId, organizationId },
@@ -193,7 +207,7 @@ export class DeviceLocationService {
     const address = body.address?.trim() || null;
     const city = body.city?.trim() || null;
     const state = body.state?.trim() || null;
-    const country = body.country?.trim() || null;
+    const country = INDIA_COUNTRY_NAME;
     const postalCode = body.postalCode?.trim() || null;
     const label = composeLocationLabel({ address, city, state, country });
     const source = body.geocoded ? DeviceLocationSource.GEOCODED : DeviceLocationSource.ADMIN_ASSIGNED;
@@ -354,11 +368,9 @@ export class DeviceLocationService {
     const q = query.trim();
     if (q.length < 2) return [];
     const url = new URL(this.geocoderBase() + '/search');
-    url.searchParams.set('q', q);
-    url.searchParams.set('format', 'json');
-    url.searchParams.set('addressdetails', '1');
-    url.searchParams.set('limit', '6');
+    applyIndiaNominatimSearchParams(url, q);
     const hits = await this.fetchNominatim<NominatimSearchHit[]>(url);
+    if (!Array.isArray(hits)) return [];
     return hits
       .map((hit) => this.normalizeNominatim(hit))
       .filter((hit): hit is NonNullable<typeof hit> => hit != null);
@@ -368,13 +380,26 @@ export class DeviceLocationService {
     if (!isValidCoordinate({ latitude, longitude })) {
       throw new BadRequestException('Valid latitude and longitude are required');
     }
+    this.assertIndiaCoordinates(latitude, longitude);
     const url = new URL(this.geocoderBase() + '/reverse');
     url.searchParams.set('lat', String(latitude));
     url.searchParams.set('lon', String(longitude));
     url.searchParams.set('format', 'json');
     url.searchParams.set('addressdetails', '1');
+    url.searchParams.set('zoom', '18');
+    url.searchParams.set('accept-language', 'en-IN,en');
     const hit = await this.fetchNominatim<NominatimSearchHit>(url);
-    return this.normalizeNominatim(hit);
+    const normalized = this.normalizeNominatim(hit);
+    if (!normalized) {
+      throw new BadRequestException(INDIA_LOCATION_REQUIRED_MESSAGE);
+    }
+    return normalized;
+  }
+
+  private assertIndiaCoordinates(latitude: number, longitude: number) {
+    if (!isWithinIndiaBounds(latitude, longitude)) {
+      throw new BadRequestException(INDIA_LOCATION_REQUIRED_MESSAGE);
+    }
   }
 
   private geocoderBase() {
@@ -396,26 +421,32 @@ export class DeviceLocationService {
   }
 
   private normalizeNominatim(hit: NominatimSearchHit | null | undefined) {
-    const latitude = Number(hit?.lat);
-    const longitude = Number(hit?.lon);
+    if (!hit || hit.error) return null;
+    const latitude = Number(hit.lat);
+    const longitude = Number(hit.lon);
     if (!isValidCoordinate({ latitude, longitude })) return null;
-    const address = hit?.address;
+    if (!isWithinIndiaBounds(latitude, longitude)) return null;
+    if (!isIndiaCountryCode(hit.address?.country_code)) return null;
+    const address = hit.address;
     const line = [address?.road || address?.pedestrian, address?.neighbourhood || address?.suburb]
       .filter(Boolean)
       .join(', ');
+    const city = address?.city || address?.town || address?.village || null;
+    const state = address?.state || null;
     return {
       latitude,
       longitude,
-      label: hit?.display_name ?? composeLocationLabel({
+      label: hit.display_name ?? composeLocationLabel({
         address: line,
-        city: address?.city || address?.town || address?.village,
-        state: address?.state,
-        country: address?.country,
+        city,
+        state,
+        country: INDIA_COUNTRY_NAME,
       }),
       address: line || null,
-      city: address?.city || address?.town || address?.village || null,
-      state: address?.state || null,
-      country: address?.country || null,
+      city,
+      state,
+      country: INDIA_COUNTRY_NAME,
+      countryCode: INDIA_COUNTRY_CODE,
       postalCode: address?.postcode || null,
     };
   }
