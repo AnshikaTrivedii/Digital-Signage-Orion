@@ -207,7 +207,7 @@ function PlaylistAssetRow({
 export default function PlaylistBuilderPage() {
     const params = useParams();
     const router = useRouter();
-    const playlistId = params.id as string;
+    const playlistId = typeof params.id === "string" ? params.id : "";
     const { activeOrganizationId } = useAuth();
     const { canEdit } = useClientFeature("PLAYLISTS");
 

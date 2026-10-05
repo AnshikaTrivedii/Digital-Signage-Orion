@@ -4,6 +4,9 @@ node_modules/
 apps/*/node_modules/
 apps/*/.next/
 apps/*/dist/
+apps/*/out/
+infra/aws/cdk/cdk.out/
+infra/aws/cdk/dist/
 coverage/
 
 # Local-only scratch / legacy folders

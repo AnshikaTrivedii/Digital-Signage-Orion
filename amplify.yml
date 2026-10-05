@@ -1,0 +1,23 @@
+version: 1
+applications:
+  - appRoot: apps/web
+    frontend:
+      buildPath: /
+      phases:
+        preBuild:
+          commands:
+            - nvm use 22 || true
+            - npm ci
+            - bash infra/aws/scripts/prepare-amplify-compute.sh pre
+        build:
+          commands:
+            - npm run build:amplify --workspace @orion/web
+            - bash infra/aws/scripts/prepare-amplify-compute.sh post
+      artifacts:
+        baseDirectory: apps/web/.next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - apps/web/.next/cache/**/*

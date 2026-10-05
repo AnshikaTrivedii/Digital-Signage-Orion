@@ -10,10 +10,14 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CacheReportDto } from '../player/dto/cache-report.dto';
+import { MetricsService } from '../observability/metrics.service';
 
 @Injectable()
 export class DeviceCacheService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   async ingestCacheReport(deviceId: string, organizationId: string, report: CacheReportDto) {
     const device = await this.prisma.device.findFirst({
@@ -67,6 +71,12 @@ export class DeviceCacheService {
       });
 
       if (assets.length) {
+        const failedDownloads = assets.filter(
+          (asset) => this.parseDownloadStatus(asset.downloadStatus) === DeviceCacheDownloadStatus.FAILED,
+        ).length;
+        if (failedDownloads > 0) {
+          this.metrics.increment('MediaDownloadFailures', failedDownloads);
+        }
         const maxDownloadedAt = assets
           .map((a) => (a.downloadedAt ? new Date(a.downloadedAt).getTime() : 0))
           .reduce((max, t) => Math.max(max, t), 0);
