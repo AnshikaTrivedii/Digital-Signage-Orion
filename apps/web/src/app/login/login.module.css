@@ -90,9 +90,9 @@
 .cardLogo {
   display: block;
   overflow: hidden;
-  border-radius: 22px;
-  background: #b3b3b3;
-  box-shadow: 0 16px 40px hsl(0 0% 0% / 0.28);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 12px 32px hsl(0 0% 0% / 0.22);
 }
 
 .logoWrap img,

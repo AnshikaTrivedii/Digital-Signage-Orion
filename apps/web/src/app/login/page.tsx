@@ -182,7 +182,7 @@ export default function LoginPage() {
                 <div className={styles.panelGlow} aria-hidden="true" />
                 <div className={styles.card} id="login-form" data-testid="login-card">
                     <span className={styles.cardLogo}>
-                        <OrionLogo height={88} priority />
+                        <OrionLogo height={112} priority />
                     </span>
                     <p className={styles.cardKicker}>Secure access</p>
                     <h2 className={styles.heading}>Welcome back</h2>
