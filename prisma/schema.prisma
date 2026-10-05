@@ -83,6 +83,16 @@ enum DeviceStatus {
   WARNING
 }
 
+/// How the screen's installation coordinates were obtained.
+/// ADMIN_ASSIGNED / GEOCODED / MANUAL are operator-confirmed and must not be
+/// overwritten by later GPS reports unless allowDeviceLocationUpdates is true.
+enum DeviceLocationSource {
+  DEVICE_GPS
+  ADMIN_ASSIGNED
+  GEOCODED
+  MANUAL
+}
+
 enum DeviceCacheDownloadStatus {
   DOWNLOADED
   PENDING
@@ -376,6 +386,7 @@ model Device {
   organizationId           String?
   name                     String
   status                   DeviceStatus @default(OFFLINE)
+  /// Display label for the site (not coordinates). Map markers use installLatitude/Longitude.
   location                 String       @default("Pending")
   ip                       String       @default("Pending")
   resolution               String       @default("1920x1080")
@@ -489,6 +500,25 @@ model Device {
   lastScreenshotUrl String?
   lastScreenshotAt  DateTime?
 
+  /// Installation coordinates for the CMS map. Never inferred from IP.
+  installLatitude            Float?
+  installLongitude           Float?
+  installAddress             String?
+  installCity                String?
+  installState               String?
+  installCountry             String?
+  installPostalCode          String?
+  locationUpdatedAt          DateTime?
+  locationSource             DeviceLocationSource?
+  locationAccuracyMeters     Float?
+  allowDeviceLocationUpdates Boolean               @default(false)
+
+  /// Last GNSS report from the player. Telemetry only — not the dashboard marker.
+  lastGpsLatitude        Float?
+  lastGpsLongitude       Float?
+  lastGpsAccuracyMeters  Float?
+  lastGpsAt              DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -505,6 +535,7 @@ model Device {
   @@index([organizationId, createdAt])
   @@index([organizationId, currentPlaylistId])
   @@index([organizationId, currentLayoutId])
+  @@index([organizationId, installLatitude, installLongitude])
 }
 
 model Ticker {

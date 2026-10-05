@@ -40,7 +40,7 @@ export default function Sidebar({ isOpen, close }: { isOpen: boolean, close: () 
             {/* Brand */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32, marginTop: 8, paddingLeft: 4 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <OrionLogo height={88} />
+                    <OrionLogo height={92} />
                 </div>
                 <button className="mobile-only btn-icon-soft" onClick={close}>
                     <X size={20} />

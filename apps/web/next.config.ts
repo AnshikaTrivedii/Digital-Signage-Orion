@@ -9,6 +9,7 @@ const repoRoot = path.join(__dirname, "../..");
 
 const nextConfig: NextConfig = {
   turbopack: {
+    // Monorepo root so hoisted deps such as leaflet resolve under Next.js.
     root: repoRoot,
   },
   outputFileTracingRoot: repoRoot,

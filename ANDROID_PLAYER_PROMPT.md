@@ -55,6 +55,7 @@ Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `
     *   Queue playback logs locally using **Room Database**: which asset played, when, and whether it succeeded.
     *   Sync PoP logs to the backend via `POST /api/player/pop-logs` every 5 minutes.
     *   Send heartbeats via `POST /api/player/heartbeat` every 60 seconds with CPU%, RAM%, temperature, and the currently playing asset name.
+    *   **Installation GPS (optional, hardware-dependent):** If the player has a location provider and runtime permission, obtain one fused-location fix after pairing using Android's standard location APIs (`FusedLocationProviderClient` / `LocationManager`). Call `POST /api/player/location` with `latitude` + `longitude`. Repeat only when the device moves ~50m **and** at least 15 minutes have passed. Never invent coordinates. Never use IP geolocation. If `heartbeat.locationPolicy.installationLocked` is true, do not try to overwrite the CMS installation pin.
 
 **Please start by doing the following:**
 1. Generate the foundational project structure (Gradle configuration, manifest permissions for Boot/Internet/Wake Lock).
@@ -237,6 +238,33 @@ Log.i("Playback", "asset=${asset.name} type=${asset.type} appliedDuration=${reso
 4. Log: `playlistId=… previousVersion=… newVersion=… assetCount=… rebuiltLoop=true`.
 
 ---
+
+## Part 1F: Optional installation GPS (September 2026)
+
+> Hand this to an existing Android player chat. The CMS dashboard map shows **installation location**, not live tracking.
+
+---
+**Copy from here:**
+
+**Objective:** If the Orion player hardware supports location services, report a real GPS fix so the CMS can place the screen on the installation map. If GPS is unavailable, do nothing — an administrator will assign the site in Device Details.
+
+**Rules:**
+1. Use Android's standard location APIs (`FusedLocationProviderClient` preferred). Request runtime permission only if the hardware has a location provider.
+2. Never invent coordinates. Never use public IP / ISP / network geolocation as the installation location.
+3. After pairing (and once permission is granted), send one `POST /api/player/location` with `latitude`, `longitude`, and optional `accuracyMeters`.
+4. After that, report again only when the device has moved at least 50 meters **and** at least 15 minutes have passed.
+5. Honor `locationPolicy` on heartbeat:
+   - `installationLocked: true` → do not try to overwrite CMS coordinates.
+   - `allowDeviceLocationUpdates: false` → GPS is telemetry only.
+6. Do not send lat/lng on every heartbeat.
+
+**Endpoint:** `POST /api/player/location`  
+Authorization: `Bearer <deviceToken>`
+
+---
+**End Copy**
+
+---
 **End Copy**
 
 ---
@@ -353,6 +381,59 @@ Send device health telemetry. Call every ~60 seconds.
 - `syncIntervalSeconds`: fallback full manifest poll interval (default **600s / 10 min**). Not the primary change-detection path.
 - `initialSyncPending`: `true` for freshly paired devices that have not completed their first successful sync.
 - `command` / `commandId`: optional cache command (`FORCE_SYNC`, `CLEAR_CACHE`, `REDOWNLOAD_PLAYLIST`). Execute immediately — do not wait for the next periodic sync timer.
+
+Heartbeat also returns `locationPolicy`:
+
+```json
+{
+  "allowDeviceLocationUpdates": false,
+  "hasInstallationLocation": true,
+  "locationSource": "ADMIN_ASSIGNED",
+  "installationLocked": true
+}
+```
+
+If `installationLocked` is `true`, do **not** send GPS to overwrite the CMS installation location.
+
+---
+
+#### `POST /api/player/location`
+
+Report GNSS coordinates from the Android player. Authenticated with the device token.
+
+**Only call this when:**
+
+1. The device has location hardware **and** runtime permission (`ACCESS_FINE_LOCATION` or `ACCESS_COARSE_LOCATION`).
+2. You have a real GPS/fused-location fix. **Never** send IP geolocation.
+3. This is first pairing/setup, **or** the device has moved at least ~50 meters **and** at least 15 minutes have passed since the last successful report.
+
+Do **not** attach coordinates to every 60s heartbeat. Stationary signage should rarely report.
+
+**Request:**
+```json
+{
+  "latitude": 26.8467,
+  "longitude": 80.9462,
+  "accuracyMeters": 12.4,
+  "capturedAt": "2026-09-22T06:40:00.000Z"
+}
+```
+
+Optional address fields (`address`, `city`, `state`, `country`, `postalCode`) may be included if Android reverse-geocoded the fix. They never replace an admin-assigned installation unless `allowDeviceLocationUpdates` is true.
+
+**Response (200):**
+```json
+{
+  "accepted": true,
+  "reason": "FIRST",
+  "appliedToInstallation": true,
+  "locationSource": "DEVICE_GPS",
+  "allowDeviceLocationUpdates": false
+}
+```
+
+- `accepted: false` with `reason: "UNCHANGED"` or `"TOO_FREQUENT"` means the server dropped a noisy/frequent sample. That is expected.
+- `appliedToInstallation: false` means the CMS already has an operator-confirmed site. Keep reporting last GPS only if policy allows; the dashboard map will **not** move.
 
 ---
 
@@ -961,6 +1042,12 @@ interface OrionPlayerApi {
         @Body body: HeartbeatRequest
     ): HeartbeatResponse
 
+    @POST("player/location")
+    suspend fun reportLocation(
+        @Header("Authorization") token: String,
+        @Body body: PlayerLocationRequest
+    ): PlayerLocationResponse
+
     @GET("player/sync-revision")
     suspend fun getSyncRevision(
         @Header("Authorization") token: String
@@ -1011,6 +1098,24 @@ data class HeartbeatRequest(
     val ram: Int,
     val temp: Int,
     val currentContent: String? = null
+)
+data class PlayerLocationRequest(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Double? = null,
+    val capturedAt: String? = null,
+    val address: String? = null,
+    val city: String? = null,
+    val state: String? = null,
+    val country: String? = null,
+    val postalCode: String? = null
+)
+data class PlayerLocationResponse(
+    val accepted: Boolean,
+    val reason: String,
+    val appliedToInstallation: Boolean,
+    val locationSource: String? = null,
+    val allowDeviceLocationUpdates: Boolean = false
 )
 data class HeartbeatResponse(
     val status: String,

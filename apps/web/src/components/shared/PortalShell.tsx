@@ -205,9 +205,9 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
             <aside className={`app-sidebar ${isSidebarOpen ? "open" : ""} ${isDesktopSidebarCollapsed ? "collapsed" : ""}`}>
                 <div className="app-sidebar-inner">
                     <div className="sidebar-brand-row">
-                        <Link href={homePath} className="sidebar-brand" title="Orion CMS">
+                        <Link href={homePath} className="sidebar-brand" title="Spectra">
                             <span className="sidebar-brand-logo">
-                                <OrionLogo height={isDesktopSidebarCollapsed ? 40 : 80} priority />
+                                <OrionLogo height={isDesktopSidebarCollapsed ? 52 : 92} mark={isDesktopSidebarCollapsed} priority />
                             </span>
                             {!isDesktopSidebarCollapsed && (
                                 <span className="sidebar-brand-copy">

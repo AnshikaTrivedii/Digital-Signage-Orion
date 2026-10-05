@@ -4,9 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { toast } from "react-hot-toast";
 import {
-    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2, Timer, Type,
+    X, Clock, ListVideo, Monitor, Pencil, Unplug, Trash2, Timer, Type, MapPin,
 } from "lucide-react";
 import { apiRequest, ApiError } from "@/lib/api";
+import type { DeviceInstallation } from "@/lib/device-location";
+import { InstallationLocationEditor } from "@/components/maps/InstallationLocationEditor";
 
 const DEFAULT_IMAGE_DURATION = 10;
 const DEFAULT_VIDEO_DURATION = 10;
@@ -45,6 +47,7 @@ interface Device {
     currentPlaylist?: string;
     lastScreenshotUrl?: string | null;
     lastScreenshotAt?: string | null;
+    installation?: DeviceInstallation | null;
     cache?: {
         cachedAssetCount: number;
         expectedAssetCount: number;
@@ -563,6 +566,25 @@ export function DeviceDetailPanel({
                         </div>
                     </section>
 
+                    <section className="device-detail-card device-detail-card-span">
+                        <div className="device-detail-row-between" style={{ marginBottom: 12 }}>
+                            <div>
+                                <p className="device-detail-label" style={{ marginBottom: 4 }}>Installation Location</p>
+                                <p className="device-detail-hint">
+                                    Exact site coordinates used on the dashboard map. GPS reports cannot overwrite an admin-assigned location unless you allow it.
+                                </p>
+                            </div>
+                            <MapPin size={18} className="device-detail-value-icon" />
+                        </div>
+                        <InstallationLocationEditor
+                            deviceId={device.id}
+                            installation={device.installation}
+                            canEdit={canEdit}
+                            orgHeaders={orgHeaders}
+                            onSaved={(updated) => onDeviceUpdated(updated as Device)}
+                        />
+                    </section>
+
                     {/* Tickers */}
                     <section className="device-detail-card device-detail-card-span">
                         <div className="device-detail-row-between" style={{ marginBottom: 12 }}>
@@ -854,7 +876,7 @@ export function DeviceDetailPanel({
                 }
                 .device-detail-panel {
                     width: 100%;
-                    max-width: 560px;
+                    max-width: 640px;
                     max-height: min(92vh, 900px);
                     overflow: auto;
                     padding: 28px;

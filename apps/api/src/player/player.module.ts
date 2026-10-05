@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { DeviceCacheModule } from '../device-cache/device-cache.module';
+import { DeviceLocationModule } from '../device-location/device-location.module';
 import { DeviceManagementModule } from '../device-management/device-management.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { S3Module } from '../s3/s3.module';
@@ -9,7 +10,7 @@ import { PlayerService } from './player.service';
 import { PopLogQueueService } from './pop-log-queue.service';
 
 @Module({
-  imports: [PrismaModule, S3Module, DeviceCacheModule, DeviceManagementModule, SchedulingModule],
+  imports: [PrismaModule, S3Module, DeviceCacheModule, DeviceManagementModule, DeviceLocationModule, SchedulingModule],
   controllers: [PlayerController],
   providers: [PlayerService, PopLogQueueService],
 })

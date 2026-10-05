@@ -144,29 +144,35 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
 }
 .sidebar-brand-logo {
-  width: 80px;
-  height: 80px;
-  border-radius: 16px;
+  width: auto;
+  height: auto;
+  max-width: 240px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex-shrink: 1;
   overflow: hidden;
-  background: #b3b3b3;
-  border: 1px solid hsla(var(--border-subtle), 0.35);
+  background: #fff;
+  padding: 6px 8px;
 }
 .sidebar-brand-logo img {
-  width: 80px !important;
-  height: 80px !important;
+  width: auto !important;
+  height: 92px !important;
+  max-width: 220px;
   object-fit: contain;
 }
 .app-sidebar.collapsed .sidebar-brand-logo {
-  width: 40px;
-  height: 40px;
+  width: 60px;
+  height: 60px;
+  max-width: 60px;
+  padding: 4px;
+  border-radius: 12px;
 }
 .app-sidebar.collapsed .sidebar-brand-logo img {
-  width: 40px !important;
-  height: 40px !important;
+  width: auto !important;
+  height: 52px !important;
+  max-width: 52px;
 }
 .sidebar-brand-copy {
   display: flex;
