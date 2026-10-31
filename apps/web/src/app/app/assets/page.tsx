@@ -13,7 +13,7 @@ import { toast } from "react-hot-toast";
 import { ReadOnlyNotice } from "@/components/shared/ReadOnlyNotice";
 import { useClientFeature } from "@/lib/permissions/use-client-feature";
 import { useAuth } from "@/components/AuthProvider";
-import { API_BASE, apiRequest } from "@/lib/api";
+import { API_BASE, ApiError, apiRequest } from "@/lib/api";
 import { AUTH_TOKEN_STORAGE_KEY } from "@/lib/auth-storage";
 import { ASSET_UPLOAD_ACCEPT, resolveFileMimeType, SUPPORTED_UPLOAD_LABEL } from "@/lib/asset-media";
 import { AssetPreview, AssetTypeIcon } from "@/components/assets/AssetPreview";
@@ -504,8 +504,11 @@ export default function AssetsPage() {
             setIsUrlModalOpen(false);
             setUrlForm({ name: "", url: "", durationSeconds: "15" });
             toast.success("URL asset created");
-        } catch {
-            toast.error("Failed to create URL asset");
+        } catch (error) {
+            const message = error instanceof ApiError
+                ? error.message
+                : "Failed to create URL asset";
+            toast.error(message || "Failed to create URL asset");
         } finally {
             setIsCreatingUrl(false);
         }

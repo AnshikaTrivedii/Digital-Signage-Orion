@@ -523,9 +523,15 @@ export class OrionEnvironmentStack extends Stack {
               name: 'AWSManagedRulesCommonRuleSet',
               // Default CRS SizeRestrictions_BODY blocks >8KB. Player PoP flushes
               // are ~16KB (50 logs), so they never reached Nest (ALB 403 HTML).
+              // GenericRFI_BODY blocks any JSON body containing "://", which breaks
+              // CMS "Add URL Asset" (e.g. http://65.x.x.x/stations) with ALB 403.
               ruleActionOverrides: [
                 {
                   name: 'SizeRestrictions_BODY',
+                  actionToUse: { count: {} },
+                },
+                {
+                  name: 'GenericRFI_BODY',
                   actionToUse: { count: {} },
                 },
               ],

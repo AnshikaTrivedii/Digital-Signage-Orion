@@ -6,7 +6,8 @@ export class CreateUrlAssetDto {
   @MaxLength(200)
   name!: string;
 
-  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
+  // require_tld: false so IP hosts (http://65.1.81.209/stations) validate.
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'], require_tld: false })
   url!: string;
 
   @IsOptional()
