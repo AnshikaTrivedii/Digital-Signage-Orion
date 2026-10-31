@@ -1,5 +1,2 @@
-/**
- * Temporary product flags. Set to true to re-enable hidden features.
- * Layout Designer code and API routes remain in the repo — only CMS access is gated.
- */
-export const LAYOUT_DESIGNER_ENABLED = false;
+/** Product visibility for the Canvas layout designer. */
+export const LAYOUT_DESIGNER_ENABLED = true;

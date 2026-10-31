@@ -169,7 +169,7 @@ export class DeviceCacheService {
     }
 
     if (report.layoutVersion != null) {
-      const layoutId = report.currentLayoutId ?? device.currentLayoutId;
+      const layoutId = report.currentLayoutId === device.currentLayoutId ? device.currentLayoutId : null;
       if (layoutId) {
         const layout = await tx.layout.findFirst({
           where: { id: layoutId },
@@ -208,6 +208,7 @@ export class DeviceCacheService {
       data: {
         lastAckedPlaylistVersion: playlist.syncVersion,
         lastAckedPlaylistId: playlist.id,
+        lastAckedLayoutVersion: null,
         ...(device.pendingInitialSync
           ? { pendingInitialSync: false, initialSyncRequestedAt: null }
           : {}),

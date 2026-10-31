@@ -208,6 +208,7 @@ export class AssetsService {
     });
 
     await this.playlistSync.bumpPlaylistsForAsset(assetId);
+    await this.playlistSync.bumpLayoutsForAsset(assetId);
 
     await this.auditService.log({
       actorUserId: actor.userId,
@@ -322,6 +323,11 @@ export class AssetsService {
       throw new NotFoundException('Asset not found');
     }
 
+    const [playlistLinks, layoutZones] = await Promise.all([
+      this.prisma.playlistAsset.findMany({ where: { assetId }, select: { playlistId: true } }),
+      this.prisma.layoutZone.findMany({ where: { assetId }, select: { layoutId: true } }),
+    ]);
+
     // Delete from S3 first
     if (asset.s3Key) {
       try {
@@ -331,10 +337,14 @@ export class AssetsService {
       }
     }
 
-    // Bump playlists that reference this asset
-    await this.playlistSync.bumpPlaylistsForAsset(assetId);
-
     await this.prisma.asset.delete({ where: { id: assetId } });
+
+    for (const playlistId of new Set(playlistLinks.map((link) => link.playlistId))) {
+      await this.playlistSync.bumpPlaylist(playlistId, 'asset-deleted');
+    }
+    for (const layoutId of new Set(layoutZones.map((zone) => zone.layoutId))) {
+      await this.playlistSync.bumpLayout(layoutId, 'asset-deleted');
+    }
 
     await this.auditService.log({
       actorUserId: actor.userId,
@@ -411,8 +421,9 @@ export class AssetsService {
       data,
     });
 
-    if (dto.defaultDurationSeconds !== undefined) {
+    if (dto.name !== undefined || dto.defaultDurationSeconds !== undefined) {
       await this.playlistSync.bumpPlaylistsForAsset(assetId);
+      await this.playlistSync.bumpLayoutsForAsset(assetId);
     }
 
     await this.auditService.log({

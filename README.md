@@ -10,6 +10,8 @@ The Android player has been prepared as a separate standalone folder at:
 
 ## Commands
 
+For an isolated PostgreSQL and S3-compatible setup to test Canvas layouts and player media sync, see [the local test stack guide](docs/LOCAL_TEST_STACK.md).
+
 Run these from `/Users/aman/Documents/Coding/Digital-Signage-Orion`.
 
 ```bash

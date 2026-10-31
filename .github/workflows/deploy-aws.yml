@@ -52,6 +52,7 @@ jobs:
           MEDIA_CERTIFICATE_ARN: ${{ vars.MEDIA_CERTIFICATE_ARN }}
           CLOUDFRONT_PUBLIC_KEY: ${{ secrets.CLOUDFRONT_PUBLIC_KEY }}
           AMPLIFY_GITHUB_TOKEN: ${{ secrets.AMPLIFY_GITHUB_TOKEN }}
+          PLAYER_RELEASE_CERT_SHA256: ${{ vars.PLAYER_RELEASE_CERT_SHA256 }}
         run: |
           if [[ -z "${AMPLIFY_GITHUB_TOKEN:-}" ]]; then
             echo "::error::Set GitHub environment secret AMPLIFY_GITHUB_TOKEN (see infra/aws/README.md)"
@@ -71,6 +72,7 @@ jobs:
             "${CONTEXT_ARGS[@]}" \
             --parameters CloudFrontPublicKey="$CLOUDFRONT_PUBLIC_KEY" \
             --parameters AmplifyGithubToken="$AMPLIFY_GITHUB_TOKEN" \
+            --parameters PlayerReleaseCertSha256="$PLAYER_RELEASE_CERT_SHA256" \
             --parameters GitHubOwner="${GITHUB_REPOSITORY_OWNER}" \
             --parameters GitHubRepo="${GITHUB_REPOSITORY#*/}"
 

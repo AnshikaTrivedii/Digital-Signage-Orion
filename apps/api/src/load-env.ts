@@ -14,6 +14,17 @@ import { dirname, resolve } from 'path';
 // In production (e.g. Render) there is typically no .env file, so platform-provided
 // environment variables are left untouched.
 function loadEnv() {
+  // Local stack commands pass an explicit, ignored file. Honor it before any
+  // nearest .env so development cannot silently use a remote database.
+  if (process.env.ORION_ENV_FILE) {
+    const explicitPath = resolve(process.env.ORION_ENV_FILE);
+    if (!existsSync(explicitPath)) {
+      throw new Error(`ORION_ENV_FILE does not exist: ${explicitPath}`);
+    }
+    dotenv.config({ path: explicitPath, override: true });
+    return;
+  }
+
   let dir = process.cwd();
   for (let depth = 0; depth < 6; depth += 1) {
     const candidate = resolve(dir, '.env');

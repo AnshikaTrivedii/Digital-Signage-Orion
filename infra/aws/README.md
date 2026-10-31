@@ -60,6 +60,7 @@ In GitHub → **Settings → Environments → production**:
 **Required**
 
 - Variable `AWS_DEPLOY_ROLE_ARN`
+- Variable `PLAYER_RELEASE_CERT_SHA256` = SHA-256 fingerprint of the production Android signing certificate (the output of `apksigner verify --print-certs player-release.apk`)
 - Secret `CLOUDFRONT_PUBLIC_KEY` = contents of `cloudfront-public-key.pem`
 - Secret `AMPLIFY_GITHUB_TOKEN` = GitHub PAT for the Amplify GitHub App
 
@@ -117,6 +118,11 @@ curl -X POST "$API_URL/api/auth/bootstrap/super-admin" \
 ```
 
 Point the Android player at `ApiUrl`.
+
+For automatic player updates, install one bootstrap APK with the updater on every fully managed
+device-owner display. Upload later APKs from Platform → Player releases. The API verifies the
+package name, increasing version code, APK signature, and configured production certificate
+before a super admin can activate a release. APKs must use the same signing key and package ID.
 
 ### 6. When you get a domain later
 

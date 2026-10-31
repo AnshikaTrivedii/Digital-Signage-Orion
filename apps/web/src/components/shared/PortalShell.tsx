@@ -77,7 +77,7 @@ export function PortalShell({ children, portal, navItems }: PortalShellProps) {
         : true;
     const visibleNavItems = portal === "client"
         ? navItems.filter((item) => !item.featureKey || hasClientFeatureAccess(item.featureKey, item.requiredAccess))
-        : navItems;
+        : navItems.filter((item) => !item.platformRoles || item.platformRoles.includes(user?.platformRole as "SUPER_ADMIN" | "PLATFORM_ADMIN" | "SALES" | "SUPPORT"));
     const filteredNavItems = useMemo(() => {
         const query = navQuery.trim().toLowerCase();
         if (!query) return visibleNavItems;

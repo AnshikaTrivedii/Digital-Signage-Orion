@@ -124,6 +124,28 @@ export class PlaylistSyncService {
     await this.notifyDevicesForceSync(before.organizationId, affectedDeviceIds);
   }
 
+  /** A layout save already incremented its version in the zone transaction. */
+  async notifyLayoutChanged(layoutId: string): Promise<void> {
+    const layout = await this.prisma.layout.findUnique({
+      where: { id: layoutId },
+      select: { organizationId: true },
+    });
+    if (!layout) return;
+    const deviceIds = await this.resolveDevicesAffectedByLayouts([layoutId]);
+    await this.clearLayoutAcks(deviceIds);
+    await this.notifyDevicesForceSync(layout.organizationId, deviceIds);
+  }
+
+  async bumpLayoutsForAsset(assetId: string): Promise<void> {
+    const zones = await this.prisma.layoutZone.findMany({
+      where: { assetId },
+      select: { layoutId: true },
+    });
+    for (const layoutId of new Set(zones.map((zone) => zone.layoutId))) {
+      await this.bumpLayout(layoutId, 'asset-changed');
+    }
+  }
+
   async bumpLayoutsForPlaylists(playlistIds: string[]): Promise<void> {
     if (!playlistIds.length) return;
     const zones = await this.prisma.layoutZone.findMany({

@@ -149,6 +149,20 @@ export class HeartbeatDto {
   playerVersion?: string;
 
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  playerVersionCode?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  deviceOwner?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  silentUpdateCapable?: boolean;
+
+  @IsOptional()
   @IsString()
   deviceModel?: string;
 

@@ -257,7 +257,18 @@ export class DeviceManagementService {
       defaultUrlDuration?: number;
     },
   ) {
-    await this.findDevice(deviceId, organizationId);
+    const device = await this.findDevice(deviceId, organizationId);
+
+    if (body.orientation && device.currentLayoutId) {
+      const layout = await this.prisma.layout.findUnique({
+        where: { id: device.currentLayoutId },
+        select: { resolution: true },
+      });
+      const layoutOrientation = layout?.resolution === 'PORTRAIT' ? 'PORTRAIT' : 'LANDSCAPE';
+      if (layout && this.normalizeOrientation(body.orientation) !== layoutOrientation) {
+        throw new BadRequestException('Device orientation must match its assigned layout');
+      }
+    }
 
     const data: Prisma.DeviceUpdateInput = { configVersion: { increment: 1 } };
     if (typeof body.orientation === 'string') {
@@ -559,6 +570,9 @@ export class DeviceManagementService {
       data.os = report.androidVersion;
     }
     if (report.playerVersion !== undefined) data.playerVersion = report.playerVersion;
+    if (report.playerVersionCode !== undefined) data.playerVersionCode = report.playerVersionCode;
+    if (report.deviceOwner !== undefined) data.deviceOwner = report.deviceOwner;
+    if (report.silentUpdateCapable !== undefined) data.silentUpdateCapable = report.silentUpdateCapable;
     if (report.deviceModel !== undefined) data.deviceModel = report.deviceModel;
     if (report.manufacturer !== undefined) data.manufacturer = report.manufacturer;
     // Display name is CMS-managed (Devices → Edit). Do not overwrite from
@@ -672,6 +686,9 @@ export type DeviceTelemetryReport = {
   timezone?: string;
   androidVersion?: string;
   playerVersion?: string;
+  playerVersionCode?: number;
+  deviceOwner?: boolean;
+  silentUpdateCapable?: boolean;
   deviceModel?: string;
   manufacturer?: string;
   deviceName?: string;
