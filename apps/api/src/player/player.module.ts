@@ -5,12 +5,13 @@ import { DeviceManagementModule } from '../device-management/device-management.m
 import { PrismaModule } from '../prisma/prisma.module';
 import { S3Module } from '../s3/s3.module';
 import { SchedulingModule } from '../scheduling/scheduling.module';
+import { PlayerReleaseModule } from '../player-release/player-release.module';
 import { PlayerController } from './player.controller';
 import { PlayerService } from './player.service';
 import { PopLogQueueService } from './pop-log-queue.service';
 
 @Module({
-  imports: [PrismaModule, S3Module, DeviceCacheModule, DeviceManagementModule, DeviceLocationModule, SchedulingModule],
+  imports: [PrismaModule, S3Module, DeviceCacheModule, DeviceManagementModule, DeviceLocationModule, SchedulingModule, PlayerReleaseModule],
   controllers: [PlayerController],
   providers: [PlayerService, PopLogQueueService],
 })

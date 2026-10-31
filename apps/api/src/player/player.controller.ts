@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, Post, Query, UsePipes, ValidationPipe } from '@nestjs/common';
 import { CacheReportDto } from './dto/cache-report.dto';
+import { AppUpdateStatusDto } from './dto/app-update-status.dto';
 import { DeviceReportDto, SubmitSystemLogsDto } from './dto/device-report.dto';
 import { InitPairingDto } from './dto/init-pairing.dto';
 import { HeartbeatDto } from './dto/heartbeat.dto';
@@ -65,6 +66,20 @@ export class PlayerController {
     @Body() body: HeartbeatDto,
   ) {
     return this.playerService.heartbeat(authHeader, body);
+  }
+
+  @Get('app-update')
+  appUpdate(@Headers('authorization') authHeader: string | undefined) {
+    return this.playerService.getAppUpdate(authHeader);
+  }
+
+  @Post('app-update-status')
+  @UsePipes(playerValidationPipe)
+  appUpdateStatus(
+    @Headers('authorization') authHeader: string | undefined,
+    @Body() body: AppUpdateStatusDto,
+  ) {
+    return this.playerService.reportAppUpdate(authHeader, body);
   }
 
   /**

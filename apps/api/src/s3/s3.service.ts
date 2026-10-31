@@ -8,8 +8,10 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl as getS3SignedUrl } from '@aws-sdk/s3-request-presigner';
 import { getSignedUrl as getCloudFrontSignedUrl } from '@aws-sdk/cloudfront-signer';
-import { readFileSync } from 'fs';
-import { mkdir, stat, unlink, writeFile } from 'fs/promises';
+import { createReadStream, createWriteStream, readFileSync } from 'fs';
+import { copyFile, mkdir, stat, unlink, writeFile } from 'fs/promises';
+import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 import { dirname, join, resolve } from 'path';
 
 @Injectable()
@@ -29,6 +31,11 @@ export class S3Service {
 
     if (process.env.S3_ENDPOINT) {
       config.endpoint = process.env.S3_ENDPOINT;
+      // Local S3 emulators do not consistently decode the SDK's optional
+      // aws-chunked checksum trailer and may persist framing bytes as object data.
+      // Real S3 handles it, but local verification must publish byte-identical APKs.
+      config.requestChecksumCalculation = 'WHEN_REQUIRED';
+      config.responseChecksumValidation = 'WHEN_REQUIRED';
     }
 
     if (process.env.S3_FORCE_PATH_STYLE === 'true') {
@@ -75,6 +82,30 @@ export class S3Service {
   buildAssetKey(organizationId: string, assetId: string, filename: string): string {
     const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     return `${organizationId}/assets/${assetId}/${sanitized}`;
+  }
+
+  async downloadObjectToFile(key: string, destination: string): Promise<void> {
+    if (this.useLocalStorage) {
+      await copyFile(this.localPath(key), destination);
+      return;
+    }
+    const response = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (!response.Body) throw new Error('S3 object has no body');
+    await pipeline(response.Body as Readable, createWriteStream(destination));
+  }
+
+  /** Publish the exact local bytes that passed server-side APK verification. */
+  async uploadVerifiedFile(key: string, sourcePath: string, sizeBytes: number): Promise<void> {
+    if (this.useLocalStorage) {
+      const target = this.localPath(key);
+      await mkdir(dirname(target), { recursive: true });
+      await copyFile(sourcePath, target);
+      return;
+    }
+    await this.client.send(new PutObjectCommand({
+      Bucket: this.bucket, Key: key, Body: createReadStream(sourcePath),
+      ContentLength: sizeBytes, ContentType: 'application/vnd.android.package-archive',
+    }));
   }
 
   buildLocalUploadUrl(organizationId: string, assetId: string): string {

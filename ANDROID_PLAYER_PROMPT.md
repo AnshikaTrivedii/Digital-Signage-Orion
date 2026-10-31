@@ -17,6 +17,8 @@ Build a robust, kiosk-mode Android application for a Digital Signage system ("Di
 **Context:**
 Our platform has a backend (NestJS) that manages `Organizations`, `Playlists`, `Layouts` (multi-zone screen designs), `Assets` (Images, Videos, Documents, URLs), and `Tickers` (scrolling text overlays). The backend API is already fully implemented and documented in detail below. The Android player will consume these APIs.
 
+For the current Canvas layout rollout, use the focused copy-paste handoff in [`ANDROID_LAYOUT_PLAYER_PROMPT.md`](ANDROID_LAYOUT_PLAYER_PROMPT.md). It covers layout fetch, caching, display geometry, zone playback, and mode transitions.
+
 > **Note (architecture):** There is **no "Campaign" layer**. Playlists link **directly** to assets (`Playlist → PlaylistAsset → Asset`). A device can play either a **full-screen playlist** OR a **multi-zone layout** assigned from the CMS Layout Designer. When a layout is assigned, `/sync` returns zone geometry + per-zone content instead of a single full-screen playlist.
 
 **Core Requirements:**

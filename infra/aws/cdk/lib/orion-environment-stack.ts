@@ -46,6 +46,11 @@ export class OrionEnvironmentStack extends Stack {
       description:
         'GitHub PAT for the Amplify GitHub App (repo + admin:repo_hook). Connects orion-dashboard-ssr to this repository.',
     });
+    const playerReleaseCertSha256 = new cdk.CfnParameter(this, 'PlayerReleaseCertSha256', {
+      type: 'String',
+      default: '',
+      description: 'SHA-256 fingerprint of the Android production signing certificate.',
+    });
     const githubOwner = new cdk.CfnParameter(this, 'GitHubOwner', {
       type: 'String',
       default: String(this.node.tryGetContext('githubOwner') ?? 'AnshikaTrivedii'),
@@ -383,6 +388,12 @@ export class OrionEnvironmentStack extends Stack {
       `https://${dashboardBranch}.${webApp.attrDefaultDomain}`,
     ];
     if (rootDomain) dashboardOrigins.push(`https://app.${rootDomain}`);
+    mediaBucket.addCorsRule({
+      allowedOrigins: dashboardOrigins,
+      allowedMethods: [s3.HttpMethods.PUT],
+      allowedHeaders: ['*'],
+      maxAge: 600,
+    });
 
     const apiAsg = this.createServiceAsg({
       id: 'ApiAsg',
@@ -403,6 +414,7 @@ export class OrionEnvironmentStack extends Stack {
         POP_LOG_QUEUE_URL: popLogQueue.queueUrl,
         PLAYER_HEARTBEAT_LOG: 'false',
         PLAYER_POP_LOG: 'false',
+        PLAYER_RELEASE_CERT_SHA256: playerReleaseCertSha256.valueAsString,
         S3_USE_LOCAL_STORAGE: 'false',
         S3_BUCKET: mediaBucket.bucketName,
         S3_REGION: this.region,
@@ -511,9 +523,15 @@ export class OrionEnvironmentStack extends Stack {
               name: 'AWSManagedRulesCommonRuleSet',
               // Default CRS SizeRestrictions_BODY blocks >8KB. Player PoP flushes
               // are ~16KB (50 logs), so they never reached Nest (ALB 403 HTML).
+              // GenericRFI_BODY blocks any JSON body containing "://", which breaks
+              // CMS "Add URL Asset" (e.g. http://65.x.x.x/stations) with ALB 403.
               ruleActionOverrides: [
                 {
                   name: 'SizeRestrictions_BODY',
+                  actionToUse: { count: {} },
+                },
+                {
+                  name: 'GenericRFI_BODY',
                   actionToUse: { count: {} },
                 },
               ],

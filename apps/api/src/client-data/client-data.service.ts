@@ -574,7 +574,35 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const existing = await this.prisma.playlist.findFirst({ where: { id: playlistId, organizationId } });
     if (!existing) throw new NotFoundException('Playlist not found');
+    const [zones, devices] = await Promise.all([
+      this.prisma.layoutZone.findMany({ where: { playlistId }, select: { layoutId: true } }),
+      this.prisma.device.findMany({ where: { organizationId, currentPlaylistId: playlistId, isPaired: true }, select: { id: true } }),
+    ]);
+    const schedules = await this.prisma.schedule.findMany({
+      where: { playlistId, enabled: true },
+      select: { deviceId: true },
+    });
+    const scheduleDeviceIds = schedules.flatMap((schedule) => schedule.deviceId ? [schedule.deviceId] : []);
+    if (schedules.some((schedule) => schedule.deviceId == null)) {
+      const orgDevices = await this.prisma.device.findMany({
+        where: { organizationId, isPaired: true },
+        select: { id: true },
+      });
+      scheduleDeviceIds.push(...orgDevices.map((device) => device.id));
+    }
     await this.prisma.playlist.delete({ where: { id: playlistId } });
+    await this.prisma.device.updateMany({
+      where: { id: { in: devices.map((device) => device.id) } },
+      data: { currentContent: null },
+    });
+    for (const layoutId of new Set(zones.map((zone) => zone.layoutId))) {
+      await this.playlistSync.bumpLayout(layoutId, 'playlist-deleted');
+    }
+    await this.notifyDevicesSyncRequired(organizationId, [...new Set([
+      ...devices.map((device) => device.id), ...scheduleDeviceIds,
+    ])], actor.userId, {
+      requireAssignedContent: false,
+    });
     return { success: true };
   }
 
@@ -607,6 +635,8 @@ export class ClientDataService {
         devices: { select: { id: true, name: true } },
       },
     });
+
+    await this.playlistSync.bumpPlaylist(playlistId, 'name-updated');
 
     return this.serializePlaylist(playlist);
   }
@@ -677,12 +707,18 @@ export class ClientDataService {
       select: { id: true },
     });
     const previousDeviceIds = previouslyAssigned.map((device) => device.id);
+    const replacedLayouts = await this.prisma.device.findMany({
+      where: { organizationId, id: { in: deviceIds }, currentLayoutId: { not: null } },
+      select: { currentLayoutId: true },
+    });
+    const replacedLayoutIds = [...new Set(replacedLayouts.flatMap((device) => device.currentLayoutId ? [device.currentLayoutId] : []))];
 
     await this.prisma.$transaction(async (tx) => {
       await tx.device.updateMany({
         where: { organizationId, currentPlaylistId: playlistId, id: { notIn: deviceIds } },
         data: {
           currentPlaylistId: null,
+          currentContent: null,
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
         },
@@ -708,6 +744,10 @@ export class ClientDataService {
           syncVersion: { increment: 1 },
         },
       });
+      for (const replacedLayoutId of replacedLayoutIds) {
+        const screens = await tx.device.count({ where: { currentLayoutId: replacedLayoutId } });
+        await tx.layout.update({ where: { id: replacedLayoutId }, data: { screens } });
+      }
     });
 
     const notifyIds = [...new Set([...previousDeviceIds, ...deviceIds])];
@@ -3181,7 +3221,7 @@ export class ClientDataService {
         type: item.type,
         duration: item.durationSeconds,
       })),
-      screens: playlist.devices.length || playlist.screens,
+      screens: playlist.devices.length,
       totalDuration: this.formatDuration(totalSeconds),
       lastPlayed: playlist.lastPlayedAt,
       color: playlist.color,
@@ -3257,26 +3297,37 @@ export class ClientDataService {
       if (!name) throw new BadRequestException('Layout name is required');
       data.name = name;
     }
-    if (body.resolution !== undefined) data.resolution = this.parseLayoutResolution(body.resolution);
+    if (body.resolution !== undefined) {
+      const resolution = this.parseLayoutResolution(body.resolution);
+      const incompatible = await this.prisma.device.count({
+        where: {
+          organizationId,
+          currentLayoutId: layoutId,
+          orientation: { not: resolution === LayoutResolution.PORTRAIT ? 'PORTRAIT' : 'LANDSCAPE' },
+        },
+      });
+      if (incompatible) throw new BadRequestException('Layout orientation must match all assigned devices');
+      data.resolution = resolution;
+    }
     if (body.status !== undefined) data.status = this.parseLayoutStatus(body.status);
 
-    const layout = await this.prisma.layout.update({
+    await this.prisma.layout.update({
       where: { id: layoutId },
       data,
-      include: this.layoutReadinessInclude(),
     });
 
-    if (body.resolution !== undefined || body.status !== undefined) {
+    if (body.name !== undefined || body.resolution !== undefined || body.status !== undefined) {
       await this.playlistSync.bumpLayout(layoutId);
     }
 
-    return this.serializeLayout(layout, this.computeLayoutReadiness(layout));
+    return this.getLayout(actor, layoutId);
   }
 
   async saveLayoutZones(
     actor: RequestActor,
     layoutId: string,
     body: {
+      resolution?: string;
       zones: {
         id?: string;
         name: string;
@@ -3296,11 +3347,43 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const layout = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
     if (!layout) throw new NotFoundException('Layout not found');
+    const resolution = body.resolution === undefined ? layout.resolution : this.parseLayoutResolution(body.resolution);
+    const expectedOrientation = resolution === LayoutResolution.PORTRAIT ? 'PORTRAIT' : 'LANDSCAPE';
+    const incompatible = await this.prisma.device.count({
+      where: { organizationId, currentLayoutId: layoutId, orientation: { not: expectedOrientation } },
+    });
+    if (incompatible) throw new BadRequestException('Layout orientation must match all assigned devices');
 
     const zones = body.zones ?? [];
     if (zones.length === 0) throw new BadRequestException('At least one zone is required');
+    const assignedCount = await this.prisma.device.count({ where: { organizationId, currentLayoutId: layoutId } });
+    if (assignedCount && zones.some((zone) =>
+      (this.parseZoneType(zone.type) === ZoneType.PLAYLIST && !zone.playlistId) ||
+      (this.parseZoneType(zone.type) === ZoneType.IMAGE && !zone.assetId)
+    )) {
+      throw new BadRequestException('Assigned layouts require content in every playlist and image zone');
+    }
+
+    const existingZones = await this.prisma.layoutZone.findMany({ where: { layoutId }, select: { id: true } });
+    const existingIds = new Set(existingZones.map((zone) => zone.id));
+    const suppliedIds = zones.flatMap((zone) => zone.id ? [zone.id] : []);
+    if (new Set(suppliedIds).size !== suppliedIds.length || suppliedIds.some((id) => !existingIds.has(id))) {
+      throw new BadRequestException('Zone IDs must be unique and belong to this layout');
+    }
 
     for (const zone of zones) {
+      if (!zone.name.trim()) throw new BadRequestException('Zone name is required');
+      const type = this.parseZoneType(zone.type);
+      if (type === ZoneType.HTML || type === ZoneType.CLOCK) {
+        throw new BadRequestException(`Zone "${zone.name}" uses an unsupported type`);
+      }
+      if (zone.x + zone.w > 100 || zone.y + zone.h > 100) {
+        throw new BadRequestException(`Zone "${zone.name}" extends beyond the screen`);
+      }
+      if (type === ZoneType.IMAGE && zone.playlistId || type !== ZoneType.IMAGE && zone.assetId ||
+          type !== ZoneType.PLAYLIST && zone.playlistId) {
+        throw new BadRequestException(`Zone "${zone.name}" has a binding for the wrong type`);
+      }
       if (zone.playlistId) {
         const playlist = await this.prisma.playlist.findFirst({
           where: { id: zone.playlistId, organizationId },
@@ -3312,15 +3395,16 @@ export class ClientDataService {
           where: { id: zone.assetId, organizationId },
         });
         if (!asset) throw new BadRequestException(`Invalid asset for zone "${zone.name}"`);
+        if (asset.type !== AssetType.IMAGE) throw new BadRequestException(`Zone "${zone.name}" requires an image asset`);
       }
     }
 
     await this.validateLayoutZoneBindings(organizationId, zones);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.layoutZone.deleteMany({ where: { layoutId } });
-      await tx.layoutZone.createMany({
-        data: zones.map((zone, index) => ({
+      await tx.layoutZone.deleteMany({ where: { layoutId, id: { notIn: suppliedIds } } });
+      for (const [index, zone] of zones.entries()) {
+        const data = {
           layoutId,
           name: zone.name.trim(),
           type: this.parseZoneType(zone.type),
@@ -3332,13 +3416,20 @@ export class ClientDataService {
           color: zone.color ?? '#00e5ff',
           playlistId: zone.playlistId ?? null,
           assetId: zone.assetId ?? null,
-        })),
-      });
+        };
+        if (zone.id) {
+          await tx.layoutZone.update({ where: { id: zone.id }, data });
+        } else {
+          await tx.layoutZone.create({ data });
+        }
+      }
       await tx.layout.update({
         where: { id: layoutId },
-        data: { syncVersion: { increment: 1 } },
+        data: { resolution, syncVersion: { increment: 1 } },
       });
     });
+
+    await this.playlistSync.notifyLayoutChanged(layoutId);
 
     return this.getLayout(actor, layoutId);
   }
@@ -3348,7 +3439,20 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const existing = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
     if (!existing) throw new NotFoundException('Layout not found');
-    await this.prisma.layout.delete({ where: { id: layoutId } });
+    const devices = await this.prisma.device.findMany({
+      where: { organizationId, currentLayoutId: layoutId, isPaired: true },
+      select: { id: true },
+    });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.device.updateMany({
+        where: { organizationId, currentLayoutId: layoutId },
+        data: { currentLayoutId: null, currentContent: null },
+      });
+      await tx.layout.delete({ where: { id: layoutId } });
+    });
+    await this.notifyDevicesSyncRequired(organizationId, devices.map((device) => device.id), actor.userId, {
+      requireAssignedContent: false,
+    });
     return { success: true };
   }
 
@@ -3356,7 +3460,7 @@ export class ClientDataService {
     const organizationId = this.getOrgId(actor);
     const devices = await this.prisma.device.findMany({
       where: { organizationId, isPaired: true },
-      select: { id: true, name: true, location: true, status: true, lastSeenAt: true, currentLayoutId: true },
+      select: { id: true, name: true, location: true, status: true, lastSeenAt: true, currentLayoutId: true, orientation: true },
       orderBy: { createdAt: 'asc' },
     });
 
@@ -3367,6 +3471,7 @@ export class ClientDataService {
         location: device.location,
         status: this.toLowerStatus(this.deviceManagement.resolveEffectiveStatus(device)),
         currentLayoutId: device.currentLayoutId,
+        orientation: device.orientation,
       })),
     };
   }
@@ -3378,13 +3483,23 @@ export class ClientDataService {
 
     const layout = await this.prisma.layout.findFirst({ where: { id: layoutId, organizationId } });
     if (!layout) throw new NotFoundException('Layout not found');
+    const previousDevices = await this.prisma.device.findMany({
+      where: { organizationId, currentLayoutId: layoutId, isPaired: true },
+      select: { id: true },
+    });
+    const previousDeviceIds = previousDevices.map((device) => device.id);
 
     if (deviceIds.length > 0) {
-      const validDeviceCount = await this.prisma.device.count({
+      const validDevices = await this.prisma.device.findMany({
         where: { organizationId, isPaired: true, id: { in: deviceIds } },
+        select: { id: true, orientation: true },
       });
-      if (validDeviceCount !== deviceIds.length) {
+      if (validDevices.length !== deviceIds.length) {
         throw new BadRequestException('Some devices are invalid or not paired for this organization');
+      }
+      const expectedOrientation = layout.resolution === LayoutResolution.PORTRAIT ? 'PORTRAIT' : 'LANDSCAPE';
+      if (validDevices.some((device) => device.orientation !== expectedOrientation)) {
+        throw new BadRequestException(`Layout requires ${expectedOrientation.toLowerCase()} devices`);
       }
 
       const layoutWithZones = await this.prisma.layout.findFirst({
@@ -3400,10 +3515,21 @@ export class ClientDataService {
       }
     }
 
+    const replacedLayoutIds = new Set<string>();
+    if (deviceIds.length) {
+      const replacing = await this.prisma.device.findMany({
+        where: { organizationId, id: { in: deviceIds }, currentLayoutId: { not: null } },
+        select: { currentLayoutId: true },
+      });
+      for (const device of replacing) {
+        if (device.currentLayoutId && device.currentLayoutId !== layoutId) replacedLayoutIds.add(device.currentLayoutId);
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       await tx.device.updateMany({
         where: { organizationId, currentLayoutId: layoutId, id: { notIn: deviceIds } },
-        data: { currentLayoutId: null },
+        data: { currentLayoutId: null, currentContent: null },
       });
 
       if (deviceIds.length > 0) {
@@ -3421,14 +3547,20 @@ export class ClientDataService {
 
       await tx.layout.update({
         where: { id: layoutId },
-        data: {
-          screens: deviceIds.length,
-          syncVersion: { increment: 1 },
-        },
+        data: { screens: deviceIds.length },
       });
+      for (const replacedLayoutId of replacedLayoutIds) {
+        const screens = await tx.device.count({ where: { currentLayoutId: replacedLayoutId } });
+        await tx.layout.update({ where: { id: replacedLayoutId }, data: { screens } });
+      }
     });
 
-    await this.notifyDevicesSyncRequired(organizationId, deviceIds, actor.userId);
+    await this.notifyDevicesSyncRequired(
+      organizationId,
+      [...new Set([...previousDeviceIds, ...deviceIds])],
+      actor.userId,
+      { requireAssignedContent: false },
+    );
 
     return this.getLayout(actor, layoutId);
   }
@@ -3436,7 +3568,7 @@ export class ClientDataService {
   private layoutReadinessInclude() {
     return {
       zones: {
-        orderBy: { zIndex: 'asc' as const },
+        orderBy: [{ zIndex: 'asc' as const }, { id: 'asc' as const }],
         include: {
           playlist: {
             include: {
@@ -3465,8 +3597,9 @@ export class ClientDataService {
     s3Key: string | null;
     url: string | null;
   }) {
+    if (asset.type === AssetType.HTML) return false;
     if (asset.type === AssetType.URL) {
-      return !!asset.url?.trim();
+      return asset.status === AssetStatus.READY && !!asset.url?.trim();
     }
     return asset.status === AssetStatus.READY && !!asset.s3Key;
   }
@@ -3475,6 +3608,10 @@ export class ClientDataService {
     zones: {
       name: string;
       type: ZoneType;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
       playlistId: string | null;
       assetId: string | null;
       playlist?: {
@@ -3486,7 +3623,19 @@ export class ClientDataService {
   }) {
     const warnings: string[] = [];
 
+    if (layout.zones.length === 0) warnings.push('Layout has no zones');
+
     for (const zone of layout.zones) {
+      // Older rows predate geometry validation; keep them visible but block assignment.
+      if (![zone.x, zone.y, zone.w, zone.h].every(Number.isFinite) ||
+          zone.x < 0 || zone.y < 0 || zone.w <= 0 || zone.h <= 0 ||
+          zone.x + zone.w > 100 || zone.y + zone.h > 100) {
+        warnings.push(`Zone "${zone.name}" extends beyond the screen`);
+      }
+      if (zone.type === ZoneType.HTML || zone.type === ZoneType.CLOCK) {
+        warnings.push(`Zone "${zone.name}" uses an unsupported type`);
+        continue;
+      }
       if (zone.type === ZoneType.PLAYLIST) {
         if (!zone.playlistId || !zone.playlist) {
           warnings.push(`Zone "${zone.name}" has no playlist assigned`);
@@ -3499,7 +3648,9 @@ export class ClientDataService {
         for (const playlistAsset of zone.playlist.playlistAssets ?? []) {
           if (!this.isAssetPlaybackReady(playlistAsset.asset)) {
             const reason =
-              playlistAsset.asset.status !== AssetStatus.READY
+              playlistAsset.asset.type === AssetType.HTML
+                ? 'is unsupported'
+                : playlistAsset.asset.status !== AssetStatus.READY
                 ? `is ${playlistAsset.asset.status.toLowerCase()}`
                 : 'has no downloadable file';
             warnings.push(`Zone "${zone.name}": asset "${playlistAsset.asset.name}" ${reason}`);
@@ -3510,6 +3661,10 @@ export class ClientDataService {
       if (zone.type === ZoneType.IMAGE) {
         if (!zone.assetId || !zone.asset) {
           warnings.push(`Zone "${zone.name}" has no image asset assigned`);
+          continue;
+        }
+        if (zone.asset.type !== AssetType.IMAGE) {
+          warnings.push(`Zone "${zone.name}" requires an image asset`);
           continue;
         }
         if (!this.isAssetPlaybackReady(zone.asset)) {
@@ -3628,7 +3783,7 @@ export class ClientDataService {
       status: this.toTitleStatus(layout.status),
       resolution: this.toTitleResolution(layout.resolution),
       syncVersion: layout.syncVersion,
-      screens: layout.devices.length || layout.screens,
+      screens: layout.devices.length,
       color: layout.color,
       zoneCount: layout.zones.length,
       isPlaybackReady: readiness?.isPlaybackReady ?? true,

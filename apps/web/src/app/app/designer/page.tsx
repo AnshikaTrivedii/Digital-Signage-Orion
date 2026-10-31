@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     Layout, Type, Video, Maximize2, Layers, Plus, Trash2, Save, Play,
@@ -30,6 +31,7 @@ interface Zone {
     playlistId: string | null;
     assetId: string | null;
     playlistName?: string | null;
+    assetName?: string | null;
 }
 
 interface LayoutSummary {
@@ -56,11 +58,18 @@ interface PlaylistOption {
     name: string;
 }
 
+interface ImageOption {
+    id: string;
+    name: string;
+    thumbnailUrl?: string | null;
+}
+
 interface DeviceOption {
     id: string;
     name: string;
     location?: string;
     currentLayoutId?: string | null;
+    orientation: string;
 }
 
 const ZONE_COLORS = ["#00e5ff", "#a78bfa", "#f472b6", "#4ade80", "#fb923c", "#60a5fa"];
@@ -134,15 +143,18 @@ function LayoutDesignerRedirect() {
 function LayoutDesigner() {
     const { canEdit } = useClientFeature("PLAYLISTS");
     const { activeOrganizationId } = useAuth();
+    const activeOrganizationRef = useRef(activeOrganizationId);
+    useEffect(() => { activeOrganizationRef.current = activeOrganizationId; }, [activeOrganizationId]);
 
     const [layouts, setLayouts] = useState<LayoutSummary[]>([]);
     const [activeLayoutId, setActiveLayoutId] = useState<string | null>(null);
     const [layout, setLayout] = useState<LayoutDetail | null>(null);
     const [zones, setZones] = useState<Zone[]>([]);
     const [playlists, setPlaylists] = useState<PlaylistOption[]>([]);
+    const [images, setImages] = useState<ImageOption[]>([]);
     const [selectedZone, setSelectedZone] = useState<string | null>(null);
     const [resolution, setResolution] = useState<Resolution>("1080p");
-    const [isLoading, setIsLoading] = useState(true);
+    const [loadedOrganizationId, setLoadedOrganizationId] = useState<string | null>(null);
     const [isSaving, setIsSaving] = useState(false);
     const [showAssign, setShowAssign] = useState(false);
     const [showPreview, setShowPreview] = useState(false);
@@ -158,7 +170,7 @@ function LayoutDesigner() {
         const list = await apiRequest<LayoutSummary[]>("/api/client-data/layouts", {
             headers: { "x-organization-id": activeOrganizationId },
         });
-        setLayouts(list);
+        if (activeOrganizationRef.current === activeOrganizationId) setLayouts(list);
         return list;
     }, [activeOrganizationId]);
 
@@ -167,6 +179,7 @@ function LayoutDesigner() {
         const detail = await apiRequest<LayoutDetail>(`/api/client-data/layouts/${layoutId}`, {
             headers: { "x-organization-id": activeOrganizationId },
         });
+        if (activeOrganizationRef.current !== activeOrganizationId) return;
         setLayout(detail);
         setResolution(apiResolutionToUi(detail.resolution));
         setZones(
@@ -183,6 +196,7 @@ function LayoutDesigner() {
                 playlistId: zone.playlistId ?? null,
                 assetId: zone.assetId ?? null,
                 playlistName: zone.playlistName ?? null,
+                assetName: zone.assetName ?? null,
             })),
         );
         setSelectedDeviceIds(detail.deviceIds);
@@ -190,16 +204,36 @@ function LayoutDesigner() {
 
     useEffect(() => {
         if (!activeOrganizationId) return;
-        setIsLoading(true);
         void (async () => {
             try {
-                const [list, playlistRes] = await Promise.all([
+                const [list, playlistRes, imageRes] = await Promise.all([
                     loadLayouts(),
                     apiRequest<PlaylistOption[]>("/api/client-data/playlists", {
                         headers: { "x-organization-id": activeOrganizationId },
                     }),
+                    (async () => {
+                        try {
+                            const collected: ImageOption[] = [];
+                            let page = 1;
+                            let totalPages = 1;
+                            do {
+                                const response = await apiRequest<{ assets: ImageOption[]; pagination: { totalPages: number } }>(
+                                    `/api/organizations/${activeOrganizationId}/assets?type=IMAGE&scope=all&limit=100&page=${page}`,
+                                );
+                                collected.push(...response.assets);
+                                totalPages = response.pagination.totalPages;
+                                page += 1;
+                            } while (page <= totalPages);
+                            return collected;
+                        } catch {
+                            toast.error("Failed to load image assets");
+                            return [];
+                        }
+                    })(),
                 ]);
+                if (activeOrganizationRef.current !== activeOrganizationId) return;
                 setPlaylists(playlistRes.map((p) => ({ id: p.id, name: p.name })));
+                setImages(imageRes);
                 const first = list?.[0];
                 if (first) {
                     setActiveLayoutId(first.id);
@@ -208,7 +242,7 @@ function LayoutDesigner() {
             } catch (error) {
                 toast.error(error instanceof ApiError ? error.message : "Failed to load layouts");
             } finally {
-                setIsLoading(false);
+                if (activeOrganizationRef.current === activeOrganizationId) setLoadedOrganizationId(activeOrganizationId);
             }
         })();
     }, [activeOrganizationId, loadLayout, loadLayouts]);
@@ -250,6 +284,7 @@ function LayoutDesigner() {
                     playlistId: zone.playlistId ?? null,
                     assetId: zone.assetId ?? null,
                     playlistName: zone.playlistName ?? null,
+                    assetName: zone.assetName ?? null,
                 })),
             );
             toast.success("Layout created");
@@ -262,15 +297,10 @@ function LayoutDesigner() {
         if (!canEdit || !activeOrganizationId || !activeLayoutId) return;
         setIsSaving(true);
         try {
-            await apiRequest(`/api/client-data/layouts/${activeLayoutId}`, {
-                method: "PATCH",
-                headers: { "x-organization-id": activeOrganizationId },
-                body: JSON.stringify({ resolution: uiResolutionToApi(resolution) }),
-            });
             const updated = await apiRequest<LayoutDetail>(`/api/client-data/layouts/${activeLayoutId}/zones`, {
                 method: "PUT",
                 headers: { "x-organization-id": activeOrganizationId },
-                body: JSON.stringify({ zones: zones.map(serializeZone) }),
+                body: JSON.stringify({ resolution: uiResolutionToApi(resolution), zones: zones.map(serializeZone) }),
             });
             setLayout(updated);
             setZones(
@@ -287,6 +317,7 @@ function LayoutDesigner() {
                     playlistId: zone.playlistId ?? null,
                     assetId: zone.assetId ?? null,
                     playlistName: zone.playlistName ?? null,
+                    assetName: zone.assetName ?? null,
                 })),
             );
             await loadLayouts();
@@ -392,8 +423,14 @@ function LayoutDesigner() {
     };
 
     const selected = zones.find((zone) => zone.id === selectedZone);
+    const hasUnsavedChanges = Boolean(layout && (
+        resolution !== apiResolutionToUi(layout.resolution) ||
+        JSON.stringify(zones.map(serializeZone)) !== JSON.stringify(layout.zones.map((zone) =>
+            serializeZone({ ...zone, type: apiTypeToUi(zone.type) })
+        ))
+    ));
 
-    if (isLoading) {
+    if (loadedOrganizationId !== activeOrganizationId) {
         return (
             <div className="glass-panel" style={{ padding: 40, textAlign: "center", color: "hsl(var(--text-muted))" }}>
                 Loading layout designer...
@@ -469,7 +506,7 @@ function LayoutDesigner() {
                     <button className="btn-outline" onClick={() => setShowPreview(true)} disabled={!layout} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <Play size={18} /> Preview
                     </button>
-                    <button className="btn-outline" onClick={() => void openAssign()} disabled={!layout || !canEdit} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="btn-outline" onClick={() => void openAssign()} disabled={!layout || !canEdit || hasUnsavedChanges || layout.isPlaybackReady === false} title={hasUnsavedChanges ? "Save layout changes before assignment" : undefined} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <Send size={16} /> Assign Devices
                     </button>
                     <button className="btn-primary" disabled={!canEdit || !activeLayoutId || isSaving} onClick={() => void handleSave()} style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -556,7 +593,7 @@ function LayoutDesigner() {
                                             {zone.type === "ticker" && <Type size={isActive ? 32 : 20} style={{ color: zone.color, opacity: isActive ? 1 : 0.5, margin: "0 auto 6px" }} />}
                                             {zone.type === "image" && <Maximize2 size={isActive ? 32 : 20} style={{ color: zone.color, opacity: isActive ? 1 : 0.5, margin: "0 auto 6px" }} />}
                                             <p style={{ fontSize: "0.7rem", fontWeight: 700, color: zone.color, textTransform: "uppercase" }}>{zone.name}</p>
-                                            {zone.playlistName && <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))", marginTop: 2 }}>{zone.playlistName}</p>}
+                                            {(zone.playlistName || zone.assetName) && <p style={{ fontSize: "0.6rem", color: "hsl(var(--text-muted))", marginTop: 2 }}>{zone.playlistName || zone.assetName}</p>}
                                         </div>
                                     </div>
                                 );
@@ -589,7 +626,7 @@ function LayoutDesigner() {
                                             <div style={{ width: 10, height: 10, borderRadius: "50%", background: zone.color, flexShrink: 0 }} />
                                             <div style={{ minWidth: 0 }}>
                                                 <span style={{ fontWeight: 600, fontSize: "0.85rem", display: "block" }}>{zone.name}</span>
-                                                <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>{zone.type}{zone.playlistName ? ` · ${zone.playlistName}` : ""}</span>
+                                                <span style={{ fontSize: "0.65rem", color: "hsl(var(--text-muted))" }}>{zone.type === "video" ? "playlist" : zone.type}{zone.playlistName || zone.assetName ? ` · ${zone.playlistName || zone.assetName}` : ""}</span>
                                             </div>
                                         </div>
                                         <button disabled={!canEdit} onClick={(e) => { e.stopPropagation(); removeZone(zone.id); }} className="btn-icon-soft" style={{ padding: 4, color: "hsl(var(--status-danger))" }}>
@@ -615,13 +652,13 @@ function LayoutDesigner() {
                                         <div>
                                             <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Type</label>
                                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                                                {(["video", "image", "ticker", "html"] as UiZoneType[]).map((t) => (
-                                                    <button key={t} disabled={!canEdit} onClick={() => updateZone(selected.id, { type: t })} style={{
+                                                {(["video", "image", "ticker"] as UiZoneType[]).map((t) => (
+                                                    <button key={t} disabled={!canEdit} onClick={() => updateZone(selected.id, { type: t, playlistId: null, assetId: null, playlistName: null, assetName: null })} style={{
                                                         padding: 8, borderRadius: 8, border: "1px solid", fontSize: "0.75rem", textTransform: "capitalize", cursor: "pointer",
                                                         background: selected.type === t ? "hsla(var(--accent-primary), 0.2)" : "transparent",
                                                         borderColor: selected.type === t ? "hsl(var(--accent-primary))" : "hsla(var(--border-subtle), 0.3)",
                                                         color: selected.type === t ? "hsl(var(--text-primary))" : "hsl(var(--text-muted))",
-                                                    }}>{t}</button>
+                                                    }}>{t === "video" ? "Playlist" : t}</button>
                                                 ))}
                                             </div>
                                         </div>
@@ -637,6 +674,22 @@ function LayoutDesigner() {
                                                 </select>
                                             </div>
                                         )}
+                                        {selected.type === "image" && (
+                                            <div>
+                                                <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Image</label>
+                                                <select value={selected.assetId ?? ""} disabled={!canEdit} onChange={(e) => {
+                                                    const asset = images.find((image) => image.id === e.target.value);
+                                                    updateZone(selected.id, { assetId: e.target.value || null, assetName: asset?.name ?? null });
+                                                }} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "hsl(var(--text-primary))" }}>
+                                                    <option value="">Select image...</option>
+                                                    {selected.assetId && !images.some((image) => image.id === selected.assetId) && <option value={selected.assetId}>Unavailable image</option>}
+                                                    {images.map((image) => <option key={image.id} value={image.id}>{image.name}</option>)}
+                                                </select>
+                                                {selected.assetId && images.find((image) => image.id === selected.assetId)?.thumbnailUrl && (
+                                                    <Image unoptimized width={320} height={140} src={images.find((image) => image.id === selected.assetId)?.thumbnailUrl ?? ""} alt={selected.assetName ?? "Selected image"} style={{ width: "100%", maxHeight: 140, objectFit: "contain", marginTop: 8 }} />
+                                                )}
+                                            </div>
+                                        )}
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                                             {(["x", "y", "w", "h"] as const).map((key) => (
                                                 <div key={key}>
@@ -644,6 +697,10 @@ function LayoutDesigner() {
                                                     <input type="number" min={key === "w" || key === "h" ? 1 : 0} max={100} disabled={!canEdit} value={Math.round(selected[key])} onChange={(e) => updateZone(selected.id, { [key]: Number(e.target.value) } as Partial<Zone>)} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "hsl(var(--text-primary))" }} />
                                                 </div>
                                             ))}
+                                        </div>
+                                        <div>
+                                            <label style={{ display: "block", fontSize: "0.7rem", color: "hsl(var(--text-muted))", fontWeight: 700, textTransform: "uppercase", marginBottom: 8 }}>Layer order</label>
+                                            <input type="number" min={0} value={selected.zIndex} disabled={!canEdit} onChange={(e) => updateZone(selected.id, { zIndex: Number(e.target.value) })} style={{ width: "100%", padding: 10, borderRadius: 8, background: "hsla(var(--bg-base), 0.5)", border: "1px solid hsla(var(--border-subtle), 0.3)", color: "hsl(var(--text-primary))" }} />
                                         </div>
                                     </div>
                                 </motion.div>
@@ -665,8 +722,8 @@ function LayoutDesigner() {
                             <p style={{ textAlign: "center", fontSize: "0.75rem", color: "hsl(var(--text-muted))", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.1em" }}>Layout Preview · {layout.name}</p>
                             <div style={{ aspectRatio: resolution === "portrait" ? "9/16" : "16/9", background: "#0a0a0a", borderRadius: 12, position: "relative", overflow: "hidden", border: "1px solid hsla(var(--border-subtle), 0.5)" }}>
                                 {zones.map((zone) => (
-                                    <div key={zone.id} style={{ position: "absolute", left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%`, background: `${zone.color}18`, border: `1px solid ${zone.color}`, display: "flex", alignItems: "center", justifyContent: "center", color: zone.color, fontSize: "0.75rem", fontWeight: 700, textAlign: "center", padding: 8 }}>
-                                        {zone.name}<br /><span style={{ fontWeight: 400, opacity: 0.7 }}>{zone.playlistName ?? zone.type}</span>
+                                    <div key={zone.id} style={{ position: "absolute", left: `${zone.x}%`, top: `${zone.y}%`, width: `${zone.w}%`, height: `${zone.h}%`, zIndex: zone.zIndex + 1, background: `${zone.color}18`, border: `1px solid ${zone.color}`, display: "flex", alignItems: "center", justifyContent: "center", color: zone.color, fontSize: "0.75rem", fontWeight: 700, textAlign: "center", padding: 8 }}>
+                                        {zone.name}<br /><span style={{ fontWeight: 400, opacity: 0.7 }}>{zone.playlistName ?? zone.assetName ?? zone.type}</span>
                                     </div>
                                 ))}
                             </div>
@@ -685,11 +742,12 @@ function LayoutDesigner() {
                                 {devices.length === 0 ? (
                                     <p style={{ color: "hsl(var(--text-muted))", fontSize: "0.85rem" }}>No paired devices available.</p>
                                 ) : devices.map((device) => (
-                                    <label key={device.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, background: selectedDeviceIds.includes(device.id) ? "hsla(var(--accent-primary), 0.1)" : "hsla(var(--bg-base), 0.3)", cursor: "pointer" }}>
-                                        <input type="checkbox" checked={selectedDeviceIds.includes(device.id)} onChange={() => setSelectedDeviceIds((prev) => prev.includes(device.id) ? prev.filter((id) => id !== device.id) : [...prev, device.id])} />
+                                    <label key={device.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, background: selectedDeviceIds.includes(device.id) ? "hsla(var(--accent-primary), 0.1)" : "hsla(var(--bg-base), 0.3)", cursor: device.orientation === (resolution === "portrait" ? "PORTRAIT" : "LANDSCAPE") ? "pointer" : "not-allowed", opacity: device.orientation === (resolution === "portrait" ? "PORTRAIT" : "LANDSCAPE") ? 1 : 0.55 }}>
+                                        <input type="checkbox" disabled={device.orientation !== (resolution === "portrait" ? "PORTRAIT" : "LANDSCAPE")} checked={selectedDeviceIds.includes(device.id)} onChange={() => setSelectedDeviceIds((prev) => prev.includes(device.id) ? prev.filter((id) => id !== device.id) : [...prev, device.id])} />
                                         <div>
                                             <p style={{ fontWeight: 600, fontSize: "0.9rem" }}>{device.name}</p>
                                             {device.location && <p style={{ fontSize: "0.75rem", color: "hsl(var(--text-muted))" }}>{device.location}</p>}
+                                            {device.orientation !== (resolution === "portrait" ? "PORTRAIT" : "LANDSCAPE") && <p style={{ fontSize: "0.75rem", color: "hsl(var(--warning))" }}>Set this device to {resolution === "portrait" ? "portrait" : "landscape"} first</p>}
                                         </div>
                                     </label>
                                 ))}

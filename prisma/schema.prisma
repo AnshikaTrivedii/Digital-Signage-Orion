@@ -139,6 +139,22 @@ enum DeviceCacheCommandStatus {
   FAILED
 }
 
+enum PlayerReleaseStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum DeviceAppUpdateState {
+  AVAILABLE
+  DOWNLOADING
+  VERIFIED
+  INSTALLING
+  HEALTHY
+  FAILED
+  BLOCKED
+}
+
 enum TickerSpeed {
   SLOW
   NORMAL
@@ -227,6 +243,7 @@ model User {
   uploadedAssets      Asset[]                  @relation("AssetUploader")
   auditLogs           AuditLog[]               @relation("AuditActor")
   deviceCacheCommands DeviceCacheCommand[]     @relation("DeviceCacheCommandRequester")
+  playerReleases      PlayerRelease[]          @relation("PlayerReleaseCreator")
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
 }
@@ -440,6 +457,9 @@ model Device {
 
   // Enterprise device identity
   playerVersion  String    @default("")
+  playerVersionCode Int    @default(0)
+  deviceOwner Boolean      @default(false)
+  silentUpdateCapable Boolean @default(false)
   androidVersion String    @default("")
   lastSeenAt     DateTime?
   macAddress     String    @default("")
@@ -529,6 +549,7 @@ model Device {
   tickerTargets   TickerDevice[]
   cachedAssets    DeviceCachedAsset[]
   cacheCommands   DeviceCacheCommand[]
+  appUpdates      DeviceAppUpdate[]
   systemLogs      DeviceSystemLog[]
   schedules       Schedule[]
 
@@ -536,6 +557,44 @@ model Device {
   @@index([organizationId, currentPlaylistId])
   @@index([organizationId, currentLayoutId])
   @@index([organizationId, installLatitude, installLongitude])
+}
+
+model PlayerRelease {
+  id String @id @default(cuid())
+  versionCode Int? @unique
+  versionName String?
+  apkKey String @unique
+  sizeBytes Int?
+  sha256 String?
+  signingCertSha256 String?
+  notes String @default("")
+  status PlayerReleaseStatus @default(DRAFT)
+  createdById String
+  createdAt DateTime @default(now())
+  verifiedAt DateTime?
+  activatedAt DateTime?
+  updatedAt DateTime @updatedAt
+
+  createdBy User @relation("PlayerReleaseCreator", fields: [createdById], references: [id])
+  deviceUpdates DeviceAppUpdate[]
+  @@index([status, versionCode])
+}
+
+model DeviceAppUpdate {
+  id String @id @default(cuid())
+  deviceId String
+  releaseId String
+  state DeviceAppUpdateState @default(AVAILABLE)
+  progress Int @default(0)
+  error String?
+  retryCount Int @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  release PlayerRelease @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  @@unique([deviceId, releaseId])
+  @@index([releaseId, state])
 }
 
 model Ticker {

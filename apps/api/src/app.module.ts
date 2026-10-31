@@ -8,6 +8,7 @@ import { HealthController } from './health.controller';
 import { ObservabilityModule } from './observability/observability.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { PlayerModule } from './player/player.module';
+import { PlayerReleaseModule } from './player-release/player-release.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { S3Module } from './s3/s3.module';
 import { SchedulingModule } from './scheduling/scheduling.module';
@@ -28,6 +29,7 @@ import { UsersModule } from './users/users.module';
     ClientDataModule,
     SchedulingModule,
     PlayerModule,
+    PlayerReleaseModule,
   ],
   controllers: [HealthController],
   providers: [AppService],

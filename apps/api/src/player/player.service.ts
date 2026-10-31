@@ -32,6 +32,7 @@ import { DeviceLocationService } from '../device-location/device-location.servic
 import { DeviceManagementService } from '../device-management/device-management.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { S3Service } from '../s3/s3.service';
+import { PlayerReleaseService } from '../player-release/player-release.service';
 import type { ActiveScheduleSnapshot } from '../scheduling/schedule.service';
 import { ScheduleService } from '../scheduling/schedule.service';
 import type { CacheReportDto } from './dto/cache-report.dto';
@@ -132,6 +133,7 @@ export class PlayerService {
     private readonly schedules: ScheduleService,
     private readonly popLogQueue: PopLogQueueService,
     private readonly metrics: MetricsService,
+    private readonly playerReleases: PlayerReleaseService,
   ) {}
 
   /**
@@ -483,6 +485,19 @@ export class PlayerService {
     return { pendingCommand, cacheCommand: pendingCommand, commands };
   }
 
+  async getAppUpdate(authHeader: string | undefined) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    return { appUpdate: await this.playerReleases.available(device.id, device.playerVersionCode) };
+  }
+
+  async reportAppUpdate(authHeader: string | undefined, report: {
+    releaseId: string; state: string; progress?: number; error?: string; retryCount?: number;
+    installedVersionCode?: number;
+  }) {
+    const device = await this.resolveDeviceByToken(authHeader);
+    return this.playerReleases.report(device.id, report);
+  }
+
   /**
    * Receive heartbeat telemetry from a device.
    */
@@ -504,6 +519,9 @@ export class PlayerService {
       timezone?: string;
       androidVersion?: string;
       playerVersion?: string;
+      playerVersionCode?: number;
+      deviceOwner?: boolean;
+      silentUpdateCapable?: boolean;
       deviceModel?: string;
       manufacturer?: string;
       deviceName?: string;
@@ -566,6 +584,7 @@ export class PlayerService {
       contentSource: effective.source,
       activeSchedule: effective.activeSchedule,
       playlistId: effective.playlistId,
+      layoutId: effective.layoutId,
       nextContentChangeAt: nextChange?.toISOString() ?? null,
       scheduleValidUntil: effective.activeSchedule?.endDateTime ?? null,
       serverNow: now.toISOString(),
@@ -585,6 +604,7 @@ export class PlayerService {
       display: playerConfig.display,
       playback: playerConfig.playback,
       locationPolicy: this.deviceLocation.locationPolicy(refreshed ?? device),
+      appUpdate: await this.playerReleases.available(device.id, data.playerVersionCode ?? device.playerVersionCode),
       ...commandPayload,
     };
   }
@@ -618,6 +638,9 @@ export class PlayerService {
       timezone?: string;
       androidVersion?: string;
       playerVersion?: string;
+      playerVersionCode?: number;
+      deviceOwner?: boolean;
+      silentUpdateCapable?: boolean;
       deviceModel?: string;
       manufacturer?: string;
       deviceName?: string;
@@ -854,12 +877,15 @@ export class PlayerService {
           lastSync: new Date().toISOString(),
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
+          lastAckedLayoutVersion: null,
           lastAckedScheduleId: appliedScheduleId,
           lastAckedTickerRevision: tickerRevision,
         },
       });
       return {
         unchanged: false,
+        layoutVersion: null,
+        layout: null,
         playlistVersion: null,
         playlist: null,
         assets: [],
@@ -887,12 +913,15 @@ export class PlayerService {
           lastSync: new Date().toISOString(),
           lastAckedPlaylistVersion: null,
           lastAckedPlaylistId: null,
+          lastAckedLayoutVersion: null,
           lastAckedScheduleId: appliedScheduleId,
           lastAckedTickerRevision: tickerRevision,
         },
       });
       return {
         unchanged: false,
+        layoutVersion: null,
+        layout: null,
         playlistVersion: null,
         playlist: null,
         assets: [],
@@ -964,6 +993,7 @@ export class PlayerService {
           ? {
               lastAckedPlaylistVersion: playlist.syncVersion,
               lastAckedPlaylistId: playlist.id,
+              lastAckedLayoutVersion: null,
               ...(device.pendingInitialSync
                 ? { pendingInitialSync: false, initialSyncRequestedAt: null }
                 : {}),
@@ -974,6 +1004,8 @@ export class PlayerService {
 
     return {
       unchanged: contentUnchanged,
+      layoutVersion: null,
+      layout: null,
       playlistVersion: playlist.syncVersion,
       updatedAt: playlist.updatedAt.toISOString(),
       assetCount: manifest.length,
@@ -1004,7 +1036,7 @@ export class PlayerService {
       where: { id: device.currentLayoutId! },
       include: {
         zones: {
-          orderBy: { zIndex: 'asc' },
+          orderBy: [{ zIndex: 'asc' }, { id: 'asc' }],
           include: {
             playlist: {
               include: {
@@ -1066,6 +1098,7 @@ export class PlayerService {
     for (const zone of layout.zones) {
       if (zone.type === ZoneType.PLAYLIST && zone.playlist) {
         const assets = await this.buildPlaylistManifest(zone.playlist, syncContext);
+        this.ensureCompletePlaylistManifest(zone.playlist.id, zone.playlist.playlistAssets.length, assets);
         for (const asset of assets) {
           if (!assetIndex.has(asset.id)) {
             assetIndex.set(asset.id, aggregatedAssets.length);
@@ -1089,7 +1122,7 @@ export class PlayerService {
         continue;
       }
 
-      if (zone.type === ZoneType.IMAGE && zone.asset) {
+      if (zone.type === ZoneType.IMAGE && zone.asset?.type === 'IMAGE') {
         const manifestEntry = await this.buildAssetManifestEntry(
           zone.asset,
           this.resolveManifestDurationSeconds(zone.asset.defaultDurationSeconds ?? null),
@@ -1117,6 +1150,26 @@ export class PlayerService {
         continue;
       }
 
+      if (zone.type === ZoneType.HTML || zone.type === ZoneType.CLOCK) continue;
+
+      if (zone.type === ZoneType.PLAYLIST && !zone.playlist) {
+        zoneManifests.push({
+          id: zone.id, name: zone.name, type: zone.type,
+          x: zone.x, y: zone.y, w: zone.w, h: zone.h, zIndex: zone.zIndex,
+          playlistId: null, playlistVersion: null, playlistName: null, assets: [],
+        });
+        continue;
+      }
+
+      if (zone.type === ZoneType.IMAGE) {
+        zoneManifests.push({
+          id: zone.id, name: zone.name, type: zone.type,
+          x: zone.x, y: zone.y, w: zone.w, h: zone.h, zIndex: zone.zIndex,
+          assetId: null, asset: null,
+        });
+        continue;
+      }
+
       zoneManifests.push({
         id: zone.id,
         name: zone.name,
@@ -1135,10 +1188,8 @@ export class PlayerService {
     const hasTickerZone = layout.zones.some((zone) => zone.type === ZoneType.TICKER);
     const clientReportedLayoutVersion = query.layoutVersion;
     const layoutVersionMatches =
-      (clientReportedLayoutVersion !== undefined &&
-        clientReportedLayoutVersion === layout.syncVersion) ||
-      (clientReportedLayoutVersion === undefined &&
-        device.lastAckedLayoutVersion === layout.syncVersion);
+      device.lastAckedLayoutVersion === layout.syncVersion &&
+      (clientReportedLayoutVersion === undefined || clientReportedLayoutVersion === layout.syncVersion);
     const layoutContentUnchanged =
       layoutVersionMatches &&
       !syncContext.recoverCache &&

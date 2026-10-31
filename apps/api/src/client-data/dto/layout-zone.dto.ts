@@ -1,4 +1,4 @@
-import { IsIn, IsNumber, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
 
 export const ZONE_TYPES = ['Playlist', 'Ticker', 'Image', 'Html', 'Clock'] as const;
 
@@ -35,7 +35,8 @@ export class LayoutZoneDto {
   h!: number;
 
   @IsOptional()
-  @IsNumber()
+  @IsInt()
+  @Min(0)
   zIndex?: number;
 
   @IsOptional()

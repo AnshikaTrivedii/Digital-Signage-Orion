@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BellRing, Building2, CreditCard, LayoutDashboard, LifeBuoy, Settings, ShieldCheck, Users } from "lucide-react";
+import { BellRing, Building2, CreditCard, LayoutDashboard, LifeBuoy, Settings, ShieldCheck, Users, Download } from "lucide-react";
 import type { ClientAccessLevel, ClientFeatureKey } from "@/lib/permissions/client-permissions";
 
 export type PortalNavItem = {
@@ -9,6 +9,7 @@ export type PortalNavItem = {
     section?: string;
     featureKey?: ClientFeatureKey;
     requiredAccess?: ClientAccessLevel;
+    platformRoles?: Array<"SUPER_ADMIN" | "PLATFORM_ADMIN" | "SALES" | "SUPPORT">;
 };
 
 export const platformNavItems: PortalNavItem[] = [
@@ -18,6 +19,8 @@ export const platformNavItems: PortalNavItem[] = [
     { name: "Alerts", path: "/platform/reminders", icon: BellRing, section: "Operations" },
     { name: "Billing", path: "/platform/billing", icon: CreditCard, section: "Operations" },
     { name: "Support", path: "/platform/support", icon: LifeBuoy, section: "Operations" },
+    { name: "Player releases", path: "/platform/player-releases", icon: Download, section: "Operations",
+      platformRoles: ["SUPER_ADMIN", "PLATFORM_ADMIN"] },
     { name: "Reports", path: "/platform/reports", icon: ShieldCheck, section: "Insights" },
     { name: "Settings", path: "/platform/settings", icon: Settings, section: "Account" },
 ];
