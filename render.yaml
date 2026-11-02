@@ -1,13 +1,25 @@
+# Development-only Render service. Production is deployed separately to AWS by
+# .github/workflows/deploy-aws.yml and does not consume this Blueprint.
 services:
   - type: web
     name: orion-api
-    runtime: node
+    runtime: docker
     plan: free
-    buildCommand: npm install && npm run prisma:generate && npm run build:api
-    startCommand: bash scripts/start-api.sh
+    dockerfilePath: ./infra/aws/docker/Dockerfile.api
+    dockerContext: .
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ORION_ENV
+        value: development
+      # The shared Docker image skips startup migrations for AWS production,
+      # where CodeBuild runs them. Render development runs them at startup.
+      - key: SKIP_STARTUP_MIGRATE
+        value: "false"
+      # Development signing certificate only. AWS production receives its own
+      # certificate fingerprint through CloudFormation.
+      - key: PLAYER_RELEASE_CERT_SHA256
+        value: 64FF678EAB720112DBD20FDF13487B8F63BD1EF7485EBC0DD90799EFE074239D
       - key: DATABASE_URL
         sync: false
       # Supabase → Settings → Database → Connection string → URI (direct, NOT pooler)
